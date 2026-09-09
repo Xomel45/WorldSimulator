@@ -1,0 +1,39 @@
+---
+Language:        Cpp
+BasedOnStyle:    LLVM
+Standard:        c++23
+
+IndentWidth:     4
+TabWidth:        4
+UseTab:          Never
+ColumnLimit:     100
+
+BreakBeforeBraces:              Attach
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine:   false
+
+PointerAlignment:               Left
+ReferenceAlignment:             Left
+
+SortIncludes:                   CaseSensitive
+IncludeBlocks:                  Regroup
+IncludeCategories:
+  # Project headers first
+  - Regex:    '^"'
+    Priority: 1
+  # Vulkan / GLFW
+  - Regex:    '^<(vulkan|GLFW)/'
+    Priority: 2
+  # System / STL
+  - Regex:    '^<'
+    Priority: 3
+
+AlignConsecutiveDeclarations:   false
+AlignConsecutiveAssignments:    false
+AlignTrailingComments:
+  Kind: Always
+  OverEmptyLines: 1
+
+SpaceBeforeParens:              ControlStatements
+SpacesInAngles:                 Never

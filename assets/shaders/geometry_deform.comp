@@ -1,0 +1,101 @@
+#version 460
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Compute shader: процедурная деформация геометрии
+//
+// Назначение: хоррор-эффекты — дышащие стены, деформирующийся пол,
+// пульсирующий потолок. Запускается каждый кадр перед вершинным шейдером.
+//
+// Группа: 64 потока × 1 × 1 → диспатч ceil(vertexCount / 64) по X
+// ─────────────────────────────────────────────────────────────────────────────
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+// ─── Vertex layout (должен совпадать со структурой в C++) ─────────────────────
+struct Vertex {
+    vec4 position;  // xyz = мировая позиция, w = исходная Y (baseline)
+    vec4 normal;    // xyz = нормаль, w = зарезервировано
+};
+
+layout(set = 0, binding = 0) buffer VertexBuffer {
+    Vertex vertices[];
+};
+
+// ─── Push constants ───────────────────────────────────────────────────────────
+layout(push_constant) uniform PushConstants {
+    float time;         // секунды с начала сессии
+    float amplitude;    // максимальное смещение (мировые единицы)
+    float frequency;    // пространственная частота волны
+    float speed;        // скорость распространения волны
+    uint  vertexCount;
+    float intensity;    // 0..1 — множитель страха (растёт при триггерах)
+    uint  _pad[2];
+} pc;
+
+// ─── Хэш-функция (быстро, без текстур) ───────────────────────────────────────
+float hash(vec2 p) {
+    p  = fract(p * vec2(127.1, 311.7));
+    p += dot(p, p + 19.19);
+    return fract(p.x * p.y);
+}
+
+// Плавный шум [0, 1]
+float smoothNoise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    vec2 u = f * f * (3.0 - 2.0 * f);  // smoothstep
+
+    return mix(
+        mix(hash(i + vec2(0, 0)), hash(i + vec2(1, 0)), u.x),
+        mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), u.x),
+        u.y
+    );
+}
+
+// FBM — 4 октавы, слегка иррациональная лакунарность (без сетки-артефактов)
+float fbm(vec2 p) {
+    float value = 0.0;
+    float amp   = 0.5;
+    float freq  = 1.0;
+
+    for (int i = 0; i < 4; ++i) {
+        value += amp * smoothNoise(p * freq);
+        amp   *= 0.5;
+        freq  *= 2.13;
+    }
+    return value;
+}
+
+// ─── Main ─────────────────────────────────────────────────────────────────────
+void main() {
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx >= pc.vertexCount) return;
+
+    vec3  pos       = vertices[idx].position.xyz;
+    float baselineY = vertices[idx].position.w;   // запомненная исходная Y
+
+    // Анимированная координата для сэмплирования шума
+    vec2 samplePos = pos.xz * pc.frequency + vec2(pc.time * pc.speed);
+
+    // Смещение по Y: FBM ремаппированный в [-1, 1]
+    float noise       = fbm(samplePos) * 2.0 - 1.0;
+    float displacement = noise * pc.amplitude * pc.intensity;
+
+    vertices[idx].position.y = baselineY + displacement;
+
+    // ── Приближённая нормаль через конечные разности ──────────────────────────
+    const float eps = 0.05;
+    float nx = fbm(samplePos + vec2(eps, 0.0)) * 2.0 - 1.0;
+    float nz = fbm(samplePos + vec2(0.0, eps)) * 2.0 - 1.0;
+
+    // Частные производные: dY/dX и dY/dZ
+    float dydx = (nx - noise) / eps;
+    float dydz = (nz - noise) / eps;
+
+    // Нормаль = normalize(-dY/dX, 1, -dY/dZ)  (для поверхности Y=f(X,Z))
+    vec3 deformedNormal = normalize(vec3(-dydx * pc.amplitude * pc.intensity,
+                                         1.0,
+                                        -dydz * pc.amplitude * pc.intensity));
+
+    vertices[idx].normal.xyz = deformedNormal;
+}

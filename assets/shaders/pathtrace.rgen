@@ -1,0 +1,76 @@
+#version 460
+#extension GL_EXT_ray_tracing         : require
+#extension GL_GOOGLE_include_directive : require
+
+// Path-traced режим: raygen пускает первичные лучи из камеры и гоняет диффузные
+// отскоки (шейдинг — в closesthit), усредняя spp сэмплов за кадр.
+// V1 без межкадрового накопления (temporal — следующий шаг: нужен race-free
+// history-таргет с двойной буферизацией). Пишет tonemap-encoded в offscreen.
+
+layout(set = 0, binding = 0) uniform CameraUBO { mat4 view; mat4 proj; vec4 camPos; };
+layout(set = 0, binding = 2) uniform accelerationStructureEXT topLevelAS;
+layout(set = 0, binding = 3, rgba8) uniform image2D outImage;
+
+layout(push_constant) uniform PC {
+    mat4 invViewProj;
+    uint frameIndex;   // для decorrelation RNG между кадрами
+    uint spp;          // сэмплов за кадр
+};
+
+struct RayPayload {
+    vec3  radiance;   // прямой свет в точке попадания (или «небо» при промахе)
+    vec3  albedo;     // для throughput следующего отскока
+    vec3  hitPos;
+    vec3  hitNormal;
+    float hitT;       // < 0 — промах
+};
+layout(location = 0) rayPayloadEXT RayPayload pay;
+
+// ─── RNG + сэмплинг ─────────────────────────────────────────────────────────
+uint gSeed;
+uint pcg(uint v) { v = v*747796405u+2891336453u; v = ((v>>((v>>28u)+4u))^v)*277803737u; return (v>>22u)^v; }
+float rnd() { gSeed = pcg(gSeed); return float(gSeed) * (1.0/4294967296.0); }
+void basis(vec3 n, out vec3 t, out vec3 b) {
+    float s = n.z >= 0.0 ? 1.0 : -1.0;
+    float a = -1.0/(s+n.z); float d = n.x*n.y*a;
+    t = vec3(1.0+s*n.x*n.x*a, s*d, -s*n.x);
+    b = vec3(d, s+n.y*n.y*a, -n.y);
+}
+vec3 cosineDir(vec3 N) {
+    vec3 t, b; basis(N, t, b);
+    float r = sqrt(rnd()); float a = 6.2831853*rnd();
+    return normalize(t*(r*cos(a)) + b*(r*sin(a)) + N*sqrt(max(0.0, 1.0-r*r)));
+}
+vec3 tonemapEncode(vec3 hdr) { vec3 x = hdr/(hdr+vec3(1.0)); return pow(x, vec3(1.0/2.2)); }
+
+#define PT_BOUNCES 3
+
+vec3 tracePath(vec3 origin, vec3 dir) {
+    vec3 L = vec3(0.0), thr = vec3(1.0);
+    for (int b = 0; b < PT_BOUNCES; ++b) {
+        traceRayEXT(topLevelAS, gl_RayFlagsOpaqueEXT, 0xFF, 0, 0, 0,
+                    origin, 0.001, dir, 1000.0, 0);
+        L += thr * pay.radiance;
+        if (pay.hitT < 0.0) break;                 // ушли в «небо»
+        thr *= pay.albedo;
+        if (max(thr.r, max(thr.g, thr.b)) < 0.01) break;
+        origin = pay.hitPos + pay.hitNormal*0.001;
+        dir    = cosineDir(pay.hitNormal);
+    }
+    return L;
+}
+
+void main() {
+    ivec2 px   = ivec2(gl_LaunchIDEXT.xy);
+    ivec2 size = ivec2(gl_LaunchSizeEXT.xy);
+    gSeed = pcg(uint(px.x) + pcg(uint(px.y) + pcg(frameIndex)));
+
+    vec3 sum = vec3(0.0);
+    for (uint s = 0u; s < spp; ++s) {
+        vec2 ndc  = (vec2(px) + vec2(rnd(), rnd())) / vec2(size) * 2.0 - 1.0;
+        vec4 near = invViewProj * vec4(ndc, 0.0, 1.0); near /= near.w;
+        vec4 far  = invViewProj * vec4(ndc, 1.0, 1.0); far  /= far.w;
+        sum += tracePath(camPos.xyz, normalize(far.xyz - near.xyz));
+    }
+    imageStore(outImage, px, vec4(tonemapEncode(sum / float(spp)), 1.0));
+}
