@@ -56,6 +56,10 @@ engine/
                Mesh/GpuBuffer/ObjLoader/SceneObject/Transform/AABB/Frustum —
                  generic mesh/scene plumbing
   ui/          ImGuiLayer.hpp/.cpp
+  sim/         Genome/Brain/Creature — genetics + neural-net brain + needs.
+               No Vulkan/GLFW dependency (only glm) -> fast to compile and
+               directly unit-testable. Not yet wired into Application/game —
+               see "Creature core" below.
 game/
   main.cpp     entry point
 assets/
@@ -83,17 +87,53 @@ so `InputSystem`'s scroll callback uses its own single-instance static
 pointer instead (the whole engine assumes exactly one window/one
 `InputSystem`).
 
+## Creature core (`engine/sim/`)
+
+Pure simulation logic, no world/spawning/rendering integration yet:
+- **`Genome`** — flat `std::vector<float>` of 379 genes in `[-1,1]`: 5 body
+  traits (speed/size/metabolism/lifespan/fertility, named via
+  `Genome::TraitIndex`) + 374 brain weights (`brainWeights()` span, must stay
+  in sync with `brain::kWeightCount` — enforced by a `static_assert` in
+  `Genome.cpp`). `random()`/`crossover()`/`mutate()` all take an explicit
+  `Rng&` (`std::mt19937`, no global RNG state — deterministic given a seed).
+  Random brain weights are drawn from a narrow gaussian (not full `[-1,1]`
+  noise) so a fresh creature starts with responsive, non-saturated neurons
+  instead of flailing for generations before selection finds anything
+  coherent.
+- **`Brain`** — stateless: `brain::evaluate(weights, BrainInputs) -> BrainOutputs`,
+  fixed topology 16 inputs → 16 hidden (tanh) → 6 outputs (`tanh` for
+  move X/Z, sigmoid for the four desire outputs). Sized after comparing to
+  the real Creatures Norn brain (952 neurons/~5000 connections/9 lobes) —
+  both scales are computationally trivial at thousands of agents, so this
+  was a scope call, not a performance one. No lifetime-learning lobe (a Norn
+  can learn associations during its life) — deliberately deferred, would be
+  an additive input source layered on top of `evaluate()`, not a rewrite.
+- **`Creature`** — aggregates `Genome` + `Needs` (hunger/energy/fear/libido/
+  social) + position/velocity/age. `tick(dt, SenseInputs)` runs the brain and
+  updates needs/movement/age; `SenseInputs` (nearest food/threat/mate
+  direction+proximity, crowding) is supplied by the caller — `Creature`
+  never queries a world itself, which is the seam the next milestone (world +
+  spatial queries) plugs into. `feed()`/`rest()`/`mate()` are world-driven
+  mutators (world decides an action succeeded, then calls these). Body traits
+  (`maxSpeed()` etc.) are computed on-demand from the genome, not cached.
+- Tests: `engine/sim/tests/{genome,brain,creature}_tests.cpp`, assert-based
+  (no test framework dependency), run via `ctest --test-dir build/debug`.
+
 ## Current state / TODO
 
 - [x] Engine bring-up: window, Vulkan context, ImGui, orbit camera, flat
       ground plane, fixed-timestep loop
+- [x] Creature core: genetics, neural-net brain, needs (`engine/sim/`) — not
+      yet wired into the running game
 - [ ] Procedural terrain (heightmap or voxel — AlphaCraft's Perlin/chunk code
       may be a starting point)
+- [ ] World + spatial-grid system (feeds `SenseInputs` to creatures; also
+      the fix for the O(n²) nearest-neighbour cost flagged when the hardware
+      ceiling was discussed — see `tools/hw_ceiling.py`)
+- [ ] Spawning: place `Creature`s in the world, wire `tick()`/`reproduce()`
+      into `Application`'s update loop
 - [ ] God-power tools (raise/lower terrain, spawn/remove creatures, click
       interactions)
-- [ ] Creature entities: needs (hunger/energy), movement, simple behaviour
-- [ ] Genetics: genes, inheritance, mutation on reproduction
-- [ ] Neural-net brain per creature (Creatures-style, trained/evolved in-game)
 - [ ] Civilization-scale systems (out of scope until the above lands)
 
 ## Key conventions

@@ -1,0 +1,49 @@
+#include "sim/Genome.hpp"
+
+#include "sim/Brain.hpp"
+
+#include <algorithm>
+
+namespace wsim {
+
+// kBrainWeightCount дублирует brain::kWeightCount (публичный заголовок Genome
+// намеренно не включает Brain.hpp) — этот static_assert ловит рассинхрон при
+// изменении топологии сети.
+static_assert(Genome::kBrainWeightCount == static_cast<std::size_t>(brain::kWeightCount));
+
+Genome Genome::random(Rng& rng) {
+    std::vector<float> genes(kGeneCount);
+
+    std::uniform_real_distribution<float> traitDist(-1.0f, 1.0f);
+    for (std::size_t i = 0; i < kTraitGeneCount; ++i)
+        genes[i] = traitDist(rng);
+
+    // Веса мозга — небольшая амплитуда вокруг нуля, а не полный [-1,1] шум:
+    // крупные стартовые веса насыщают tanh/sigmoid почти до констант (мозг
+    // "залипает" в одном решении вместо отклика на входы). Малые веса держат
+    // нейроны в отзывчивой зоне — стандартная практика инициализации сетей,
+    // здесь же играющая роль "разумных инстинктов по умолчанию".
+    std::normal_distribution<float> weightDist(0.0f, 0.35f);
+    for (std::size_t i = kTraitGeneCount; i < kGeneCount; ++i)
+        genes[i] = std::clamp(weightDist(rng), -1.0f, 1.0f);
+
+    return Genome(std::move(genes));
+}
+
+Genome Genome::crossover(const Genome& a, const Genome& b, Rng& rng) {
+    std::vector<float> genes(kGeneCount);
+    std::bernoulli_distribution coin(0.5);
+    for (std::size_t i = 0; i < kGeneCount; ++i)
+        genes[i] = coin(rng) ? a.m_genes[i] : b.m_genes[i];
+    return Genome(std::move(genes));
+}
+
+void Genome::mutate(Rng& rng, float rate, float strength) {
+    std::bernoulli_distribution shouldMutate(rate);
+    std::normal_distribution<float> noise(0.0f, strength);
+    for (float& gene : m_genes)
+        if (shouldMutate(rng))
+            gene = std::clamp(gene + noise(rng), -1.0f, 1.0f);
+}
+
+}  // namespace wsim

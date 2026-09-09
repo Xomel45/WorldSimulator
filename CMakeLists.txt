@@ -10,6 +10,8 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Debug)
 endif()
 
+include(CTest)
+
 # ─── Compiler flags ───────────────────────────────────────────────────────────
 add_compile_options(
     -Wall -Wextra -Wpedantic
