@@ -6,12 +6,14 @@ namespace wsim {
 
 // Входы мозга: потребности + локальные ощущения (направление/близость до
 // ближайшей еды/угрозы/партнёра — считает будущая мировая система, сюда
-// приходят уже готовыми) + скученность соседей + шум (разрывает идеально
-// симметричные решения) + сигналы соседей (тревога/брачный зов — реальная
-// коммуникация между существами, не просто приватная метрика) + собственный
-// размер (самооценка себя для выбора "драться или бежать" — без него решение
-// драться было бы не про силы, а про угадывание) + ближайший из семьи
-// (партнёр/родители/дети — direction/proximity/threatLevel, см.
+// приходят уже готовыми) + скученность своих/чужих (familiarCrowding —
+// известные существа: партнёр/родители/дети; strangerCrowding — незнакомцы)
+// + шум (разрывает идеально симметричные решения) + сигналы соседей
+// (тревога/брачный зов — реальная коммуникация между существами, не просто
+// приватная метрика) + собственный размер (самооценка себя для выбора
+// "драться или бежать" — без него решение драться было бы не про силы, а
+// про угадывание) + ближайший из семьи (партнёр/родители/дети —
+// direction/proximity/threatLevel, см.
 // Creature::bondedPartnerId/parentIds/childIds) — то, что делает "любовь"
 // поведением, а не просто словом.
 struct BrainInputs {
@@ -19,7 +21,7 @@ struct BrainInputs {
     float foodDirX, foodDirZ, foodProximity;
     float threatDirX, threatDirZ, threatProximity;
     float mateDirX, mateDirZ, mateProximity;
-    float crowding, noise;
+    float familiarCrowding, strangerCrowding, noise;
     float nearbyAlarmLevel, nearbyMatingCallLevel;
     float selfSize;
     float lovedOneDirX, lovedOneDirZ, lovedOneProximity, lovedOneThreatLevel;
@@ -38,15 +40,15 @@ struct BrainOutputs {
 
 namespace brain {
 
-inline constexpr int kInputCount  = 23;
+inline constexpr int kInputCount  = 24;
 inline constexpr int kHiddenCount = 20;
 inline constexpr int kOutputCount = 9;
 
-// Layout: [inputHidden(460)][hiddenBias(20)][hiddenOutput(180)][outputBias(9)]
+// Layout: [inputHidden(480)][hiddenBias(20)][hiddenOutput(180)][outputBias(9)]
 inline constexpr int kInputHiddenWeights  = kInputCount * kHiddenCount;
 inline constexpr int kHiddenOutputWeights = kHiddenCount * kOutputCount;
 inline constexpr int kWeightCount =
-    kInputHiddenWeights + kHiddenCount + kHiddenOutputWeights + kOutputCount;  // 669
+    kInputHiddenWeights + kHiddenCount + kHiddenOutputWeights + kOutputCount;  // 689
 
 // Прогон сети: tanh на скрытом слое и на moveX/moveZ (нужен знак — направление),
 // логистическая сигмоида на "желаниях" и сигналах (нужен диапазон [0,1]).

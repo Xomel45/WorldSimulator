@@ -28,11 +28,15 @@ struct Needs {
 // см. Creature::bondedPartnerId/parentIds/childIds), а не общий сородич:
 // отдельный от threatProximity сигнал, т.к. существо может убегать от своей
 // опасности и одновременно знать, что близкий в беде где-то ещё.
+// familiarCrowding/strangerCrowding — тот же принцип "свои vs чужие": мир
+// делит соседей на "известных" (id входит в bondedPartnerId/parentIds/
+// childIds) и незнакомцев.
 struct SenseInputs {
     glm::vec2 foodDir{};   float foodProximity   = 0.0f;
     glm::vec2 threatDir{}; float threatProximity = 0.0f;
     glm::vec2 mateDir{};   float mateProximity   = 0.0f;
-    float     crowding    = 0.0f;
+    float     familiarCrowding = 0.0f;
+    float     strangerCrowding = 0.0f;
     float     nearbyAlarmLevel      = 0.0f;
     float     nearbyMatingCallLevel = 0.0f;
     glm::vec2 lovedOneDir{};

@@ -52,8 +52,9 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
         .mateDirZ     = senses.mateDir.y,
         .mateProximity = senses.mateProximity,
 
-        .crowding = senses.crowding,
-        .noise    = noiseFromAge(age),
+        .familiarCrowding = senses.familiarCrowding,
+        .strangerCrowding = senses.strangerCrowding,
+        .noise            = noiseFromAge(age),
 
         .nearbyAlarmLevel      = senses.nearbyAlarmLevel,
         .nearbyMatingCallLevel = senses.nearbyMatingCallLevel,
@@ -77,18 +78,26 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
     needs.energy = std::clamp(needs.energy - (0.008f * metab + moveCost) * dt, 0.0f, 1.0f);
 
     // Страх реагирует на собственную угрозу, панику соседей (крик тревоги
-    // распространяется по стае, даже если сама угроза не видна) и опасность
+    // распространяется по стае, даже если сама угроза не видна), опасность
     // близкого (вес ниже, чем у собственной угрозы, но это не декоративный
-    // сигнал — вместе с defendDesire/движением он и даёт "защиту любимых").
+    // сигнал — вместе с defendDesire/движением он и даёт "защиту любимых") и
+    // лёгкую фоновую настороженность от толпы незнакомцев (вес заметно ниже
+    // настоящих угроз — эволюционировавшие веса решают, насколько конкретной
+    // линии вообще есть дело до чужаков).
     const float fearLerp = std::clamp(8.0f * dt, 0.0f, 1.0f);
     const float fearTarget = std::max({
         senses.threatProximity,
         senses.nearbyAlarmLevel * 0.6f,
         senses.lovedOneThreatLevel * 0.7f,
+        senses.strangerCrowding * 0.15f,
     });
     needs.fear = needs.fear + (fearTarget - needs.fear) * fearLerp;
 
-    needs.social = std::clamp(needs.social + (senses.crowding * 0.05f - 0.01f) * dt, 0.0f, 1.0f);
+    // Свои удовлетворяют потребность в общении сильнее чужих (но не до нуля —
+    // какая-то социальная ценность есть и в компании незнакомцев).
+    needs.social = std::clamp(
+        needs.social + (senses.familiarCrowding * 0.06f + senses.strangerCrowding * 0.02f - 0.01f) * dt,
+        0.0f, 1.0f);
     // Брачный зов соседей слегка подстёгивает либидо — социальная реплика
     // готовности к размножению, помимо собственного внутреннего дрейфа.
     needs.libido = std::clamp(
