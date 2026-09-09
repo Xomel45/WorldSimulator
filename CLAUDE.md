@@ -90,24 +90,30 @@ pointer instead (the whole engine assumes exactly one window/one
 ## Creature core (`engine/sim/`)
 
 Pure simulation logic, no world/spawning/rendering integration yet:
-- **`Genome`** — flat `std::vector<float>` of 674 genes in `[-1,1]`: 5 body
-  traits (speed/size/metabolism/lifespan/fertility, named via
-  `Genome::TraitIndex`) + 669 brain weights (`brainWeights()` span, must stay
-  in sync with `brain::kWeightCount` — enforced by a `static_assert` in
-  `Genome.cpp`). `random()`/`crossover()`/`mutate()` all take an explicit
-  `Rng&` (`std::mt19937`, no global RNG state — deterministic given a seed).
-  Random brain weights are drawn from a narrow gaussian (not full `[-1,1]`
-  noise) so a fresh creature starts with responsive, non-saturated neurons
-  instead of flailing for generations before selection finds anything
-  coherent.
-- **`Brain`** — stateless: `brain::evaluate(weights, BrainInputs) -> BrainOutputs`,
-  fixed topology 23 inputs → 20 hidden (tanh) → 9 outputs (`tanh` for move
-  X/Z, sigmoid for the desire + communication outputs). Sized after comparing
-  to the real Creatures Norn brain (952 neurons/~5000 connections/9 lobes) —
-  both scales are computationally trivial at thousands of agents, so this was
-  a scope call, not a performance one. No lifetime-learning lobe (a Norn can
-  learn associations during its life) — still deliberately deferred, unlike
-  the identity/relationship memory below which now exists.
+- **`Genome`** — flat `std::vector<float>` of 695 genes in `[-1,1]`: 6 body/
+  behavior traits (speed/size/metabolism/lifespan/fertility/**plasticity**,
+  named via `Genome::TraitIndex`) + 689 brain weights, split into
+  `fixedBrainWeights()` (500 — input→hidden, "perception", never changes
+  after birth) and `initialPlasticWeights()` (189 — hidden→output, "decision
+  mapping", just the *starting point* a creature's `learnedWeights` copies at
+  birth — see `Brain`/`Creature` below). `Genome::kFixedBrainWeightCount`/
+  `kPlasticBrainWeightCount`/`kBrainWeightCount` mirror
+  `brain::kInputHiddenWeights+kHiddenCount` / `kHiddenOutputWeights+kOutputCount`
+  / `kWeightCount` respectively, enforced by `static_assert`s in `Genome.cpp`.
+  `random()`/`crossover()`/`mutate()` all take an explicit `Rng&`
+  (`std::mt19937`, no global RNG state — deterministic given a seed). Random
+  brain weights are drawn from a narrow gaussian (not full `[-1,1]` noise) so
+  a fresh creature starts with responsive, non-saturated neurons instead of
+  flailing for generations before selection finds anything coherent.
+- **`Brain`** — mostly stateless, with one deliberate exception (see lifetime
+  learning below): `brain::evaluate(fixedWeights, plasticWeights, BrainInputs)
+  -> BrainEvalResult` (bundles `BrainOutputs` + the hidden/output activations,
+  needed by `reinforce()`), fixed topology 24 inputs → 20 hidden (tanh) → 9
+  outputs (`tanh` for move X/Z, sigmoid for the desire + communication
+  outputs). Sized after comparing to the real Creatures Norn brain (952
+  neurons/~5000 connections/9 lobes) — both scales are computationally
+  trivial at thousands of agents, so this was a scope call, not a performance
+  one.
 - **Communication** (`alarmCall`/`matingCall` outputs, `nearbyAlarmLevel`/
   `nearbyMatingCallLevel` inputs) — creatures broadcast a distress or
   mating-readiness signal; nearby creatures sense the aggregate (computed
@@ -122,6 +128,13 @@ Pure simulation logic, no world/spawning/rendering integration yet:
   hard-coding "help a neighbor in danger" would undercut the actual goal
   (genuinely emergent, evolved behavior, not a scripted formula wearing a
   brain label).
+- **In-group/out-group** — `SenseInputs::familiarCrowding`/`strangerCrowding`
+  (world tells a creature how many nearby individuals are "known": id
+  matches `bondedPartnerId`/`parentIds`/`childIds`, vs strangers). Family
+  satisfies `needs.social` more than strangers do (not zero — some social
+  value even among unknowns); a crowd of strangers adds mild background
+  wariness to `needs.fear` (well below any real threat — evolved weights
+  decide how much a given lineage actually cares).
 - **`defendDesire`** output (fight, not just flee) + **`selfSize`** input (a
   creature needs some notion of its own size/strength to make a fight-vs-flee
   decision that's about anything other than luck). Like the other desire
@@ -133,27 +146,52 @@ Pure simulation logic, no world/spawning/rendering integration yet:
   that's a population-registry concern for the future World system, same
   "world decides, `Creature` records" pattern as `feed()`/`rest()`/`mate()` —
   a freshly-constructed or freshly-`reproduce()`d `Creature` has `id == 0`
-  until the world registers it. `mate(partnerId)` now also sets
-  `bondedPartnerId` (was argument-less); `recordChild(childId)` is new, the
-  world calls it on both parents after assigning the new child's real id;
-  `reproduce()` sets the child's `parentIds` from the parents' existing ids.
-  `childIds` is a `std::vector`, which reintroduces heap allocation on
-  reproduction (rare relative to per-tick brain evaluation, so an accepted
-  trade-off for now over a fixed-capacity container — revisit only if
-  profiling ever shows it matters). This is what makes "loved ones" a real
-  sensed thing: `SenseInputs::lovedOneDir/Proximity/ThreatLevel` (→
+  until the world registers it. `mate(partnerId)` also sets
+  `bondedPartnerId`; `recordChild(childId)` — the world calls it on both
+  parents after assigning the new child's real id; `reproduce()` sets the
+  child's `parentIds` from the parents' existing ids. `childIds` is a
+  `std::vector`, which reintroduces heap allocation on reproduction (rare
+  relative to per-tick brain evaluation, so an accepted trade-off for now
+  over a fixed-capacity container — revisit only if profiling ever shows it
+  matters). This is what makes "loved ones" a real sensed thing:
+  `SenseInputs::lovedOneDir/Proximity/ThreatLevel` (→
   `BrainInputs::lovedOneDirX/Z/Proximity/ThreatLevel`) is computed externally
   from the family/bond ids above, same seam as every other sensed field, and
   feeds `needs.fear` in `Creature::tick()` (weighted below own-threat and
   above generic herd-alarm) as well as the existing move/defend outputs.
+- **Lifetime learning** — the one deliberate exception to "Brain is
+  stateless": `Creature::learnedWeights` is a per-creature runtime copy of
+  just the *plastic* weight slice (hidden→output+bias, 189 floats), lazily
+  initialized from `genome.initialPlasticWeights()` on first `tick()`
+  (`resetLearning()` does this explicitly too, e.g. for a "forget everything"
+  mechanic later). Mechanism: **reward-modulated Hebbian learning**
+  (`brain::reinforce()`) — no backprop/gradient framework, matches the
+  project's whole no-training-loop approach and is roughly the era/style the
+  real Creatures used. `Creature::tick()` computes `reward` from the needs
+  delta the tick itself produces (`wellbeing = -hunger -(1-energy) -fear`,
+  `reward = wellbeing_after - wellbeing_before`, clamped `[-1,1]`) and calls
+  `reinforce()` after applying the tick's outputs — `Δw = learningRate *
+  reward * hiddenActivation * outputActivation`, clamped to `[-2,2]` (wider
+  than genome's `[-1,1]` — this is runtime state, not gene-space). The
+  input→hidden slice (`genome.fixedBrainWeights()`, "perception") is never
+  plastic — only "how strongly a perceived pattern drives an action" adapts,
+  echoing Creatures' separation of more-fixed perceptual lobes from a
+  dedicated learning lobe, without a full multi-lobe rewrite.
+  `Genome::kPlasticity` (trait, lerped via `Creature::plasticity()` to
+  `[0, 0.05]`) makes the learning rate itself heritable — evolution can
+  select for more/less behaviorally-adaptive lineages. Crucially:
+  **Darwinian, not Lamarckian** — `reproduce()` crosses over `Genome`s only,
+  never `learnedWeights`; a child inherits baseline instinct, never a
+  parent's lifetime experience.
 - **`Creature`** — aggregates `Genome` + `Needs` (hunger/energy/fear/libido/
-  social) + identity + position/velocity/age. `tick(dt, SenseInputs)` runs
-  the brain and updates needs/movement/age; `SenseInputs` is supplied by the
-  caller — `Creature` never queries a world itself, which is the seam the
-  next milestone (world + spatial queries) plugs into. `feed()`/`rest()`/
-  `mate()`/`recordChild()` are world-driven mutators (world decides an
-  action succeeded, then calls these). Body traits (`maxSpeed()` etc.) are
-  computed on-demand from the genome, not cached.
+  social) + identity + `learnedWeights` + position/velocity/age.
+  `tick(dt, SenseInputs)` runs the brain (with learning) and updates
+  needs/movement/age; `SenseInputs` is supplied by the caller — `Creature`
+  never queries a world itself, which is the seam the next milestone (world +
+  spatial queries) plugs into. `feed()`/`rest()`/`mate()`/`recordChild()` are
+  world-driven mutators (world decides an action succeeded, then calls
+  these). Body traits (`maxSpeed()` etc.) are computed on-demand from the
+  genome, not cached.
 - Tests: `engine/sim/tests/{genome,brain,creature}_tests.cpp`, assert-based
   (no test framework dependency), run via `ctest --test-dir build/debug`.
 
@@ -162,8 +200,8 @@ Pure simulation logic, no world/spawning/rendering integration yet:
 - [x] Engine bring-up: window, Vulkan context, ImGui, orbit camera, flat
       ground plane, fixed-timestep loop
 - [x] Creature core: genetics, neural-net brain, needs, communication,
-      fight-or-flight, identity/relationships (`engine/sim/`) — not yet
-      wired into the running game
+      fight-or-flight, identity/relationships, in-group/out-group, lifetime
+      learning (`engine/sim/`) — not yet wired into the running game
 - [ ] Procedural terrain (heightmap or voxel — AlphaCraft's Perlin/chunk code
       may be a starting point)
 - [ ] World + spatial-grid system (feeds `SenseInputs` to creatures; also

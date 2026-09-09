@@ -62,6 +62,13 @@ public:
     std::array<std::uint64_t,2> parentIds{0, 0};       // {0,0} = не рождён через reproduce()
     std::vector<std::uint64_t>  childIds;              // растёт через recordChild()
 
+    // Пластичная часть мозга (hidden->output+bias) в течение жизни — своя
+    // изменяемая копия, стартующая от genome.initialPlasticWeights(). Гены
+    // (genome) НИКОГДА этим не трогаются: обучение не наследуется (Дарвин, не
+    // Ламарк) — reproduce() кроссовит только genome. Лениво инициализируется
+    // первым tick(), если пуст; resetLearning() — явный сброс "с нуля".
+    std::vector<float> learnedWeights;
+
     // Черты тела считаются из генома по требованию (единственный источник
     // истины — геном; кэшировать эти значения имеет смысл только если
     // профилирование когда-нибудь покажет, что это узкое место).
@@ -70,10 +77,15 @@ public:
     [[nodiscard]] float metabolism() const noexcept;  // [0.7, 1.4] множитель расхода
     [[nodiscard]] float lifespan() const noexcept;    // [300, 1200] с (плейсхолдер-юнит до системы времени)
     [[nodiscard]] float fertility() const noexcept;   // [0, 1]
+    [[nodiscard]] float plasticity() const noexcept;  // [0, 0.05] скорость обучения в течение жизни
 
-    // Один тик: считает мозг, обновляет needs/position/age. Возвращает выход
-    // мозга как есть — удался ли eat/flee/mate, решает мир (позже), вызывая
-    // feed()/rest() по факту.
+    // Копирует genome.initialPlasticWeights() поверх learnedWeights — "с
+    // чистого листа". tick() вызывает это лениво сам, если learnedWeights пуст.
+    void resetLearning() noexcept;
+
+    // Один тик: считает мозг (с обучением — см. resetLearning()/plasticity()),
+    // обновляет needs/position/age. Возвращает выход мозга как есть — удался
+    // ли eat/flee/mate, решает мир (позже), вызывая feed()/rest() по факту.
     BrainOutputs tick(float dt, const SenseInputs& senses) noexcept;
 
     void feed(float amount) noexcept;                    // мир вызывает при успешном поедании

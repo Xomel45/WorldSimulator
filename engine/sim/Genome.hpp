@@ -17,9 +17,17 @@ using Rng = std::mt19937;
 // Genome не тянул за собой Brain — размер завязан константой напрямую).
 class Genome {
 public:
-    static constexpr std::size_t kTraitGeneCount = 5;
+    static constexpr std::size_t kTraitGeneCount = 6;
     static constexpr std::size_t kBrainWeightCount = 689;  // = brain::kWeightCount
     static constexpr std::size_t kGeneCount = kTraitGeneCount + kBrainWeightCount;
+
+    // Разбивка весов мозга на фиксированную (input->hidden — "восприятие",
+    // наследуется, не меняется в течение жизни) и пластичную (hidden->output
+    // — "принятие решений", у Creature есть свой изменяемый рантайм-экземпляр
+    // этого куска, см. Creature::learnedWeights) части. Зеркалит
+    // brain::kInputHiddenWeights+kHiddenCount / kHiddenOutputWeights+kOutputCount.
+    static constexpr std::size_t kFixedBrainWeightCount   = 500;
+    static constexpr std::size_t kPlasticBrainWeightCount = 189;
 
     enum TraitIndex : std::size_t {
         kSpeed = 0,
@@ -27,6 +35,7 @@ public:
         kMetabolism,
         kLifespan,
         kFertility,
+        kPlasticity,  // скорость обучения в течение жизни — см. Creature::plasticity()
     };
 
     Genome() : m_genes(kGeneCount, 0.0f) {}
@@ -34,6 +43,15 @@ public:
     [[nodiscard]] float trait(TraitIndex i) const noexcept { return m_genes[static_cast<std::size_t>(i)]; }
     [[nodiscard]] std::span<const float> brainWeights() const noexcept {
         return {m_genes.data() + kTraitGeneCount, kBrainWeightCount};
+    }
+    [[nodiscard]] std::span<const float> fixedBrainWeights() const noexcept {
+        return {m_genes.data() + kTraitGeneCount, kFixedBrainWeightCount};
+    }
+    // Стартовая точка для Creature::learnedWeights у новорождённой особи —
+    // сама генома этот кусок никогда не меняет (обучение не наследуется,
+    // см. Creature::tick()/resetLearning()).
+    [[nodiscard]] std::span<const float> initialPlasticWeights() const noexcept {
+        return {m_genes.data() + kTraitGeneCount + kFixedBrainWeightCount, kPlasticBrainWeightCount};
     }
 
     // Случайная особь: черты тела — равномерно; веса мозга — со смещением к

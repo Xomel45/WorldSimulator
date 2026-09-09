@@ -10,6 +10,7 @@ using namespace wsim;
 namespace {
 constexpr Genome::TraitIndex kAllTraits[] = {
     Genome::kSpeed, Genome::kSize, Genome::kMetabolism, Genome::kLifespan, Genome::kFertility,
+    Genome::kPlasticity,
 };
 }
 
@@ -31,6 +32,18 @@ int main() {
     for (std::size_t i = 0; i < weightsA.size(); ++i) {
         WSIM_CHECK(weightsA[i] == weightsB[i]);
         WSIM_CHECK(weightsA[i] >= -1.0f && weightsA[i] <= 1.0f);
+    }
+
+    // fixedBrainWeights() + initialPlasticWeights() -- ровно та же память, что
+    // и brainWeights(), без дыры/перехлёста между двумя половинами.
+    {
+        auto fixed   = a.fixedBrainWeights();
+        auto plastic = a.initialPlasticWeights();
+        WSIM_CHECK(fixed.size() + plastic.size() == weightsA.size());
+        for (std::size_t i = 0; i < fixed.size(); ++i)
+            WSIM_CHECK(fixed[i] == weightsA[i]);
+        for (std::size_t i = 0; i < plastic.size(); ++i)
+            WSIM_CHECK(plastic[i] == weightsA[fixed.size() + i]);
     }
 
     // Кроссовер: каждый ген ребёнка -- ровно от одного из родителей.

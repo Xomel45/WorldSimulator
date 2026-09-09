@@ -3,12 +3,14 @@
 #include "test_util.hpp"
 
 #include <cstdio>
+#include <vector>
 
 using namespace wsim;
 
 namespace {
 constexpr Genome::TraitIndex kAllTraits[] = {
     Genome::kSpeed, Genome::kSize, Genome::kMetabolism, Genome::kLifespan, Genome::kFertility,
+    Genome::kPlasticity,
 };
 }
 
@@ -50,6 +52,37 @@ int main() {
     c.recordChild(101);
     WSIM_CHECK(c.childIds.size() == 2);
     WSIM_CHECK(c.childIds[0] == 100 && c.childIds[1] == 101);
+
+    // Обучение в течение жизни: learnedWeights лениво инициализируется первым
+    // tick() и дрейфует от genome.initialPlasticWeights() (голод растёт,
+    // энергия падает при нейтральных senses -- устойчиво отрицательный reward
+    // достаточен, чтобы веса сдвинулись), а сам geноme при этом не трогается
+    // (Дарвин, не Ламарк).
+    {
+        Rng rngL(303);
+        Creature learner;
+        learner.genome = Genome::random(rngL);
+        WSIM_CHECK(learner.learnedWeights.empty());
+
+        const std::vector<float> genomeSnapshot(
+            learner.genome.initialPlasticWeights().begin(), learner.genome.initialPlasticWeights().end());
+
+        learner.tick(0.1f, senses);  // лениво инициализирует learnedWeights
+        WSIM_CHECK(learner.learnedWeights.size() == genomeSnapshot.size());
+        const std::vector<float> weightsAfterFirstTick = learner.learnedWeights;
+
+        for (int i = 0; i < 200; ++i)
+            learner.tick(0.1f, senses);
+
+        WSIM_CHECK(learner.learnedWeights != weightsAfterFirstTick);  // обучение реально сдвинуло веса
+        const std::vector<float> genomeAfter(
+            learner.genome.initialPlasticWeights().begin(), learner.genome.initialPlasticWeights().end());
+        WSIM_CHECK(genomeAfter == genomeSnapshot);  // геном не мутировал
+
+        // resetLearning() возвращает к стартовой точке генома.
+        learner.resetLearning();
+        WSIM_CHECK(learner.learnedWeights == genomeSnapshot);
+    }
 
     // Смерть от старости: тикаем крупными шагами, пока не умрёт.
     Creature old;

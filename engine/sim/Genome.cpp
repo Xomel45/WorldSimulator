@@ -6,10 +6,17 @@
 
 namespace wsim {
 
-// kBrainWeightCount дублирует brain::kWeightCount (публичный заголовок Genome
-// намеренно не включает Brain.hpp) — этот static_assert ловит рассинхрон при
-// изменении топологии сети.
+// kBrainWeightCount/kFixedBrainWeightCount/kPlasticBrainWeightCount дублируют
+// brain::kWeightCount и его разбивку (публичный заголовок Genome намеренно
+// не включает Brain.hpp) — эти static_assert ловят рассинхрон при изменении
+// топологии сети.
 static_assert(Genome::kBrainWeightCount == static_cast<std::size_t>(brain::kWeightCount));
+static_assert(Genome::kFixedBrainWeightCount ==
+              static_cast<std::size_t>(brain::kInputHiddenWeights + brain::kHiddenCount));
+static_assert(Genome::kPlasticBrainWeightCount ==
+              static_cast<std::size_t>(brain::kHiddenOutputWeights + brain::kOutputCount));
+static_assert(Genome::kFixedBrainWeightCount + Genome::kPlasticBrainWeightCount ==
+              Genome::kBrainWeightCount);
 
 Genome Genome::random(Rng& rng) {
     std::vector<float> genes(kGeneCount);

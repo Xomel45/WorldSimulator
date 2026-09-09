@@ -24,6 +24,10 @@ float noiseFromAge(float age) noexcept {
     return static_cast<float>(bits) / static_cast<float>(0xFFFFFFFFu) * 2.0f - 1.0f;
 }
 
+// Простой скаляр "как дела" из основных драйвов выживания — разница до/после
+// тика и есть reward для reinforce() (см. Creature::tick()).
+float wellbeing(const Needs& n) noexcept { return -n.hunger - (1.0f - n.energy) - n.fear; }
+
 }  // namespace
 
 float Creature::maxSpeed() const noexcept   { return lerpTrait(genome.trait(Genome::kSpeed), 1.0f, 6.0f); }
@@ -31,8 +35,17 @@ float Creature::size() const noexcept       { return lerpTrait(genome.trait(Geno
 float Creature::metabolism() const noexcept { return lerpTrait(genome.trait(Genome::kMetabolism), 0.7f, 1.4f); }
 float Creature::lifespan() const noexcept   { return lerpTrait(genome.trait(Genome::kLifespan), 300.0f, 1200.0f); }
 float Creature::fertility() const noexcept  { return lerpTrait(genome.trait(Genome::kFertility), 0.0f, 1.0f); }
+float Creature::plasticity() const noexcept { return lerpTrait(genome.trait(Genome::kPlasticity), 0.0f, 0.05f); }
+
+void Creature::resetLearning() noexcept {
+    const auto initial = genome.initialPlasticWeights();
+    learnedWeights.assign(initial.begin(), initial.end());
+}
 
 BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
+    if (learnedWeights.empty()) resetLearning();
+    const float wellbeingBefore = wellbeing(needs);
+
     const BrainInputs in{
         .hunger  = needs.hunger,
         .energy  = needs.energy,
@@ -67,7 +80,8 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
         .lovedOneThreatLevel = senses.lovedOneThreatLevel,
     };
 
-    const BrainOutputs out = brain::evaluate(genome.brainWeights(), in);
+    const brain::BrainEvalResult result = brain::evaluate(genome.fixedBrainWeights(), learnedWeights, in);
+    const BrainOutputs& out = result.outputs;
 
     const float metab = metabolism();
     needs.hunger = std::clamp(needs.hunger + 0.01f * metab * dt, 0.0f, 1.0f);
@@ -107,6 +121,13 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
     position += velocity * dt;
     age += dt;
     if (age >= lifespan()) alive = false;
+
+    // Reward-modulated Hebbian: подкрепляем/ослабляем связи, которые только
+    // что сработали, в зависимости от того, стало ли лучше или хуже за этот
+    // тик. Обучение затрагивает только learnedWeights (рантайм-копия) — сам
+    // genome.initialPlasticWeights() этим тиком не трогается (не наследуется).
+    const float reward = std::clamp(wellbeing(needs) - wellbeingBefore, -1.0f, 1.0f);
+    brain::reinforce(learnedWeights, result, reward, plasticity());
 
     return out;
 }

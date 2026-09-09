@@ -1,5 +1,6 @@
 #include "sim/Brain.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 
@@ -24,13 +25,16 @@ std::array<float, kInputCount> toArray(const BrainInputs& in) noexcept {
 
 }  // namespace
 
-BrainOutputs evaluate(std::span<const float> weights, const BrainInputs& in) noexcept {
+BrainEvalResult evaluate(std::span<const float> fixedWeights, std::span<const float> plasticWeights,
+                          const BrainInputs& in) noexcept {
     const auto inputs = toArray(in);
 
-    const std::span<const float> inputHidden  = weights.subspan(0, kInputHiddenWeights);
-    const std::span<const float> hiddenBias    = weights.subspan(kInputHiddenWeights, kHiddenCount);
-    const std::span<const float> hiddenOutput  = weights.subspan(kInputHiddenWeights + kHiddenCount, kHiddenOutputWeights);
-    const std::span<const float> outputBias    = weights.subspan(kInputHiddenWeights + kHiddenCount + kHiddenOutputWeights, kOutputCount);
+    // fixedWeights: [inputHidden(480)][hiddenBias(20)] -- см. Genome::fixedBrainWeights().
+    const std::span<const float> inputHidden = fixedWeights.subspan(0, kInputHiddenWeights);
+    const std::span<const float> hiddenBias  = fixedWeights.subspan(kInputHiddenWeights, kHiddenCount);
+    // plasticWeights: [hiddenOutput(180)][outputBias(9)] -- см. Creature::learnedWeights.
+    const std::span<const float> hiddenOutput = plasticWeights.subspan(0, kHiddenOutputWeights);
+    const std::span<const float> outputBias   = plasticWeights.subspan(kHiddenOutputWeights, kOutputCount);
 
     std::array<float, kHiddenCount> hidden{};
     for (int h = 0; h < kHiddenCount; ++h) {
@@ -48,17 +52,41 @@ BrainOutputs evaluate(std::span<const float> weights, const BrainInputs& in) noe
         out[static_cast<std::size_t>(o)] = sum;
     }
 
-    return BrainOutputs{
-        .moveX        = std::tanh(out[0]),
-        .moveZ        = std::tanh(out[1]),
-        .eatDesire    = sigmoid(out[2]),
-        .fleeDesire   = sigmoid(out[3]),
-        .mateDesire   = sigmoid(out[4]),
-        .restDesire   = sigmoid(out[5]),
-        .defendDesire = sigmoid(out[6]),
-        .alarmCall    = sigmoid(out[7]),
-        .matingCall   = sigmoid(out[8]),
+    BrainEvalResult result{
+        .outputs = {
+            .moveX        = std::tanh(out[0]),
+            .moveZ        = std::tanh(out[1]),
+            .eatDesire    = sigmoid(out[2]),
+            .fleeDesire   = sigmoid(out[3]),
+            .mateDesire   = sigmoid(out[4]),
+            .restDesire   = sigmoid(out[5]),
+            .defendDesire = sigmoid(out[6]),
+            .alarmCall    = sigmoid(out[7]),
+            .matingCall   = sigmoid(out[8]),
+        },
+        .hiddenActivations = hidden,
+        .outputActivations = out,
     };
+    return result;
+}
+
+void reinforce(std::span<float> plasticWeights, const BrainEvalResult& result,
+               float reward, float learningRate) noexcept {
+    const std::span<float> hiddenOutput = plasticWeights.subspan(0, kHiddenOutputWeights);
+    const std::span<float> outputBias   = plasticWeights.subspan(kHiddenOutputWeights, kOutputCount);
+
+    const float delta = reward * learningRate;
+
+    for (int o = 0; o < kOutputCount; ++o) {
+        const float postActivation = result.outputActivations[static_cast<std::size_t>(o)];
+        for (int h = 0; h < kHiddenCount; ++h) {
+            const std::size_t idx = static_cast<std::size_t>(o * kHiddenCount + h);
+            float w = hiddenOutput[idx] + delta * result.hiddenActivations[static_cast<std::size_t>(h)] * postActivation;
+            hiddenOutput[idx] = std::clamp(w, -2.0f, 2.0f);
+        }
+        float b = outputBias[static_cast<std::size_t>(o)] + delta * postActivation;
+        outputBias[static_cast<std::size_t>(o)] = std::clamp(b, -2.0f, 2.0f);
+    }
 }
 
 }  // namespace wsim::brain
