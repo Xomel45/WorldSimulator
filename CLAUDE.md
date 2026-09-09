@@ -90,9 +90,9 @@ pointer instead (the whole engine assumes exactly one window/one
 ## Creature core (`engine/sim/`)
 
 Pure simulation logic, no world/spawning/rendering integration yet:
-- **`Genome`** — flat `std::vector<float>` of 553 genes in `[-1,1]`: 5 body
+- **`Genome`** — flat `std::vector<float>` of 594 genes in `[-1,1]`: 5 body
   traits (speed/size/metabolism/lifespan/fertility, named via
-  `Genome::TraitIndex`) + 548 brain weights (`brainWeights()` span, must stay
+  `Genome::TraitIndex`) + 589 brain weights (`brainWeights()` span, must stay
   in sync with `brain::kWeightCount` — enforced by a `static_assert` in
   `Genome.cpp`). `random()`/`crossover()`/`mutate()` all take an explicit
   `Rng&` (`std::mt19937`, no global RNG state — deterministic given a seed).
@@ -101,13 +101,17 @@ Pure simulation logic, no world/spawning/rendering integration yet:
   instead of flailing for generations before selection finds anything
   coherent.
 - **`Brain`** — stateless: `brain::evaluate(weights, BrainInputs) -> BrainOutputs`,
-  fixed topology 18 inputs → 20 hidden (tanh) → 8 outputs (`tanh` for move
+  fixed topology 19 inputs → 20 hidden (tanh) → 9 outputs (`tanh` for move
   X/Z, sigmoid for the desire + communication outputs). Sized after comparing
   to the real Creatures Norn brain (952 neurons/~5000 connections/9 lobes) —
   both scales are computationally trivial at thousands of agents, so this was
   a scope call, not a performance one. No lifetime-learning lobe (a Norn can
-  learn associations during its life) — deliberately deferred, would be an
-  additive input source layered on top of `evaluate()`, not a rewrite.
+  learn associations during its life), and no per-individual relationship
+  memory (bonded partner/offspring identity) — both deliberately deferred:
+  they'd need creatures to have stable IDs and persistent memory, which the
+  current stateless-per-tick brain fundamentally can't hold. Revisit if/when
+  "loved ones"-style behavior (as opposed to generic herd/mating behavior)
+  becomes a priority.
 - **Communication** (`alarmCall`/`matingCall` outputs, `nearbyAlarmLevel`/
   `nearbyMatingCallLevel` inputs) — creatures broadcast a distress or
   mating-readiness signal; nearby creatures sense the aggregate (computed
@@ -117,6 +121,16 @@ Pure simulation logic, no world/spawning/rendering integration yet:
   you can't see the threat yourself (herd panic), a neighbor's mating call
   nudges your own libido. This is what makes creatures actually social,
   rather than tracking a private `Needs::social` number nobody else reacts to.
+  It's also the raw material for emergent teamwork (e.g. rallying toward an
+  alarm instead of fleeing it) — deliberately not hard-scripted, since
+  hard-coding "help a neighbor in danger" would undercut the actual goal
+  (genuinely emergent, evolved behavior, not a scripted formula wearing a
+  brain label).
+- **`defendDesire`** output (fight, not just flee) + **`selfSize`** input (a
+  creature needs some notion of its own size/strength to make a fight-vs-flee
+  decision that's about anything other than luck). Like the other desire
+  outputs, the world (later) decides whether a fight actually resolves — the
+  brain only expresses intent.
 - **`Creature`** — aggregates `Genome` + `Needs` (hunger/energy/fear/libido/
   social) + position/velocity/age. `tick(dt, SenseInputs)` runs the brain and
   updates needs/movement/age; `SenseInputs` (nearest food/threat/mate

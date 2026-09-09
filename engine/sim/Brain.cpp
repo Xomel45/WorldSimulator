@@ -17,6 +17,7 @@ std::array<float, kInputCount> toArray(const BrainInputs& in) noexcept {
         in.mateDirX, in.mateDirZ, in.mateProximity,
         in.crowding, in.noise,
         in.nearbyAlarmLevel, in.nearbyMatingCallLevel,
+        in.selfSize,
     };
 }
 
@@ -47,14 +48,15 @@ BrainOutputs evaluate(std::span<const float> weights, const BrainInputs& in) noe
     }
 
     return BrainOutputs{
-        .moveX      = std::tanh(out[0]),
-        .moveZ      = std::tanh(out[1]),
-        .eatDesire  = sigmoid(out[2]),
-        .fleeDesire = sigmoid(out[3]),
-        .mateDesire = sigmoid(out[4]),
-        .restDesire = sigmoid(out[5]),
-        .alarmCall  = sigmoid(out[6]),
-        .matingCall = sigmoid(out[7]),
+        .moveX        = std::tanh(out[0]),
+        .moveZ        = std::tanh(out[1]),
+        .eatDesire    = sigmoid(out[2]),
+        .fleeDesire   = sigmoid(out[3]),
+        .mateDesire   = sigmoid(out[4]),
+        .restDesire   = sigmoid(out[5]),
+        .defendDesire = sigmoid(out[6]),
+        .alarmCall    = sigmoid(out[7]),
+        .matingCall   = sigmoid(out[8]),
     };
 }
 

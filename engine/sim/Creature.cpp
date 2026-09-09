@@ -57,6 +57,8 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
 
         .nearbyAlarmLevel      = senses.nearbyAlarmLevel,
         .nearbyMatingCallLevel = senses.nearbyMatingCallLevel,
+
+        .selfSize = size(),
     };
 
     const BrainOutputs out = brain::evaluate(genome.brainWeights(), in);
