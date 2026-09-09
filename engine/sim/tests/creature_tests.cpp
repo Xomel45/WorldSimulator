@@ -10,7 +10,7 @@ using namespace wsim;
 namespace {
 constexpr Genome::TraitIndex kAllTraits[] = {
     Genome::kSpeed, Genome::kSize, Genome::kMetabolism, Genome::kLifespan, Genome::kFertility,
-    Genome::kPlasticity,
+    Genome::kPlasticity, Genome::kBoldness, Genome::kSociability, Genome::kBondStrength,
 };
 }
 
@@ -82,6 +82,25 @@ int main() {
         // resetLearning() возвращает к стартовой точке генома.
         learner.resetLearning();
         WSIM_CHECK(learner.learnedWeights == genomeSnapshot);
+    }
+
+    // Явный темперамент реально что-то меняет: два одинаковых существа, кроме
+    // гена boldness на разных полюсах ([-1] трус, [1] храбрец) -- под угрозой
+    // трус боится сильнее.
+    {
+        Rng rngT(404);
+        Creature timid;
+        timid.genome = Genome::random(rngT);
+        Creature brave = timid;  // тот же геном, кроме boldness ниже
+        timid.genome.setTrait(Genome::kBoldness, -1.0f);
+        brave.genome.setTrait(Genome::kBoldness, 1.0f);
+
+        SenseInputs threatSenses{};
+        threatSenses.threatProximity = 0.8f;
+
+        timid.tick(0.1f, threatSenses);
+        brave.tick(0.1f, threatSenses);
+        WSIM_CHECK(brave.needs.fear < timid.needs.fear);
     }
 
     // Смерть от старости: тикаем крупными шагами, пока не умрёт.

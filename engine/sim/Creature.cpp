@@ -37,6 +37,10 @@ float Creature::lifespan() const noexcept   { return lerpTrait(genome.trait(Geno
 float Creature::fertility() const noexcept  { return lerpTrait(genome.trait(Genome::kFertility), 0.0f, 1.0f); }
 float Creature::plasticity() const noexcept { return lerpTrait(genome.trait(Genome::kPlasticity), 0.0f, 0.05f); }
 
+float Creature::boldness() const noexcept     { return lerpTrait(genome.trait(Genome::kBoldness), 0.0f, 1.0f); }
+float Creature::sociability() const noexcept  { return lerpTrait(genome.trait(Genome::kSociability), 0.0f, 1.0f); }
+float Creature::bondStrength() const noexcept { return lerpTrait(genome.trait(Genome::kBondStrength), 0.2f, 1.0f); }
+
 void Creature::resetLearning() noexcept {
     const auto initial = genome.initialPlasticWeights();
     learnedWeights.assign(initial.begin(), initial.end());
@@ -93,24 +97,31 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
 
     // Страх реагирует на собственную угрозу, панику соседей (крик тревоги
     // распространяется по стае, даже если сама угроза не видна), опасность
-    // близкого (вес ниже, чем у собственной угрозы, но это не декоративный
-    // сигнал — вместе с defendDesire/движением он и даёт "защиту любимых") и
-    // лёгкую фоновую настороженность от толпы незнакомцев (вес заметно ниже
-    // настоящих угроз — эволюционировавшие веса решают, насколько конкретной
-    // линии вообще есть дело до чужаков).
+    // близкого (вместе с defendDesire/движением это и даёт "защиту любимых")
+    // и лёгкую фоновую настороженность от толпы незнакомцев -- каждый вклад
+    // промодулирован явным темпераментом (boldness/bondStrength/sociability),
+    // а не одинаковой для всех константой: насколько конкретная особь боится
+    // за себя, за близких и за компанию чужаков -- теперь индивидуально и
+    // наследуемо.
     const float fearLerp = std::clamp(8.0f * dt, 0.0f, 1.0f);
+    const float boldnessFactor = 1.0f - boldness() * 0.7f;  // пол 0.3: полностью бесстрашных не бывает
     const float fearTarget = std::max({
-        senses.threatProximity,
-        senses.nearbyAlarmLevel * 0.6f,
-        senses.lovedOneThreatLevel * 0.7f,
-        senses.strangerCrowding * 0.15f,
+        senses.threatProximity * boldnessFactor,
+        senses.nearbyAlarmLevel * 0.6f * boldnessFactor,
+        senses.lovedOneThreatLevel * 0.7f * bondStrength(),
+        senses.strangerCrowding * 0.15f * (1.0f - sociability() * 0.6f),
     });
     needs.fear = needs.fear + (fearTarget - needs.fear) * fearLerp;
 
     // Свои удовлетворяют потребность в общении сильнее чужих (но не до нуля —
-    // какая-то социальная ценность есть и в компании незнакомцев).
+    // какая-то социальная ценность есть и в компании незнакомцев). Экстраверты
+    // (высокий sociability) получают больше отдачи от любой компании;
+    // базовый фоновый спад (-0.01) не зависит от темперамента -- одиночество
+    // со временем чувствуют все, просто с разной скоростью восполнения.
     needs.social = std::clamp(
-        needs.social + (senses.familiarCrowding * 0.06f + senses.strangerCrowding * 0.02f - 0.01f) * dt,
+        needs.social +
+            ((senses.familiarCrowding * 0.06f + senses.strangerCrowding * 0.02f) * (0.5f + sociability()) - 0.01f) *
+                dt,
         0.0f, 1.0f);
     // Брачный зов соседей слегка подстёгивает либидо — социальная реплика
     // готовности к размножению, помимо собственного внутреннего дрейфа.

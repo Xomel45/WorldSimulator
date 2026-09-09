@@ -79,6 +79,13 @@ public:
     [[nodiscard]] float fertility() const noexcept;   // [0, 1]
     [[nodiscard]] float plasticity() const noexcept;  // [0, 0.05] скорость обучения в течение жизни
 
+    // Явный темперамент — именованные, инспектируемые дилы "насколько", в
+    // отличие от неявной индивидуальности, зашитой в веса мозга. Напрямую
+    // (детерминированно) модулируют tick(), см. .cpp.
+    [[nodiscard]] float boldness() const noexcept;     // [0, 1] храбрость
+    [[nodiscard]] float sociability() const noexcept;  // [0, 1] интроверт..экстраверт
+    [[nodiscard]] float bondStrength() const noexcept; // [0, 1] привязанность к близким
+
     // Копирует genome.initialPlasticWeights() поверх learnedWeights — "с
     // чистого листа". tick() вызывает это лениво сам, если learnedWeights пуст.
     void resetLearning() noexcept;

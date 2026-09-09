@@ -90,9 +90,10 @@ pointer instead (the whole engine assumes exactly one window/one
 ## Creature core (`engine/sim/`)
 
 Pure simulation logic, no world/spawning/rendering integration yet:
-- **`Genome`** — flat `std::vector<float>` of 695 genes in `[-1,1]`: 6 body/
-  behavior traits (speed/size/metabolism/lifespan/fertility/**plasticity**,
-  named via `Genome::TraitIndex`) + 689 brain weights, split into
+- **`Genome`** — flat `std::vector<float>` of 698 genes in `[-1,1]`: 9 body/
+  behavior/temperament traits (speed/size/metabolism/lifespan/fertility/
+  **plasticity**/**boldness**/**sociability**/**bondStrength**, named via
+  `Genome::TraitIndex`) + 689 brain weights, split into
   `fixedBrainWeights()` (500 — input→hidden, "perception", never changes
   after birth) and `initialPlasticWeights()` (189 — hidden→output, "decision
   mapping", just the *starting point* a creature's `learnedWeights` copies at
@@ -105,6 +106,9 @@ Pure simulation logic, no world/spawning/rendering integration yet:
   brain weights are drawn from a narrow gaussian (not full `[-1,1]` noise) so
   a fresh creature starts with responsive, non-saturated neurons instead of
   flailing for generations before selection finds anything coherent.
+  `setTrait(TraitIndex, float)` is a direct, clamped single-gene setter —
+  symmetric with `trait()`, used by tests to force a specific temperament and
+  eventually by god-tools to set a creature's character directly.
 - **`Brain`** — mostly stateless, with one deliberate exception (see lifetime
   learning below): `brain::evaluate(fixedWeights, plasticWeights, BrainInputs)
   -> BrainEvalResult` (bundles `BrainOutputs` + the hidden/output activations,
@@ -159,6 +163,24 @@ Pure simulation logic, no world/spawning/rendering integration yet:
   from the family/bond ids above, same seam as every other sensed field, and
   feeds `needs.fear` in `Creature::tick()` (weighted below own-threat and
   above generic herd-alarm) as well as the existing move/defend outputs.
+- **Explicit temperament** — `boldness`/`sociability`/`bondStrength` are
+  named `Genome::TraitIndex` genes (unlike the other 689 brain weights,
+  individuality here isn't an opaque blob — it's inspectable and directly,
+  deterministically wired, not just another evolved input the network may or
+  may not learn to use). `Creature::boldness()`/`sociability()`/
+  `bondStrength()` lerp them to `[0,1]` (`bondStrength()` to `[0.2,1]` — a
+  bonded relationship is never *zero* fear) and modulate `tick()`'s
+  `fearTarget`: `boldness` dampens fear from own threat and herd alarm
+  (floored — nothing is fully fearless), `bondStrength` scales how strongly
+  a loved one's danger is felt (individualizes what used to be a flat
+  constant), `sociability` dampens stranger-crowd wariness. `sociability`
+  also scales how much company (familiar and stranger) satisfies
+  `needs.social` — extroverts gain more from any crowd, introverts less
+  (baseline loneliness decay is temperament-independent — everyone still
+  gets lonely over time). Considered a `kAggression` trait too but skipped:
+  no mechanical hook exists yet since fight resolution isn't implemented
+  (`defendDesire` is still just an expressed intent) — revisit once combat
+  lands.
 - **Lifetime learning** — the one deliberate exception to "Brain is
   stateless": `Creature::learnedWeights` is a per-creature runtime copy of
   just the *plastic* weight slice (hidden→output+bias, 189 floats), lazily
@@ -201,7 +223,8 @@ Pure simulation logic, no world/spawning/rendering integration yet:
       ground plane, fixed-timestep loop
 - [x] Creature core: genetics, neural-net brain, needs, communication,
       fight-or-flight, identity/relationships, in-group/out-group, lifetime
-      learning (`engine/sim/`) — not yet wired into the running game
+      learning, explicit temperament (`engine/sim/`) — not yet wired into the
+      running game
 - [ ] Procedural terrain (heightmap or voxel — AlphaCraft's Perlin/chunk code
       may be a starting point)
 - [ ] World + spatial-grid system (feeds `SenseInputs` to creatures; also
