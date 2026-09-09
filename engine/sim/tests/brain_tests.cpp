@@ -27,12 +27,12 @@ int main() {
 
     std::array<float, brain::kWeightCount> ones;
     ones.fill(1.0f);
-    BrainInputs onesIn{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+    BrainInputs onesIn{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
     checkOutputs(brain::evaluate(ones, onesIn));
 
     std::array<float, brain::kWeightCount> negOnes;
     negOnes.fill(-1.0f);
-    BrainInputs negIn{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
+    BrainInputs negIn{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
     checkOutputs(brain::evaluate(negOnes, negIn));
 
     // Случайные веса/входы -- выходы всегда в ожидаемом диапазоне.
@@ -50,6 +50,7 @@ int main() {
             dist(rng), dist(rng),
             dist(rng), dist(rng),
             dist(rng),
+            dist(rng), dist(rng), dist(rng), dist(rng),
         };
         checkOutputs(brain::evaluate(randomWeights, in));
     }

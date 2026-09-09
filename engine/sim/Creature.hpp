@@ -5,6 +5,10 @@
 
 #include <glm/glm.hpp>
 
+#include <array>
+#include <cstdint>
+#include <vector>
+
 namespace wsim {
 
 struct Needs {
@@ -20,6 +24,10 @@ struct Needs {
 // nearbyAlarmLevel/nearbyMatingCallLevel — агрегированные (например, max по
 // соседям) сигналы BrainOutputs::alarmCall/matingCall других существ рядом:
 // это и есть коммуникация, а не просто приватная метрика "social".
+// lovedOne* — ближайший/самый актуальный из семьи (партнёр/родители/дети,
+// см. Creature::bondedPartnerId/parentIds/childIds), а не общий сородич:
+// отдельный от threatProximity сигнал, т.к. существо может убегать от своей
+// опасности и одновременно знать, что близкий в беде где-то ещё.
 struct SenseInputs {
     glm::vec2 foodDir{};   float foodProximity   = 0.0f;
     glm::vec2 threatDir{}; float threatProximity = 0.0f;
@@ -27,6 +35,9 @@ struct SenseInputs {
     float     crowding    = 0.0f;
     float     nearbyAlarmLevel      = 0.0f;
     float     nearbyMatingCallLevel = 0.0f;
+    glm::vec2 lovedOneDir{};
+    float     lovedOneProximity   = 0.0f;
+    float     lovedOneThreatLevel = 0.0f;
 };
 
 class Creature {
@@ -37,6 +48,15 @@ public:
     glm::vec3 velocity{};
     float     age   = 0.0f;
     bool      alive = true;
+
+    // Идентичность/родство. 0 — единый сентинел "нет/не назначено" везде
+    // ниже (без std::optional). id не назначает сам Creature — это забота
+    // будущего мира (реестра популяции), тот же принцип, что и у
+    // feed()/rest()/mate(): мир решает, Creature только хранит факт.
+    std::uint64_t               id = 0;
+    std::uint64_t               bondedPartnerId = 0;  // последний mate() перезаписывает — не история, моногамия "по последней связи"
+    std::array<std::uint64_t,2> parentIds{0, 0};       // {0,0} = не рождён через reproduce()
+    std::vector<std::uint64_t>  childIds;              // растёт через recordChild()
 
     // Черты тела считаются из генома по требованию (единственный источник
     // истины — геном; кэшировать эти значения имеет смысл только если
@@ -52,9 +72,10 @@ public:
     // feed()/rest() по факту.
     BrainOutputs tick(float dt, const SenseInputs& senses) noexcept;
 
-    void feed(float amount) noexcept;  // мир вызывает при успешном поедании
-    void rest(float amount) noexcept;  // мир вызывает при успешном отдыхе
-    void mate() noexcept;              // мир вызывает при успешном спаривании (сбрасывает либидо)
+    void feed(float amount) noexcept;                    // мир вызывает при успешном поедании
+    void rest(float amount) noexcept;                     // мир вызывает при успешном отдыхе
+    void mate(std::uint64_t partnerId) noexcept;           // мир вызывает при успешном спаривании: сбрасывает либидо, запоминает партнёра
+    void recordChild(std::uint64_t childId);                // мир вызывает после назначения ребёнку id
 
     [[nodiscard]] static Creature reproduce(const Creature& a, const Creature& b, Rng& rng);
 };

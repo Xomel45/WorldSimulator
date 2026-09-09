@@ -16,6 +16,9 @@ int main() {
     Rng rng(2024);
     Creature c;
     c.genome = Genome::random(rng);
+    WSIM_CHECK(c.id == 0);                                  // не назначено (это забота мира)
+    WSIM_CHECK(c.parentIds[0] == 0 && c.parentIds[1] == 0);  // не рождён через reproduce()
+    WSIM_CHECK(c.bondedPartnerId == 0);
 
     const float initialHunger = c.needs.hunger;
     const float initialEnergy = c.needs.energy;
@@ -37,8 +40,16 @@ int main() {
     WSIM_CHECK(c.needs.energy > energyBeforeRest);
 
     c.needs.libido = 0.7f;
-    c.mate();
+    c.mate(/*partnerId=*/42);
     WSIM_CHECK(c.needs.libido == 0.0f);
+    WSIM_CHECK(c.bondedPartnerId == 42);
+
+    // recordChild накапливает id детей, не перезаписывает.
+    WSIM_CHECK(c.childIds.empty());
+    c.recordChild(100);
+    c.recordChild(101);
+    WSIM_CHECK(c.childIds.size() == 2);
+    WSIM_CHECK(c.childIds[0] == 100 && c.childIds[1] == 101);
 
     // Смерть от старости: тикаем крупными шагами, пока не умрёт.
     Creature old;
@@ -46,18 +57,23 @@ int main() {
     while (old.alive) old.tick(50.0f, senses);
     WSIM_CHECK(old.age >= old.lifespan());
 
-    // Размножение: геном ребёнка валиден, стартовое состояние -- дефолтное.
+    // Размножение: геном ребёнка валиден, стартовое состояние -- дефолтное,
+    // parentIds указывают на уже назначенные id родителей.
     Rng rngR(55);
     Creature parentA;
     parentA.genome = Genome::random(rngR);
     parentA.position = {0.0f, 0.0f, 0.0f};
+    parentA.id = 7;
     Creature parentB;
     parentB.genome = Genome::random(rngR);
     parentB.position = {10.0f, 0.0f, 0.0f};
+    parentB.id = 9;
 
     Creature child = Creature::reproduce(parentA, parentB, rngR);
     WSIM_CHECK(child.alive);
     WSIM_CHECK(child.age == 0.0f);
+    WSIM_CHECK(child.id == 0);  // ещё не зарегистрирован миром
+    WSIM_CHECK(child.parentIds[0] == 7 && child.parentIds[1] == 9);
     WSIM_CHECK(child.position.x > 4.9f && child.position.x < 5.1f);
     for (auto i : kAllTraits)
         WSIM_CHECK(child.genome.trait(i) >= -1.0f && child.genome.trait(i) <= 1.0f);

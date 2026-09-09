@@ -59,6 +59,11 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
         .nearbyMatingCallLevel = senses.nearbyMatingCallLevel,
 
         .selfSize = size(),
+
+        .lovedOneDirX      = senses.lovedOneDir.x,
+        .lovedOneDirZ      = senses.lovedOneDir.y,
+        .lovedOneProximity = senses.lovedOneProximity,
+        .lovedOneThreatLevel = senses.lovedOneThreatLevel,
     };
 
     const BrainOutputs out = brain::evaluate(genome.brainWeights(), in);
@@ -71,11 +76,16 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
     const float moveCost = glm::length(moveDir) * 0.01f;
     needs.energy = std::clamp(needs.energy - (0.008f * metab + moveCost) * dt, 0.0f, 1.0f);
 
-    // Страх реагирует и на собственную угрозу, и на панику соседей (крик
-    // тревоги распространяется по стае, даже если сама угроза не видна) —
-    // это и есть коммуникация, а не декоративный лишний вход/выход.
+    // Страх реагирует на собственную угрозу, панику соседей (крик тревоги
+    // распространяется по стае, даже если сама угроза не видна) и опасность
+    // близкого (вес ниже, чем у собственной угрозы, но это не декоративный
+    // сигнал — вместе с defendDesire/движением он и даёт "защиту любимых").
     const float fearLerp = std::clamp(8.0f * dt, 0.0f, 1.0f);
-    const float fearTarget = std::max(senses.threatProximity, senses.nearbyAlarmLevel * 0.6f);
+    const float fearTarget = std::max({
+        senses.threatProximity,
+        senses.nearbyAlarmLevel * 0.6f,
+        senses.lovedOneThreatLevel * 0.7f,
+    });
     needs.fear = needs.fear + (fearTarget - needs.fear) * fearLerp;
 
     needs.social = std::clamp(needs.social + (senses.crowding * 0.05f - 0.01f) * dt, 0.0f, 1.0f);
@@ -94,13 +104,20 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
 
 void Creature::feed(float amount) noexcept { needs.hunger = std::clamp(needs.hunger - amount, 0.0f, 1.0f); }
 void Creature::rest(float amount) noexcept { needs.energy = std::clamp(needs.energy + amount, 0.0f, 1.0f); }
-void Creature::mate() noexcept { needs.libido = 0.0f; }
+
+void Creature::mate(std::uint64_t partnerId) noexcept {
+    needs.libido = 0.0f;
+    bondedPartnerId = partnerId;
+}
+
+void Creature::recordChild(std::uint64_t childId) { childIds.push_back(childId); }
 
 Creature Creature::reproduce(const Creature& a, const Creature& b, Rng& rng) {
     Creature child;
     child.genome = Genome::crossover(a.genome, b.genome, rng);
     child.genome.mutate(rng, /*rate=*/0.05f, /*strength=*/0.15f);
     child.position = (a.position + b.position) * 0.5f;
+    child.parentIds = {a.id, b.id};
     return child;
 }
 

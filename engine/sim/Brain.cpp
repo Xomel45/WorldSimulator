@@ -18,6 +18,7 @@ std::array<float, kInputCount> toArray(const BrainInputs& in) noexcept {
         in.crowding, in.noise,
         in.nearbyAlarmLevel, in.nearbyMatingCallLevel,
         in.selfSize,
+        in.lovedOneDirX, in.lovedOneDirZ, in.lovedOneProximity, in.lovedOneThreatLevel,
     };
 }
 
