@@ -54,6 +54,9 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
 
         .crowding = senses.crowding,
         .noise    = noiseFromAge(age),
+
+        .nearbyAlarmLevel      = senses.nearbyAlarmLevel,
+        .nearbyMatingCallLevel = senses.nearbyMatingCallLevel,
     };
 
     const BrainOutputs out = brain::evaluate(genome.brainWeights(), in);
@@ -66,11 +69,18 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
     const float moveCost = glm::length(moveDir) * 0.01f;
     needs.energy = std::clamp(needs.energy - (0.008f * metab + moveCost) * dt, 0.0f, 1.0f);
 
+    // Страх реагирует и на собственную угрозу, и на панику соседей (крик
+    // тревоги распространяется по стае, даже если сама угроза не видна) —
+    // это и есть коммуникация, а не декоративный лишний вход/выход.
     const float fearLerp = std::clamp(8.0f * dt, 0.0f, 1.0f);
-    needs.fear = needs.fear + (senses.threatProximity - needs.fear) * fearLerp;
+    const float fearTarget = std::max(senses.threatProximity, senses.nearbyAlarmLevel * 0.6f);
+    needs.fear = needs.fear + (fearTarget - needs.fear) * fearLerp;
 
     needs.social = std::clamp(needs.social + (senses.crowding * 0.05f - 0.01f) * dt, 0.0f, 1.0f);
-    needs.libido = std::clamp(needs.libido + 0.02f * fertility() * dt, 0.0f, 1.0f);
+    // Брачный зов соседей слегка подстёгивает либидо — социальная реплика
+    // готовности к размножению, помимо собственного внутреннего дрейфа.
+    needs.libido = std::clamp(
+        needs.libido + (0.02f * fertility() + 0.01f * senses.nearbyMatingCallLevel) * dt, 0.0f, 1.0f);
 
     velocity = glm::vec3(moveDir.x, 0.0f, moveDir.y) * maxSpeed();
     position += velocity * dt;

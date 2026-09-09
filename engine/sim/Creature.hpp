@@ -17,11 +17,16 @@ struct Needs {
 
 // Локальные ощущения — считает будущая мировая/пространственная система,
 // Creature сам ничего не ищет (нет зависимости от мира на этом этапе).
+// nearbyAlarmLevel/nearbyMatingCallLevel — агрегированные (например, max по
+// соседям) сигналы BrainOutputs::alarmCall/matingCall других существ рядом:
+// это и есть коммуникация, а не просто приватная метрика "social".
 struct SenseInputs {
     glm::vec2 foodDir{};   float foodProximity   = 0.0f;
     glm::vec2 threatDir{}; float threatProximity = 0.0f;
     glm::vec2 mateDir{};   float mateProximity   = 0.0f;
     float     crowding    = 0.0f;
+    float     nearbyAlarmLevel      = 0.0f;
+    float     nearbyMatingCallLevel = 0.0f;
 };
 
 class Creature {

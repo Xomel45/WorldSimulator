@@ -90,9 +90,9 @@ pointer instead (the whole engine assumes exactly one window/one
 ## Creature core (`engine/sim/`)
 
 Pure simulation logic, no world/spawning/rendering integration yet:
-- **`Genome`** — flat `std::vector<float>` of 379 genes in `[-1,1]`: 5 body
+- **`Genome`** — flat `std::vector<float>` of 553 genes in `[-1,1]`: 5 body
   traits (speed/size/metabolism/lifespan/fertility, named via
-  `Genome::TraitIndex`) + 374 brain weights (`brainWeights()` span, must stay
+  `Genome::TraitIndex`) + 548 brain weights (`brainWeights()` span, must stay
   in sync with `brain::kWeightCount` — enforced by a `static_assert` in
   `Genome.cpp`). `random()`/`crossover()`/`mutate()` all take an explicit
   `Rng&` (`std::mt19937`, no global RNG state — deterministic given a seed).
@@ -101,13 +101,22 @@ Pure simulation logic, no world/spawning/rendering integration yet:
   instead of flailing for generations before selection finds anything
   coherent.
 - **`Brain`** — stateless: `brain::evaluate(weights, BrainInputs) -> BrainOutputs`,
-  fixed topology 16 inputs → 16 hidden (tanh) → 6 outputs (`tanh` for
-  move X/Z, sigmoid for the four desire outputs). Sized after comparing to
-  the real Creatures Norn brain (952 neurons/~5000 connections/9 lobes) —
-  both scales are computationally trivial at thousands of agents, so this
-  was a scope call, not a performance one. No lifetime-learning lobe (a Norn
-  can learn associations during its life) — deliberately deferred, would be
-  an additive input source layered on top of `evaluate()`, not a rewrite.
+  fixed topology 18 inputs → 20 hidden (tanh) → 8 outputs (`tanh` for move
+  X/Z, sigmoid for the desire + communication outputs). Sized after comparing
+  to the real Creatures Norn brain (952 neurons/~5000 connections/9 lobes) —
+  both scales are computationally trivial at thousands of agents, so this was
+  a scope call, not a performance one. No lifetime-learning lobe (a Norn can
+  learn associations during its life) — deliberately deferred, would be an
+  additive input source layered on top of `evaluate()`, not a rewrite.
+- **Communication** (`alarmCall`/`matingCall` outputs, `nearbyAlarmLevel`/
+  `nearbyMatingCallLevel` inputs) — creatures broadcast a distress or
+  mating-readiness signal; nearby creatures sense the aggregate (computed
+  externally by the future world/spatial system, same pattern as
+  `SenseInputs`'s other fields) and it has real behavioral effect in
+  `Creature::tick()`: a neighbor's alarm call raises your own fear even if
+  you can't see the threat yourself (herd panic), a neighbor's mating call
+  nudges your own libido. This is what makes creatures actually social,
+  rather than tracking a private `Needs::social` number nobody else reacts to.
 - **`Creature`** — aggregates `Genome` + `Needs` (hunger/energy/fear/libido/
   social) + position/velocity/age. `tick(dt, SenseInputs)` runs the brain and
   updates needs/movement/age; `SenseInputs` (nearest food/threat/mate

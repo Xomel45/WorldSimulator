@@ -18,7 +18,7 @@ using Rng = std::mt19937;
 class Genome {
 public:
     static constexpr std::size_t kTraitGeneCount = 5;
-    static constexpr std::size_t kBrainWeightCount = 374;  // = brain::kWeightCount
+    static constexpr std::size_t kBrainWeightCount = 548;  // = brain::kWeightCount
     static constexpr std::size_t kGeneCount = kTraitGeneCount + kBrainWeightCount;
 
     enum TraitIndex : std::size_t {

@@ -16,6 +16,7 @@ std::array<float, kInputCount> toArray(const BrainInputs& in) noexcept {
         in.threatDirX, in.threatDirZ, in.threatProximity,
         in.mateDirX, in.mateDirZ, in.mateProximity,
         in.crowding, in.noise,
+        in.nearbyAlarmLevel, in.nearbyMatingCallLevel,
     };
 }
 
@@ -52,6 +53,8 @@ BrainOutputs evaluate(std::span<const float> weights, const BrainInputs& in) noe
         .fleeDesire = sigmoid(out[3]),
         .mateDesire = sigmoid(out[4]),
         .restDesire = sigmoid(out[5]),
+        .alarmCall  = sigmoid(out[6]),
+        .matingCall = sigmoid(out[7]),
     };
 }
 
