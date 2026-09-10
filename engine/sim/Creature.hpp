@@ -19,6 +19,7 @@ struct Needs {
     float social   = 0.5f;
     float respect  = 0.3f;  // желание социального статуса, см. Creature::earnRespect()
     float resentment = 0.0f;  // обида/зависть к чужому статусу, см. Genome::kEnvy
+    float grief = 0.0f;  // горе по утрате близкого, см. SenseInputs::lovedOneDied
 };
 
 // Локальные ощущения — считает будущая мировая/пространственная система,
@@ -34,20 +35,27 @@ struct Needs {
 // делит соседей на "известных" (id входит в bondedPartnerId/parentIds/
 // childIds) и незнакомцев. nearbyDominanceLevel — агрегированный
 // BrainOutputs::dominanceDisplay соседей, тот же принцип, что и у
-// nearbyAlarmLevel/nearbyMatingCallLevel: демонстрация статуса рядом реально
-// пугает (см. fearTarget в Creature::tick()), а не просто хранится в needs.
+// nearbyFamiliarAlarmLevel/nearbyMatingCallLevel: демонстрация статуса рядом
+// реально пугает (см. fearTarget в Creature::tick()), а не просто хранится в
+// needs. nearbyAlarmLevel разделён на familiar/stranger (та же логика, что и
+// у crowding) — иначе "сочувствие к чужакам" (Genome::kEmpathy) нечему было
+// бы модулировать отдельно от паники своих. lovedOneDied — одноразовый
+// сигнал: мир выставляет ненулевым в тик(и), когда хочет сообщить о смерти
+// близкого (см. Needs::grief в Creature::tick()).
 struct SenseInputs {
     glm::vec2 foodDir{};   float foodProximity   = 0.0f;
     glm::vec2 threatDir{}; float threatProximity = 0.0f;
     glm::vec2 mateDir{};   float mateProximity   = 0.0f;
     float     familiarCrowding = 0.0f;
     float     strangerCrowding = 0.0f;
-    float     nearbyAlarmLevel       = 0.0f;
-    float     nearbyMatingCallLevel  = 0.0f;
-    float     nearbyDominanceLevel   = 0.0f;
+    float     nearbyFamiliarAlarmLevel = 0.0f;
+    float     nearbyStrangerAlarmLevel = 0.0f;
+    float     nearbyMatingCallLevel    = 0.0f;
+    float     nearbyDominanceLevel     = 0.0f;
     glm::vec2 lovedOneDir{};
     float     lovedOneProximity   = 0.0f;
     float     lovedOneThreatLevel = 0.0f;
+    float     lovedOneDied        = 0.0f;
 };
 
 class Creature {
@@ -58,6 +66,12 @@ public:
     glm::vec3 velocity{};
     float     age   = 0.0f;
     bool      alive = true;
+
+    // "Дом" — лениво фиксируется на первом tick() (см. .cpp), место
+    // рождения/первого пробуждения, а не что-то, что назначает мир (тот же
+    // принцип ленивой инициализации, что и у learnedWeights). До первого
+    // tick() равен {0,0,0} — см. awayFromHome().
+    glm::vec3 homePosition{};
 
     // Идентичность/родство. 0 — единый сентинел "нет/не назначено" везде
     // ниже (без std::optional). id не назначает сам Creature — это забота
@@ -92,6 +106,15 @@ public:
     [[nodiscard]] float sociability() const noexcept;  // [0, 1] интроверт..экстраверт
     [[nodiscard]] float bondStrength() const noexcept; // [0, 1] привязанность к близким
     [[nodiscard]] float envy() const noexcept;         // [0, 1] зависть/ненависть к чужому статусу
+    [[nodiscard]] float territorial() const noexcept;  // [0, 1] привязанность к месту
+    [[nodiscard]] float curiosity() const noexcept;    // [0, 1] любопытство
+    [[nodiscard]] float empathy() const noexcept;      // [0, 1] сочувствие к чужакам
+
+    // Самостоятельно вычисляемые (не хранимые) сигналы — чистые функции
+    // текущего состояния, вызываются и из tick() (для BrainInputs), и
+    // отдельно (инспектируемы/тестируемы независимо от tick()).
+    [[nodiscard]] float awayFromHome() const noexcept;  // [0,1): насыщающееся расстояние от homePosition
+    [[nodiscard]] float boredomLevel() const noexcept;  // [0,1]: фоновое желание исследовать
 
     // Копирует genome.initialPlasticWeights() поверх learnedWeights — "с
     // чистого листа". tick() вызывает это лениво сам, если learnedWeights пуст.

@@ -11,6 +11,7 @@ namespace {
 constexpr Genome::TraitIndex kAllTraits[] = {
     Genome::kSpeed, Genome::kSize, Genome::kMetabolism, Genome::kLifespan, Genome::kFertility,
     Genome::kPlasticity, Genome::kBoldness, Genome::kSociability, Genome::kBondStrength, Genome::kEnvy,
+    Genome::kTerritorial, Genome::kCuriosity, Genome::kEmpathy,
 };
 }
 

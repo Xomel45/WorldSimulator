@@ -11,6 +11,7 @@ namespace {
 constexpr Genome::TraitIndex kAllTraits[] = {
     Genome::kSpeed, Genome::kSize, Genome::kMetabolism, Genome::kLifespan, Genome::kFertility,
     Genome::kPlasticity, Genome::kBoldness, Genome::kSociability, Genome::kBondStrength, Genome::kEnvy,
+    Genome::kTerritorial, Genome::kCuriosity, Genome::kEmpathy,
 };
 }
 
@@ -147,6 +148,83 @@ int main() {
         indifferent.tick(0.1f, dominanceSenses);
         WSIM_CHECK(envious.needs.resentment > indifferent.needs.resentment);
         WSIM_CHECK(indifferent.needs.resentment == 0.0f);
+    }
+
+    // Горе: смерть близкого (lovedOneDied) поднимает grief пропорционально
+    // bondStrength() и медленно угасает без нового сигнала.
+    {
+        Rng rngG(1010);
+        Creature mourner;
+        mourner.genome = Genome::random(rngG);
+        WSIM_CHECK(mourner.needs.grief == 0.0f);
+
+        SenseInputs deathSenses{};
+        deathSenses.lovedOneDied = 1.0f;
+        mourner.tick(0.1f, deathSenses);
+        WSIM_CHECK(mourner.needs.grief == mourner.bondStrength());
+        const float griefAfterLoss = mourner.needs.grief;
+
+        SenseInputs quietSenses{};
+        for (int i = 0; i < 50; ++i)
+            mourner.tick(0.1f, quietSenses);
+        WSIM_CHECK(mourner.needs.grief < griefAfterLoss);  // угасает со временем
+    }
+
+    // Территориальность: после лениво зафиксированного дома, вдали от него
+    // территориальная особь (territorial=1) боится сильнее равнодушной
+    // (territorial=-1) на том же расстоянии.
+    {
+        Rng rngH(707);
+        Creature homebody;
+        homebody.genome = Genome::random(rngH);
+        Creature wanderer = homebody;
+        homebody.genome.setTrait(Genome::kTerritorial, 1.0f);
+        wanderer.genome.setTrait(Genome::kTerritorial, -1.0f);
+
+        SenseInputs emptySenses{};
+        homebody.tick(0.1f, emptySenses);  // лениво фиксирует homePosition = текущая position
+        wanderer.tick(0.1f, emptySenses);
+
+        homebody.position = glm::vec3(100.0f, 0.0f, 0.0f);  // далеко от дома
+        wanderer.position = glm::vec3(100.0f, 0.0f, 0.0f);
+
+        homebody.tick(0.1f, emptySenses);
+        wanderer.tick(0.1f, emptySenses);
+        WSIM_CHECK(homebody.needs.fear > wanderer.needs.fear);
+    }
+
+    // Любопытство: при спокойных needs (низкая срочность) у любопытной особи
+    // (curiosity=1) boredomLevel() выше, чем у равнодушной (curiosity=-1) --
+    // чистая функция состояния, tick() не нужен.
+    {
+        Rng rngC(808);
+        Creature curious;
+        curious.genome = Genome::random(rngC);
+        Creature indifferent = curious;
+        curious.genome.setTrait(Genome::kCuriosity, 1.0f);
+        indifferent.genome.setTrait(Genome::kCuriosity, -1.0f);
+
+        WSIM_CHECK(curious.boredomLevel() > indifferent.boredomLevel());
+        WSIM_CHECK(indifferent.boredomLevel() == 0.0f);
+    }
+
+    // Эмпатия к чужим: паника чужака (nearbyStrangerAlarmLevel, без паники
+    // своих) пугает эмпатичную особь (empathy=1) сильнее равнодушной
+    // (empathy=-1).
+    {
+        Rng rngEm(909);
+        Creature compassionate;
+        compassionate.genome = Genome::random(rngEm);
+        Creature indifferentToStrangers = compassionate;
+        compassionate.genome.setTrait(Genome::kEmpathy, 1.0f);
+        indifferentToStrangers.genome.setTrait(Genome::kEmpathy, -1.0f);
+
+        SenseInputs strangerAlarm{};
+        strangerAlarm.nearbyStrangerAlarmLevel = 0.9f;
+
+        compassionate.tick(0.1f, strangerAlarm);
+        indifferentToStrangers.tick(0.1f, strangerAlarm);
+        WSIM_CHECK(compassionate.needs.fear > indifferentToStrangers.needs.fear);
     }
 
     // Смерть от старости: тикаем крупными шагами, пока не умрёт.

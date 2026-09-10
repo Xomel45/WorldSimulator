@@ -42,14 +42,14 @@ int main() {
     fixedOnes.fill(1.0f);
     std::array<float, kPlasticSize> plasticOnes;
     plasticOnes.fill(1.0f);
-    BrainInputs onesIn{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+    BrainInputs onesIn{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
     checkOutputs(brain::evaluate(fixedOnes, plasticOnes, onesIn).outputs);
 
     std::array<float, kFixedSize> fixedNegOnes;
     fixedNegOnes.fill(-1.0f);
     std::array<float, kPlasticSize> plasticNegOnes;
     plasticNegOnes.fill(-1.0f);
-    BrainInputs negIn{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
+    BrainInputs negIn{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
     checkOutputs(brain::evaluate(fixedNegOnes, plasticNegOnes, negIn).outputs);
 
     // Случайные веса/входы -- выходы всегда в ожидаемом диапазоне.
@@ -62,14 +62,15 @@ int main() {
 
     for (int trial = 0; trial < 50; ++trial) {
         BrainInputs in{
-            dist(rng), dist(rng), dist(rng), dist(rng), dist(rng), dist(rng), dist(rng),
+            dist(rng), dist(rng), dist(rng), dist(rng), dist(rng), dist(rng), dist(rng), dist(rng),
             dist(rng), dist(rng), dist(rng),
             dist(rng), dist(rng), dist(rng),
             dist(rng), dist(rng), dist(rng),
             dist(rng), dist(rng), dist(rng),
-            dist(rng), dist(rng), dist(rng),
+            dist(rng), dist(rng), dist(rng), dist(rng),
             dist(rng),
             dist(rng), dist(rng), dist(rng), dist(rng),
+            dist(rng), dist(rng),
         };
         checkOutputs(brain::evaluate(randomFixed, randomPlastic, in).outputs);
     }
