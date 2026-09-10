@@ -12,7 +12,7 @@ float sigmoid(float x) noexcept { return 1.0f / (1.0f + std::exp(-x)); }
 
 std::array<float, kInputCount> toArray(const BrainInputs& in) noexcept {
     return {
-        in.hunger, in.energy, in.fear, in.libido, in.social, in.respect,
+        in.hunger, in.energy, in.fear, in.libido, in.social, in.respect, in.resentment,
         in.foodDirX, in.foodDirZ, in.foodProximity,
         in.threatDirX, in.threatDirZ, in.threatProximity,
         in.mateDirX, in.mateDirZ, in.mateProximity,

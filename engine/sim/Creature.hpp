@@ -18,6 +18,7 @@ struct Needs {
     float libido   = 0.0f;
     float social   = 0.5f;
     float respect  = 0.3f;  // желание социального статуса, см. Creature::earnRespect()
+    float resentment = 0.0f;  // обида/зависть к чужому статусу, см. Genome::kEnvy
 };
 
 // Локальные ощущения — считает будущая мировая/пространственная система,
@@ -90,6 +91,7 @@ public:
     [[nodiscard]] float boldness() const noexcept;     // [0, 1] храбрость
     [[nodiscard]] float sociability() const noexcept;  // [0, 1] интроверт..экстраверт
     [[nodiscard]] float bondStrength() const noexcept; // [0, 1] привязанность к близким
+    [[nodiscard]] float envy() const noexcept;         // [0, 1] зависть/ненависть к чужому статусу
 
     // Копирует genome.initialPlasticWeights() поверх learnedWeights — "с
     // чистого листа". tick() вызывает это лениво сам, если learnedWeights пуст.

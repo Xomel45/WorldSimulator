@@ -18,8 +18,8 @@ using Rng = std::mt19937;
 // Genome не тянул за собой Brain — размер завязан константой напрямую).
 class Genome {
 public:
-    static constexpr std::size_t kTraitGeneCount = 9;
-    static constexpr std::size_t kBrainWeightCount = 750;  // = brain::kWeightCount
+    static constexpr std::size_t kTraitGeneCount = 10;
+    static constexpr std::size_t kBrainWeightCount = 770;  // = brain::kWeightCount
     static constexpr std::size_t kGeneCount = kTraitGeneCount + kBrainWeightCount;
 
     // Разбивка весов мозга на фиксированную (input->hidden — "восприятие",
@@ -27,7 +27,7 @@ public:
     // — "принятие решений", у Creature есть свой изменяемый рантайм-экземпляр
     // этого куска, см. Creature::learnedWeights) части. Зеркалит
     // brain::kInputHiddenWeights+kHiddenCount / kHiddenOutputWeights+kOutputCount.
-    static constexpr std::size_t kFixedBrainWeightCount   = 540;
+    static constexpr std::size_t kFixedBrainWeightCount   = 560;
     static constexpr std::size_t kPlasticBrainWeightCount = 210;
 
     enum TraitIndex : std::size_t {
@@ -45,6 +45,7 @@ public:
         kBoldness,      // храбрость: гасит страх от прямой угрозы/тревоги стаи
         kSociability,   // интроверт/экстраверт: отдача от компании, настороженность к чужакам
         kBondStrength,  // привязанность: насколько опасность близкого ощущается как своя
+        kEnvy,          // зависть/ненависть: чужой статус рядом рождает обиду, а не только страх
     };
 
     Genome() : m_genes(kGeneCount, 0.0f) {}

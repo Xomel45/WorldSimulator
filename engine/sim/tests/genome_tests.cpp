@@ -10,7 +10,7 @@ using namespace wsim;
 namespace {
 constexpr Genome::TraitIndex kAllTraits[] = {
     Genome::kSpeed, Genome::kSize, Genome::kMetabolism, Genome::kLifespan, Genome::kFertility,
-    Genome::kPlasticity, Genome::kBoldness, Genome::kSociability, Genome::kBondStrength,
+    Genome::kPlasticity, Genome::kBoldness, Genome::kSociability, Genome::kBondStrength, Genome::kEnvy,
 };
 }
 

@@ -6,7 +6,9 @@
 namespace wsim {
 
 // Входы мозга: потребности (включая respect — желание социального статуса,
-// см. Needs::respect/Creature::earnRespect()) + локальные ощущения
+// см. Needs::respect/Creature::earnRespect(); resentment — обида/зависть,
+// накапливается у завистливых особей рядом с чужой демонстрацией статуса,
+// см. Genome::kEnvy/Creature::envy()) + локальные ощущения
 // (направление/близость до ближайшей еды/угрозы/партнёра — считает будущая
 // мировая система, сюда приходят уже готовыми) + скученность своих/чужих
 // (familiarCrowding — известные существа: партнёр/родители/дети;
@@ -19,7 +21,7 @@ namespace wsim {
 // Creature::bondedPartnerId/parentIds/childIds) — то, что делает "любовь"
 // поведением, а не просто словом.
 struct BrainInputs {
-    float hunger, energy, fear, libido, social, respect;
+    float hunger, energy, fear, libido, social, respect, resentment;
     float foodDirX, foodDirZ, foodProximity;
     float threatDirX, threatDirZ, threatProximity;
     float mateDirX, mateDirZ, mateProximity;
@@ -47,7 +49,7 @@ struct BrainOutputs {
 
 namespace brain {
 
-inline constexpr int kInputCount  = 26;
+inline constexpr int kInputCount  = 27;
 inline constexpr int kHiddenCount = 20;
 inline constexpr int kOutputCount = 10;
 
@@ -60,7 +62,7 @@ inline constexpr int kOutputCount = 10;
 inline constexpr int kInputHiddenWeights  = kInputCount * kHiddenCount;
 inline constexpr int kHiddenOutputWeights = kHiddenCount * kOutputCount;
 inline constexpr int kWeightCount =
-    kInputHiddenWeights + kHiddenCount + kHiddenOutputWeights + kOutputCount;  // 750
+    kInputHiddenWeights + kHiddenCount + kHiddenOutputWeights + kOutputCount;  // 770
 
 // Промежуточные активации нужны наружу для reinforce() (Hebbian-обновление
 // требует "кто с кем вместе сработал"). outputActivations дублирует значения

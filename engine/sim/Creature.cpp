@@ -40,6 +40,7 @@ float Creature::plasticity() const noexcept { return lerpTrait(genome.trait(Geno
 float Creature::boldness() const noexcept     { return lerpTrait(genome.trait(Genome::kBoldness), 0.0f, 1.0f); }
 float Creature::sociability() const noexcept  { return lerpTrait(genome.trait(Genome::kSociability), 0.0f, 1.0f); }
 float Creature::bondStrength() const noexcept { return lerpTrait(genome.trait(Genome::kBondStrength), 0.2f, 1.0f); }
+float Creature::envy() const noexcept          { return lerpTrait(genome.trait(Genome::kEnvy), 0.0f, 1.0f); }
 
 void Creature::resetLearning() noexcept {
     const auto initial = genome.initialPlasticWeights();
@@ -57,6 +58,7 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
         .libido  = needs.libido,
         .social  = needs.social,
         .respect = needs.respect,
+        .resentment = needs.resentment,
 
         .foodDirX     = senses.foodDir.x,
         .foodDirZ     = senses.foodDir.y,
@@ -101,11 +103,13 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
     // распространяется по стае, даже если сама угроза не видна), опасность
     // близкого (вместе с defendDesire/движением это и даёт "защиту любимых"),
     // демонстрацию статуса соседей (чужая демонстрация доминирования реально
-    // пугает -- та же механика, что и herd-паника от alarmCall) и лёгкую
-    // фоновую настороженность от толпы незнакомцев -- каждый вклад
-    // промодулирован явным темпераментом (boldness/bondStrength/sociability),
-    // а не одинаковой для всех константой: насколько конкретная особь боится
-    // за себя, за близких, перед чужим статусом и за компанию чужаков --
+    // пугает -- та же механика, что и herd-паника от alarmCall, но
+    // завистливые особи (envy) конвертируют часть этого испуга в обиду
+    // вместо покорности -- см. needs.resentment ниже) и лёгкую фоновую
+    // настороженность от толпы незнакомцев -- каждый вклад промодулирован
+    // явным темпераментом (boldness/bondStrength/sociability/envy), а не
+    // одинаковой для всех константой: насколько конкретная особь боится за
+    // себя, за близких, перед чужим статусом и за компанию чужаков --
     // теперь индивидуально и наследуемо.
     const float fearLerp = std::clamp(8.0f * dt, 0.0f, 1.0f);
     const float boldnessFactor = 1.0f - boldness() * 0.7f;  // пол 0.3: полностью бесстрашных не бывает
@@ -114,7 +118,7 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
         senses.nearbyAlarmLevel * 0.6f * boldnessFactor,
         senses.lovedOneThreatLevel * 0.7f * bondStrength(),
         senses.strangerCrowding * 0.15f * (1.0f - sociability() * 0.6f),
-        senses.nearbyDominanceLevel * 0.5f * boldnessFactor,
+        senses.nearbyDominanceLevel * 0.5f * boldnessFactor * (1.0f - envy() * 0.5f),
     });
     needs.fear = needs.fear + (fearTarget - needs.fear) * fearLerp;
 
@@ -135,6 +139,13 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
     // демонстрация этого существа реально выигрывает контест.
     needs.respect = std::clamp(
         needs.respect + (0.015f + 0.02f * senses.nearbyDominanceLevel) * dt, 0.0f, 1.0f);
+    // Обида/зависть копится только у завистливых особей (envy) рядом с чужой
+    // демонстрацией статуса и сама угасает без подпитки -- при envy=0 остаётся
+    // ровно 0 всегда (нет способности обижаться в принципе). Мозг сам решает
+    // (через эволюционировавшие веса), во что это выльется -- агрессию
+    // (defendDesire), сближение или ничего -- см. BrainInputs::resentment.
+    needs.resentment = std::clamp(
+        needs.resentment + (senses.nearbyDominanceLevel * envy() * 0.05f - 0.02f) * dt, 0.0f, 1.0f);
     // Брачный зов соседей слегка подстёгивает либидо — социальная реплика
     // готовности к размножению, помимо собственного внутреннего дрейфа.
     needs.libido = std::clamp(

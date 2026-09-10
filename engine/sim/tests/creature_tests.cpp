@@ -10,7 +10,7 @@ using namespace wsim;
 namespace {
 constexpr Genome::TraitIndex kAllTraits[] = {
     Genome::kSpeed, Genome::kSize, Genome::kMetabolism, Genome::kLifespan, Genome::kFertility,
-    Genome::kPlasticity, Genome::kBoldness, Genome::kSociability, Genome::kBondStrength,
+    Genome::kPlasticity, Genome::kBoldness, Genome::kSociability, Genome::kBondStrength, Genome::kEnvy,
 };
 }
 
@@ -127,6 +127,26 @@ int main() {
         calm.tick(0.1f, plainSenses);
         intimidated.tick(0.1f, dominanceSenses);
         WSIM_CHECK(intimidated.needs.fear > calm.needs.fear);
+    }
+
+    // Зависть/ненависть: у завистливой особи (envy=1) рядом с чужой
+    // демонстрацией статуса обида (resentment) растёт, у независтливой
+    // (envy=-1) -- нет (нет способности обижаться в принципе).
+    {
+        Rng rngE(606);
+        Creature envious;
+        envious.genome = Genome::random(rngE);
+        Creature indifferent = envious;
+        envious.genome.setTrait(Genome::kEnvy, 1.0f);
+        indifferent.genome.setTrait(Genome::kEnvy, -1.0f);
+
+        SenseInputs dominanceSenses{};
+        dominanceSenses.nearbyDominanceLevel = 0.9f;
+
+        envious.tick(0.1f, dominanceSenses);
+        indifferent.tick(0.1f, dominanceSenses);
+        WSIM_CHECK(envious.needs.resentment > indifferent.needs.resentment);
+        WSIM_CHECK(indifferent.needs.resentment == 0.0f);
     }
 
     // Смерть от старости: тикаем крупными шагами, пока не умрёт.
