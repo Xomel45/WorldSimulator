@@ -19,7 +19,7 @@ using Rng = std::mt19937;
 class Genome {
 public:
     static constexpr std::size_t kTraitGeneCount = 9;
-    static constexpr std::size_t kBrainWeightCount = 689;  // = brain::kWeightCount
+    static constexpr std::size_t kBrainWeightCount = 750;  // = brain::kWeightCount
     static constexpr std::size_t kGeneCount = kTraitGeneCount + kBrainWeightCount;
 
     // Разбивка весов мозга на фиксированную (input->hidden — "восприятие",
@@ -27,8 +27,8 @@ public:
     // — "принятие решений", у Creature есть свой изменяемый рантайм-экземпляр
     // этого куска, см. Creature::learnedWeights) части. Зеркалит
     // brain::kInputHiddenWeights+kHiddenCount / kHiddenOutputWeights+kOutputCount.
-    static constexpr std::size_t kFixedBrainWeightCount   = 500;
-    static constexpr std::size_t kPlasticBrainWeightCount = 189;
+    static constexpr std::size_t kFixedBrainWeightCount   = 540;
+    static constexpr std::size_t kPlasticBrainWeightCount = 210;
 
     enum TraitIndex : std::size_t {
         kSpeed = 0,

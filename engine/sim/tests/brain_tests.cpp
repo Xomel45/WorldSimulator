@@ -18,7 +18,8 @@ constexpr int kPlasticSize = brain::kHiddenOutputWeights + brain::kOutputCount;
 void checkOutputs(const BrainOutputs& out) {
     WSIM_CHECK(std::isfinite(out.moveX) && out.moveX >= -1.0f && out.moveX <= 1.0f);
     WSIM_CHECK(std::isfinite(out.moveZ) && out.moveZ >= -1.0f && out.moveZ <= 1.0f);
-    for (float d : {out.eatDesire, out.fleeDesire, out.mateDesire, out.restDesire, out.defendDesire, out.alarmCall, out.matingCall})
+    for (float d : {out.eatDesire, out.fleeDesire, out.mateDesire, out.restDesire, out.defendDesire, out.alarmCall,
+                     out.matingCall, out.dominanceDisplay})
         WSIM_CHECK(std::isfinite(d) && d >= 0.0f && d <= 1.0f);
 }
 
@@ -41,14 +42,14 @@ int main() {
     fixedOnes.fill(1.0f);
     std::array<float, kPlasticSize> plasticOnes;
     plasticOnes.fill(1.0f);
-    BrainInputs onesIn{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+    BrainInputs onesIn{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
     checkOutputs(brain::evaluate(fixedOnes, plasticOnes, onesIn).outputs);
 
     std::array<float, kFixedSize> fixedNegOnes;
     fixedNegOnes.fill(-1.0f);
     std::array<float, kPlasticSize> plasticNegOnes;
     plasticNegOnes.fill(-1.0f);
-    BrainInputs negIn{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
+    BrainInputs negIn{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
     checkOutputs(brain::evaluate(fixedNegOnes, plasticNegOnes, negIn).outputs);
 
     // Случайные веса/входы -- выходы всегда в ожидаемом диапазоне.
@@ -61,12 +62,12 @@ int main() {
 
     for (int trial = 0; trial < 50; ++trial) {
         BrainInputs in{
-            dist(rng), dist(rng), dist(rng), dist(rng), dist(rng),
+            dist(rng), dist(rng), dist(rng), dist(rng), dist(rng), dist(rng),
             dist(rng), dist(rng), dist(rng),
             dist(rng), dist(rng), dist(rng),
             dist(rng), dist(rng), dist(rng),
             dist(rng), dist(rng), dist(rng),
-            dist(rng), dist(rng),
+            dist(rng), dist(rng), dist(rng),
             dist(rng),
             dist(rng), dist(rng), dist(rng), dist(rng),
         };

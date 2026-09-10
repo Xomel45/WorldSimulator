@@ -12,12 +12,12 @@ float sigmoid(float x) noexcept { return 1.0f / (1.0f + std::exp(-x)); }
 
 std::array<float, kInputCount> toArray(const BrainInputs& in) noexcept {
     return {
-        in.hunger, in.energy, in.fear, in.libido, in.social,
+        in.hunger, in.energy, in.fear, in.libido, in.social, in.respect,
         in.foodDirX, in.foodDirZ, in.foodProximity,
         in.threatDirX, in.threatDirZ, in.threatProximity,
         in.mateDirX, in.mateDirZ, in.mateProximity,
         in.familiarCrowding, in.strangerCrowding, in.noise,
-        in.nearbyAlarmLevel, in.nearbyMatingCallLevel,
+        in.nearbyAlarmLevel, in.nearbyMatingCallLevel, in.nearbyDominanceLevel,
         in.selfSize,
         in.lovedOneDirX, in.lovedOneDirZ, in.lovedOneProximity, in.lovedOneThreatLevel,
     };
@@ -63,6 +63,7 @@ BrainEvalResult evaluate(std::span<const float> fixedWeights, std::span<const fl
             .defendDesire = sigmoid(out[6]),
             .alarmCall    = sigmoid(out[7]),
             .matingCall   = sigmoid(out[8]),
+            .dominanceDisplay = sigmoid(out[9]),
         },
         .hiddenActivations = hidden,
         .outputActivations = out,

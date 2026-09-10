@@ -17,6 +17,7 @@ struct Needs {
     float fear     = 0.0f;
     float libido   = 0.0f;
     float social   = 0.5f;
+    float respect  = 0.3f;  // желание социального статуса, см. Creature::earnRespect()
 };
 
 // Локальные ощущения — считает будущая мировая/пространственная система,
@@ -30,15 +31,19 @@ struct Needs {
 // опасности и одновременно знать, что близкий в беде где-то ещё.
 // familiarCrowding/strangerCrowding — тот же принцип "свои vs чужие": мир
 // делит соседей на "известных" (id входит в bondedPartnerId/parentIds/
-// childIds) и незнакомцев.
+// childIds) и незнакомцев. nearbyDominanceLevel — агрегированный
+// BrainOutputs::dominanceDisplay соседей, тот же принцип, что и у
+// nearbyAlarmLevel/nearbyMatingCallLevel: демонстрация статуса рядом реально
+// пугает (см. fearTarget в Creature::tick()), а не просто хранится в needs.
 struct SenseInputs {
     glm::vec2 foodDir{};   float foodProximity   = 0.0f;
     glm::vec2 threatDir{}; float threatProximity = 0.0f;
     glm::vec2 mateDir{};   float mateProximity   = 0.0f;
     float     familiarCrowding = 0.0f;
     float     strangerCrowding = 0.0f;
-    float     nearbyAlarmLevel      = 0.0f;
-    float     nearbyMatingCallLevel = 0.0f;
+    float     nearbyAlarmLevel       = 0.0f;
+    float     nearbyMatingCallLevel  = 0.0f;
+    float     nearbyDominanceLevel   = 0.0f;
     glm::vec2 lovedOneDir{};
     float     lovedOneProximity   = 0.0f;
     float     lovedOneThreatLevel = 0.0f;
@@ -99,6 +104,7 @@ public:
     void rest(float amount) noexcept;                     // мир вызывает при успешном отдыхе
     void mate(std::uint64_t partnerId) noexcept;           // мир вызывает при успешном спаривании: сбрасывает либидо, запоминает партнёра
     void recordChild(std::uint64_t childId);                // мир вызывает после назначения ребёнку id
+    void earnRespect(float amount) noexcept;                 // мир вызывает, когда демонстрация статуса реально выигрывает
 
     [[nodiscard]] static Creature reproduce(const Creature& a, const Creature& b, Rng& rng);
 };

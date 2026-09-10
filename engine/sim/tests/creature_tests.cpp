@@ -24,6 +24,7 @@ int main() {
 
     const float initialHunger = c.needs.hunger;
     const float initialEnergy = c.needs.energy;
+    const float initialRespect = c.needs.respect;
 
     SenseInputs senses{};
     for (int i = 0; i < 100; ++i)
@@ -31,6 +32,7 @@ int main() {
 
     WSIM_CHECK(c.needs.hunger > initialHunger);
     WSIM_CHECK(c.needs.energy < initialEnergy);
+    WSIM_CHECK(c.needs.respect > initialRespect);  // фоновый дрейф, как у libido/social
     WSIM_CHECK(c.age > 9.9f && c.age < 10.1f);
 
     const float hungerBeforeFeed = c.needs.hunger;
@@ -40,6 +42,13 @@ int main() {
     const float energyBeforeRest = c.needs.energy;
     c.rest(0.3f);
     WSIM_CHECK(c.needs.energy > energyBeforeRest);
+
+    // respect дрейфует сам по себе (как libido/social) и падает через
+    // earnRespect() -- тот же "мир решает, Creature только хранит" паттерн,
+    // что и у feed()/rest().
+    const float respectBeforeEarn = c.needs.respect;
+    c.earnRespect(0.3f);
+    WSIM_CHECK(c.needs.respect < respectBeforeEarn);
 
     c.needs.libido = 0.7f;
     c.mate(/*partnerId=*/42);
@@ -101,6 +110,23 @@ int main() {
         timid.tick(0.1f, threatSenses);
         brave.tick(0.1f, threatSenses);
         WSIM_CHECK(brave.needs.fear < timid.needs.fear);
+    }
+
+    // Чужая демонстрация статуса рядом (nearbyDominanceLevel) реально пугает
+    // -- та же механика, что и nearbyAlarmLevel, только для статуса.
+    {
+        Rng rngD(505);
+        Creature calm;
+        calm.genome = Genome::random(rngD);
+        Creature intimidated = calm;
+
+        SenseInputs plainSenses{};
+        SenseInputs dominanceSenses{};
+        dominanceSenses.nearbyDominanceLevel = 0.9f;
+
+        calm.tick(0.1f, plainSenses);
+        intimidated.tick(0.1f, dominanceSenses);
+        WSIM_CHECK(intimidated.needs.fear > calm.needs.fear);
     }
 
     // Смерть от старости: тикаем крупными шагами, пока не умрёт.

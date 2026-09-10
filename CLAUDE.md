@@ -90,12 +90,12 @@ pointer instead (the whole engine assumes exactly one window/one
 ## Creature core (`engine/sim/`)
 
 Pure simulation logic, no world/spawning/rendering integration yet:
-- **`Genome`** — flat `std::vector<float>` of 698 genes in `[-1,1]`: 9 body/
+- **`Genome`** — flat `std::vector<float>` of 759 genes in `[-1,1]`: 9 body/
   behavior/temperament traits (speed/size/metabolism/lifespan/fertility/
   **plasticity**/**boldness**/**sociability**/**bondStrength**, named via
-  `Genome::TraitIndex`) + 689 brain weights, split into
-  `fixedBrainWeights()` (500 — input→hidden, "perception", never changes
-  after birth) and `initialPlasticWeights()` (189 — hidden→output, "decision
+  `Genome::TraitIndex`) + 750 brain weights, split into
+  `fixedBrainWeights()` (540 — input→hidden, "perception", never changes
+  after birth) and `initialPlasticWeights()` (210 — hidden→output, "decision
   mapping", just the *starting point* a creature's `learnedWeights` copies at
   birth — see `Brain`/`Creature` below). `Genome::kFixedBrainWeightCount`/
   `kPlasticBrainWeightCount`/`kBrainWeightCount` mirror
@@ -112,26 +112,40 @@ Pure simulation logic, no world/spawning/rendering integration yet:
 - **`Brain`** — mostly stateless, with one deliberate exception (see lifetime
   learning below): `brain::evaluate(fixedWeights, plasticWeights, BrainInputs)
   -> BrainEvalResult` (bundles `BrainOutputs` + the hidden/output activations,
-  needed by `reinforce()`), fixed topology 24 inputs → 20 hidden (tanh) → 9
+  needed by `reinforce()`), fixed topology 26 inputs → 20 hidden (tanh) → 10
   outputs (`tanh` for move X/Z, sigmoid for the desire + communication
   outputs). Sized after comparing to the real Creatures Norn brain (952
   neurons/~5000 connections/9 lobes) — both scales are computationally
   trivial at thousands of agents, so this was a scope call, not a performance
   one.
-- **Communication** (`alarmCall`/`matingCall` outputs, `nearbyAlarmLevel`/
-  `nearbyMatingCallLevel` inputs) — creatures broadcast a distress or
-  mating-readiness signal; nearby creatures sense the aggregate (computed
-  externally by the future world/spatial system, same pattern as
-  `SenseInputs`'s other fields) and it has real behavioral effect in
-  `Creature::tick()`: a neighbor's alarm call raises your own fear even if
-  you can't see the threat yourself (herd panic), a neighbor's mating call
-  nudges your own libido. This is what makes creatures actually social,
-  rather than tracking a private `Needs::social` number nobody else reacts to.
-  It's also the raw material for emergent teamwork (e.g. rallying toward an
-  alarm instead of fleeing it) — deliberately not hard-scripted, since
-  hard-coding "help a neighbor in danger" would undercut the actual goal
-  (genuinely emergent, evolved behavior, not a scripted formula wearing a
-  brain label).
+- **Communication** (`alarmCall`/`matingCall`/`dominanceDisplay` outputs,
+  `nearbyAlarmLevel`/`nearbyMatingCallLevel`/`nearbyDominanceLevel` inputs) —
+  creatures broadcast a distress, mating-readiness, or status-display signal;
+  nearby creatures sense the aggregate (computed externally by the future
+  world/spatial system, same pattern as `SenseInputs`'s other fields) and it
+  has real behavioral effect in `Creature::tick()`: a neighbor's alarm call
+  raises your own fear even if you can't see the threat yourself (herd
+  panic), a neighbor's mating call nudges your own libido, a neighbor's
+  dominance display is intimidating (raises fear too, dampened by
+  `boldness` — same mechanism as own-threat/herd-alarm, see Explicit
+  temperament below). This is what makes creatures actually social, rather
+  than tracking private `Needs` numbers nobody else reacts to. It's also the
+  raw material for emergent teamwork (e.g. rallying toward an alarm instead
+  of fleeing it) — deliberately not hard-scripted, since hard-coding "help a
+  neighbor in danger" would undercut the actual goal (genuinely emergent,
+  evolved behavior, not a scripted formula wearing a brain label).
+- **Respect/status drive** — `Needs::respect` (desire for social standing,
+  default `0.3`) drifts upward on its own (like `libido`/`social`), faster
+  when a nearby `dominanceDisplay` creates rivalry pressure
+  (`nearbyDominanceLevel`). `dominanceDisplay` doubles as both this
+  creature's expressed desire for status *and* the broadcast signal others
+  sense (same dual role as `alarmCall`/`matingCall` — no separate output
+  needed). Satisfied only by `Creature::earnRespect(amount)`, a world-driven
+  mutator (same "world decides, `Creature` records" pattern as
+  `feed()`/`rest()`/`mate()` — called when a display actually wins a status
+  contest, once that world-level mechanic exists). No dedicated heritable
+  "ambition" trait yet (mirrors `kAggression` being deferred in the
+  temperament round) — worth adding once status contests are real.
 - **In-group/out-group** — `SenseInputs::familiarCrowding`/`strangerCrowding`
   (world tells a creature how many nearby individuals are "known": id
   matches `bondedPartnerId`/`parentIds`/`childIds`, vs strangers). Family
@@ -164,15 +178,16 @@ Pure simulation logic, no world/spawning/rendering integration yet:
   feeds `needs.fear` in `Creature::tick()` (weighted below own-threat and
   above generic herd-alarm) as well as the existing move/defend outputs.
 - **Explicit temperament** — `boldness`/`sociability`/`bondStrength` are
-  named `Genome::TraitIndex` genes (unlike the other 689 brain weights,
+  named `Genome::TraitIndex` genes (unlike the other 750 brain weights,
   individuality here isn't an opaque blob — it's inspectable and directly,
   deterministically wired, not just another evolved input the network may or
   may not learn to use). `Creature::boldness()`/`sociability()`/
   `bondStrength()` lerp them to `[0,1]` (`bondStrength()` to `[0.2,1]` — a
   bonded relationship is never *zero* fear) and modulate `tick()`'s
-  `fearTarget`: `boldness` dampens fear from own threat and herd alarm
-  (floored — nothing is fully fearless), `bondStrength` scales how strongly
-  a loved one's danger is felt (individualizes what used to be a flat
+  `fearTarget`: `boldness` dampens fear from own threat, herd alarm, *and*
+  nearby dominance displays (same `boldnessFactor`, floored — nothing is
+  fully fearless), `bondStrength` scales how strongly a loved one's danger
+  is felt (individualizes what used to be a flat
   constant), `sociability` dampens stranger-crowd wariness. `sociability`
   also scales how much company (familiar and stranger) satisfies
   `needs.social` — extroverts gain more from any crowd, introverts less
@@ -183,7 +198,7 @@ Pure simulation logic, no world/spawning/rendering integration yet:
   lands.
 - **Lifetime learning** — the one deliberate exception to "Brain is
   stateless": `Creature::learnedWeights` is a per-creature runtime copy of
-  just the *plastic* weight slice (hidden→output+bias, 189 floats), lazily
+  just the *plastic* weight slice (hidden→output+bias, 210 floats), lazily
   initialized from `genome.initialPlasticWeights()` on first `tick()`
   (`resetLearning()` does this explicitly too, e.g. for a "forget everything"
   mechanic later). Mechanism: **reward-modulated Hebbian learning**
@@ -206,14 +221,14 @@ Pure simulation logic, no world/spawning/rendering integration yet:
   never `learnedWeights`; a child inherits baseline instinct, never a
   parent's lifetime experience.
 - **`Creature`** — aggregates `Genome` + `Needs` (hunger/energy/fear/libido/
-  social) + identity + `learnedWeights` + position/velocity/age.
+  social/respect) + identity + `learnedWeights` + position/velocity/age.
   `tick(dt, SenseInputs)` runs the brain (with learning) and updates
   needs/movement/age; `SenseInputs` is supplied by the caller — `Creature`
   never queries a world itself, which is the seam the next milestone (world +
-  spatial queries) plugs into. `feed()`/`rest()`/`mate()`/`recordChild()` are
-  world-driven mutators (world decides an action succeeded, then calls
-  these). Body traits (`maxSpeed()` etc.) are computed on-demand from the
-  genome, not cached.
+  spatial queries) plugs into. `feed()`/`rest()`/`mate()`/`recordChild()`/
+  `earnRespect()` are world-driven mutators (world decides an action
+  succeeded, then calls these). Body traits (`maxSpeed()` etc.) are computed
+  on-demand from the genome, not cached.
 - Tests: `engine/sim/tests/{genome,brain,creature}_tests.cpp`, assert-based
   (no test framework dependency), run via `ctest --test-dir build/debug`.
 
@@ -223,8 +238,8 @@ Pure simulation logic, no world/spawning/rendering integration yet:
       ground plane, fixed-timestep loop
 - [x] Creature core: genetics, neural-net brain, needs, communication,
       fight-or-flight, identity/relationships, in-group/out-group, lifetime
-      learning, explicit temperament (`engine/sim/`) — not yet wired into the
-      running game
+      learning, explicit temperament, respect/status drive (`engine/sim/`) —
+      not yet wired into the running game
 - [ ] Procedural terrain (heightmap or voxel — AlphaCraft's Perlin/chunk code
       may be a starting point)
 - [ ] World + spatial-grid system (feeds `SenseInputs` to creatures; also
