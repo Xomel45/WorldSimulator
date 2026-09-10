@@ -3,6 +3,7 @@ add_library(engine_sim STATIC
     Brain.cpp
     Creature.cpp
     World.cpp
+    Terrain.cpp
 )
 
 target_include_directories(engine_sim PUBLIC

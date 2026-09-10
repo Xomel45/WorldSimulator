@@ -3,6 +3,7 @@
 #include "renderer/Camera.hpp"
 #include "renderer/Lights.hpp"
 #include "renderer/SceneObject.hpp"
+#include "sim/Terrain.hpp"
 #include "sim/World.hpp"
 #include "ui/ImGuiLayer.hpp"
 
@@ -62,6 +63,12 @@ private:
     World                     m_world;
     std::shared_ptr<Mesh>     m_creatureMesh;
     std::vector<SceneObject>  m_creatureObjects;
+
+    // Рельеф — независим от World в этом раунде (чисто визуальный/
+    // географический слой, никакого геймплейного сопряжения, см. CLAUDE.md).
+    // Меш строится один раз в конструкторе (в m_scene, статично); update()
+    // только сэмплирует высоту для позиционирования существ на поверхности.
+    Terrain                   m_terrain;
 
     // Панорамирование/зум — чувствительности god-камеры.
     static constexpr float kPanSpeed    = 12.0f;  // ед./с при distance=1 (масштабируется дистанцией)

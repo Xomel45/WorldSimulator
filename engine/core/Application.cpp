@@ -11,9 +11,11 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <imgui.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <limits>
 #include <random>
 #include <utility>
 
@@ -21,20 +23,95 @@ namespace wsim {
 
 namespace {
 
-// Плоская земляная плита (пока не процедурная — просто чтобы было на что
-// смотреть и на чём проверять god-камеру). Границы берём из World —
-// единственный источник истины для размера мира (раньше здесь было
-// отдельное захардкоженное число).
-std::pair<std::vector<Vertex>, std::vector<uint32_t>> buildGroundPlane() {
+// Разрешение сетки рельефа: ~2 юнита на ячейку -> ~101x101 вершин на весь
+// мир (World::kWorldHalfSize=100), ~20k треугольников -- тривиально для GPU,
+// строится один раз в конструкторе.
+constexpr float kTerrainCellSize = 2.0f;
+
+// Рельеф: реальная геометрия (Terrain::heightAt() на каждую вершину), а не
+// покраска плоскости -- см. обсуждение в CLAUDE.md/чате. Нормали считаются
+// из самой сгенерированной сетки высот (центральные разности, вперёд/назад
+// на краях) -- в отличие от buildCreatureMesh()'s общей нормали, здесь это
+// важно: холмы должны реально читаться под directional-светом (см. m_lights
+// ниже), а не просто существовать геометрически.
+std::pair<std::vector<Vertex>, std::vector<uint32_t>> buildTerrainMesh(const Terrain& terrain) {
+    const float halfSize = terrain.halfSize();
+    const int   res       = static_cast<int>(std::round(2.0f * halfSize / kTerrainCellSize)) + 1;
+
+    const auto idx  = [res](int i, int j) { return static_cast<std::size_t>(j) * static_cast<std::size_t>(res) + static_cast<std::size_t>(i); };
+    const auto xAt  = [halfSize](int i) { return -halfSize + static_cast<float>(i) * kTerrainCellSize; };
+    const auto zAt  = [halfSize](int j) { return -halfSize + static_cast<float>(j) * kTerrainCellSize; };
+
+    // Проход 1: высоты сетки + диапазон (нужен для нормализованной покраски
+    // ниже -- реальный диапазон зависит от сида, фиксированные константы
+    // давали бы приглушённый/невыразительный градиент на большинстве сидов).
+    std::vector<float> heights(static_cast<std::size_t>(res) * static_cast<std::size_t>(res));
+    float minH = std::numeric_limits<float>::max();
+    float maxH = std::numeric_limits<float>::lowest();
+    for (int j = 0; j < res; ++j) {
+        for (int i = 0; i < res; ++i) {
+            const float h  = terrain.heightAt(xAt(i), zAt(j));
+            heights[idx(i, j)] = h;
+            minH = std::min(minH, h);
+            maxH = std::max(maxH, h);
+        }
+    }
+    const float heightRange = std::max(maxH - minH, 0.001f);
+
+    const glm::vec4 lowColor{0.24f, 0.32f, 0.22f, 1.f};   // низина -- трава (тот же цвет, что был у старой плоской плиты)
+    const glm::vec4 highColor{0.55f, 0.52f, 0.45f, 1.f};  // высота -- камень/сушь
+
+    std::vector<Vertex> verts;
+    verts.reserve(static_cast<std::size_t>(res) * static_cast<std::size_t>(res));
+    for (int j = 0; j < res; ++j) {
+        for (int i = 0; i < res; ++i) {
+            const int iL = std::max(i - 1, 0), iR = std::min(i + 1, res - 1);
+            const int jD = std::max(j - 1, 0), jU = std::min(j + 1, res - 1);
+            const float dx = (heights[idx(iR, j)] - heights[idx(iL, j)]) /
+                              (static_cast<float>(iR - iL) * kTerrainCellSize);
+            const float dz = (heights[idx(i, jU)] - heights[idx(i, jD)]) /
+                              (static_cast<float>(jU - jD) * kTerrainCellSize);
+            const glm::vec3 normal = glm::normalize(glm::vec3(-dx, 1.0f, -dz));
+            const glm::vec4 normal4{normal, 0.f};
+
+            const float      h = heights[idx(i, j)];
+            const float      t = std::clamp((h - minH) / heightRange, 0.0f, 1.0f);
+            const glm::vec4  color = glm::mix(lowColor, highColor, t);
+
+            verts.push_back({{xAt(i), h, zAt(j), 0.f}, normal4, color});
+        }
+    }
+
+    std::vector<uint32_t> indices;
+    indices.reserve(static_cast<std::size_t>(res - 1) * static_cast<std::size_t>(res - 1) * 6);
+    for (int j = 0; j < res - 1; ++j) {
+        for (int i = 0; i < res - 1; ++i) {
+            const auto a = static_cast<uint32_t>(idx(i, j));
+            const auto b = static_cast<uint32_t>(idx(i + 1, j));
+            const auto c = static_cast<uint32_t>(idx(i + 1, j + 1));
+            const auto d = static_cast<uint32_t>(idx(i, j + 1));
+            indices.insert(indices.end(), {a, b, c, c, d, a});
+        }
+    }
+    return {std::move(verts), std::move(indices)};
+}
+
+// Плоская вода на уровне моря, во весь мир -- глубина/берега появляются
+// сами по себе через depth-test против рельефа (суша торчит и перекрывает
+// воду, впадины прячутся под ней), без отдельной логики. Непрозрачная: в
+// scene-пайплайне blending не включён (fragColor.a уже занят как флаг
+// "это бетон", не альфа) -- см. CLAUDE.md, настоящая прозрачность отложена.
+std::pair<std::vector<Vertex>, std::vector<uint32_t>> buildWaterPlane(float halfSize) {
     const glm::vec4 normal{0.f, 1.f, 0.f, 0.f};
-    const glm::vec4 color{0.24f, 0.32f, 0.22f, 1.f};
-    const float      h = World::kWorldHalfSize;
+    const glm::vec4 color{0.16f, 0.35f, 0.55f, 1.f};
+    const float      h = halfSize;
+    const float      y = Terrain::kSeaLevel;
 
     std::vector<Vertex> verts = {
-        {{-h, 0.f, -h, 0.f}, normal, color},
-        {{ h, 0.f, -h, 0.f}, normal, color},
-        {{ h, 0.f,  h, 0.f}, normal, color},
-        {{-h, 0.f,  h, 0.f}, normal, color},
+        {{-h, y, -h, 0.f}, normal, color},
+        {{ h, y, -h, 0.f}, normal, color},
+        {{ h, y,  h, 0.f}, normal, color},
+        {{-h, y,  h, 0.f}, normal, color},
     };
     std::vector<uint32_t> indices = {0, 1, 2, 2, 3, 0};
     return {std::move(verts), std::move(indices)};
@@ -73,7 +150,9 @@ std::pair<std::vector<Vertex>, std::vector<uint32_t>> buildCreatureMesh() {
 
 // ─── Constructor ──────────────────────────────────────────────────────────────
 Application::Application(AppConfig config)
-    : m_config(config), m_world(std::random_device{}()) {
+    : m_config(config),
+      m_world(std::random_device{}()),
+      m_terrain(World::kWorldHalfSize, std::random_device{}()) {
     Logger::info("Initializing WorldSimulator core");
 
     m_window  = std::make_unique<Window>(config.title, config.width, config.height);
@@ -82,13 +161,20 @@ Application::Application(AppConfig config)
     m_input   = std::make_unique<InputSystem>(m_window->handle());
     m_imgui   = std::make_unique<ImGuiLayer>(m_window->handle(), *m_context, std::string(config.assetDir));
 
-    // Земляная плоскость — статичный объект сцены.
-    auto [groundV, groundI] = buildGroundPlane();
-    auto groundMesh = std::make_shared<Mesh>(Mesh::create(
+    // Рельеф + вода — статичные объекты сцены, строятся один раз.
+    auto [terrainV, terrainI] = buildTerrainMesh(m_terrain);
+    auto terrainMesh = std::make_shared<Mesh>(Mesh::create(
         m_context->physDevice(), m_context->device(),
         m_context->commandPool(), m_context->graphicsQueue(),
-        groundV, groundI));
-    m_scene.push_back({groundMesh, Transform{}, /*solid=*/false});
+        terrainV, terrainI));
+    m_scene.push_back({terrainMesh, Transform{}, /*solid=*/false});
+
+    auto [waterV, waterI] = buildWaterPlane(m_terrain.halfSize());
+    auto waterMesh = std::make_shared<Mesh>(Mesh::create(
+        m_context->physDevice(), m_context->device(),
+        m_context->commandPool(), m_context->graphicsQueue(),
+        waterV, waterI));
+    m_scene.push_back({waterMesh, Transform{}, /*solid=*/false});
 
     // Один общий меш на всех существ — SceneObject'ы (см. update()) просто
     // ссылаются на него с разным Transform, ни одной лишней GPU-аллокации.
@@ -98,8 +184,12 @@ Application::Application(AppConfig config)
         m_context->commandPool(), m_context->graphicsQueue(),
         creatureV, creatureI));
 
-    // Освещение: только ambient — direct/point-света пока не заведены (см. CLAUDE.md).
-    m_lights.ambient = {1.0f, 1.0f, 1.0f, 0.6f};
+    // Освещение: ambient + солнце (направленный свет — иначе рельеф не
+    // читается как рельеф, только силуэтом, см. CLAUDE.md). Фиксированный
+    // угол, без дня/ночи (вне охвата этого раунда).
+    m_lights.ambient          = {1.0f, 1.0f, 1.0f, 0.6f};
+    m_lights.sunDir            = glm::normalize(glm::vec4(0.4f, 1.0f, 0.3f, 0.0f));
+    m_lights.sunColorIntensity = {1.0f, 0.98f, 0.92f, 0.9f};
 
     Logger::info("World: {} creatures, {} food sources", m_world.populationCount(), m_world.foodCount());
     Logger::info("Engine ready");
@@ -196,7 +286,10 @@ void Application::update(float dt) {
     for (const auto& inhabitant : m_world.population()) {
         const Creature& c = inhabitant.creature;
         Transform        t;
-        t.position = c.position;
+        // c.position.y всегда 0 (симуляция не знает о рельефе в этом раунде,
+        // см. CLAUDE.md) -- сэмплируем высоту террейна отдельно, только для
+        // визуального маркера, чтобы существо реально стояло на поверхности.
+        t.position = {c.position.x, m_terrain.heightAt(c.position.x, c.position.z), c.position.z};
         t.scale    = glm::vec3(c.size());
         if (const float speed = glm::length(c.velocity); speed > 0.01f)
             t.rotation.y = glm::degrees(std::atan2(c.velocity.x, c.velocity.z));

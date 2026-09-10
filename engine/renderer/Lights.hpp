@@ -10,6 +10,11 @@ inline constexpr int kMaxPointLights = 8;  // = WSIM_MAX_POINT_LIGHTS в lightin
 // (set = 0, binding = 1, fragment stage).
 struct LightsData {
     glm::vec4  ambient{};                            // rgb, w = интенсивность
+    // Солнце: направленный свет без позиции/затухания (для террейна — иначе
+    // холмы не читаются рельефом, только силуэтом). sunDir — уже итоговое L
+    // (направление К солнцу, нормализовано), не позиция источника.
+    glm::vec4  sunDir{0.f, 1.f, 0.f, 0.f};
+    glm::vec4  sunColorIntensity{};                   // rgb, w = интенсивность (0 = выкл, как у spotColor.w)
     glm::vec4  spotPosCosIn{};                       // xyz = позиция, w = cos(inner)
     glm::vec4  spotDirCosOut{0.f, 0.f, -1.f, 0.f};   // xyz = направление, w = cos(outer)
     glm::vec4  spotColor{};                          // rgb, w = интенсивность (0 = выкл)

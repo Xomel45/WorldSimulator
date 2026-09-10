@@ -58,9 +58,11 @@ engine/
   ui/          ImGuiLayer.hpp/.cpp
   sim/         Genome/Brain/Creature — genetics + neural-net brain + needs.
                World — population + food + spatial grid, orchestrates the
-               above. No Vulkan/GLFW dependency (only glm) -> fast to compile
-               and directly unit-testable. `Application` owns a `World` and
-               renders it — see "Creature core"/"World" below.
+               above. Terrain — heightmap generation (independent of World
+               this round). No Vulkan/GLFW dependency (only glm) -> fast to
+               compile and directly unit-testable. `Application` owns a
+               `World` and a `Terrain` and renders both — see "Creature
+               core"/"World"/"Terrain" below.
 game/
   main.cpp     entry point
 assets/
@@ -358,25 +360,93 @@ Zero Vulkan/GLFW dependency, same as the rest of `engine_sim`.
   existing gap, not introduced here; `kMaxPopulation=200` is the safety net
   against unbounded growth in its place); no dominance/status contests
   (`Creature::earnRespect()` stays uncalled); no per-creature visual
-  differentiation or non-ambient lighting (see Application integration below).
+  differentiation (all creatures share one mesh/color — see Application
+  integration below); **no interaction with `Terrain`** (below) at all yet —
+  creatures don't avoid water, elevation doesn't affect movement/needs, this
+  is still a flat 2D simulation plane underneath the now-3D-looking world.
 - **Application integration**: `Application` owns a `World` (seeded from
   `std::random_device` — real playthroughs vary run to run; determinism for
   tests lives in `world_tests.cpp` with a fixed seed) and a single shared
-  pyramid `Mesh` (`buildCreatureMesh()` in `Application.cpp`, next to the
-  existing `buildGroundPlane()`) that every living creature's `SceneObject`
-  references — `Application::update()` calls `m_world.tick(dt)` then rebuilds
-  `m_creatureObjects` from `m_world.population()` each step (position, `size()`
-  scale, yaw from velocity when moving). Ground plane bounds now come from
-  `World::kWorldHalfSize` (previously a separately-hardcoded constant).
+  pyramid `Mesh` (`buildCreatureMesh()` in `Application.cpp`) that every
+  living creature's `SceneObject` references — `Application::update()` calls
+  `m_world.tick(dt)` then rebuilds `m_creatureObjects` from
+  `m_world.population()` each step (X/Z position + `Terrain::heightAt()` for
+  Y — see Terrain below, `size()` scale, yaw from velocity when moving).
   **Destructor note**: since every creature `SceneObject` shares the *same*
   `Mesh`, it's destroyed exactly once explicitly — not by iterating
   `m_creatureObjects` the way `m_scene`'s (distinct) meshes are, which would
   double-destroy the shared GPU buffers.
 
+## Terrain (`engine/sim/Terrain.hpp`/`.cpp`)
+
+Real heightmap geometry, not a flat plane painted by biome — pure logic,
+zero Vulkan/GLFW deps, same rule as `Genome`/`Brain`/`Creature`/`World`.
+**Independent of `World` this round** — no gameplay coupling (no water
+avoidance, no elevation-based needs/movement); `Application` owns both
+`Terrain` and `World` directly as two separate systems it composes, the
+same way it already owns `World` on its own.
+
+- **`Terrain::heightAt(x, z)`** — pure `O(1)` function, no stored grid (same
+  "derived/pure-function" style as `Creature::awayFromHome()`/
+  `boredomLevel()`): mesh resolution (a renderer concern) is fully decoupled
+  from generation (a sim concern). Two noise layers, both via the same
+  fractal/octave Perlin (`octaveNoise2D()`, adapted from
+  `../AlphaCraft/src/world/PerlinNoise` but reseeded through `wsim::Rng`
+  instead of `std::default_random_engine`, to match the project's RNG
+  convention) — no second algorithm needed: a low-frequency/high-amplitude
+  layer shapes continent-scale land/ocean, a higher-frequency layer on top
+  adds local hill/valley detail. `kHeightBias` shifts the result so most of
+  the map is land (not a 50/50 split — empirically ~8-28% water across
+  seeds at the tuned constants, checked via `terrain_tests.cpp`), since a
+  world meant for future settlements needs somewhere to put them.
+  `Terrain::kSeaLevel` (`0.0`) is the water threshold; `isUnderwater(x, z)`
+  is just `heightAt(x, z) < kSeaLevel`.
+- **Mesh building** (`Application.cpp`, `buildTerrainMesh()`/
+  `buildWaterPlane()`, same style as the old `buildGroundPlane()`/existing
+  `buildCreatureMesh()`): a ~101×101-vertex grid (`kTerrainCellSize=2.0` over
+  `World::kWorldHalfSize`) sampling `heightAt()` per vertex, with per-vertex
+  normals computed from the *generated grid itself* (central differences
+  against neighboring heights, forward/backward at the edges) — unlike
+  `buildGroundPlane()`/`buildCreatureMesh()`'s flat "same normal everywhere"
+  shortcut, this mesh needs real per-vertex shading now that there's a
+  directional light (below) to make hills actually read as hills. Color is
+  a simple two-stop lerp by normalized elevation (lowland green → highland
+  grey/brown) — no biome system, just enough to reinforce the geometry.
+  Water is one flat opaque quad at `Terrain::kSeaLevel` spanning the whole
+  world; depth-testing against the terrain mesh does the rest for free
+  (land pokes through and occludes it, low terrain hides beneath it) — the
+  standard heightmap+sea-plane trick, no extra logic. **Opaque, not
+  transparent**: `VulkanContext`'s scene pipeline has no alpha blending
+  enabled (`fragColor.a` is already repurposed as a "this is concrete"
+  material flag, not real opacity) — real water transparency would need a
+  new blend-enabled pipeline variant, deferred.
+- **Directional light** (`LightsData` in `engine/renderer/Lights.hpp` /
+  `LightsUBO` in `assets/shaders/include/lighting.glsl`): the lighting model
+  was ambient + up to 8 point lights + one camera-following spotlight, with
+  no sun/directional concept — added `sunDir` (already-normalized direction
+  *to* the light, not a position) + `sunColorIntensity` (`w=0` disables it,
+  same convention as `spotColor.w`) as two more `vec4`s, mirrored field-for-
+  field in both the C++ struct and the GLSL UBO (std140-safe since
+  everything in both structs is already `vec4`-sized, no padding to get
+  wrong). `shade()` in `lighting.glsl` adds a sun term reusing the same
+  `blinnPhong()`/`shadowFactor()` hooks the point/spot lights already use —
+  free ray-traced soft shadows in `scene_rt.frag`'s RT variant, always-lit
+  no-op in the rasterized `scene.frag` variant, exactly like the existing
+  lights, no new shadow code needed. `Application`'s constructor sets a
+  fixed sun angle/color once alongside `m_lights.ambient` — no day/night
+  cycle (out of scope).
+- **Known gaps** (deliberately out of scope this round): **no rivers** —
+  agreed in conversation to be a separate round (needs a flow/erosion pass,
+  not just more noise, to look like real connected downhill water); no
+  gameplay coupling with `World`/`Creature` (see World's Known gaps above);
+  no day/night cycle (sun angle is a fixed constant); no biome variety
+  beyond the elevation color lerp.
+
 ## Current state / TODO
 
-- [x] Engine bring-up: window, Vulkan context, ImGui, orbit camera, flat
-      ground plane, fixed-timestep loop
+- [x] Engine bring-up: window, Vulkan context, ImGui, orbit camera,
+      fixed-timestep loop (ground plane since replaced by real terrain,
+      see below)
 - [x] Creature core: genetics, neural-net brain, needs, communication,
       fight-or-flight, identity/relationships, in-group/out-group, lifetime
       learning, explicit temperament, respect/status drive, envy/resentment,
@@ -387,9 +457,9 @@ Zero Vulkan/GLFW dependency, same as the rest of `engine_sim`.
 - [x] Spawning: population/food live in `World`, rendered as simple pyramid
       markers, `World::tick()` wired into `Application::update()` — running
       in the actual game for the first time (see "World" above)
-- [ ] Procedural terrain (heightmap or voxel — AlphaCraft's Perlin/chunk code
-      may be a starting point; flat ground plane for now, sized from
-      `World::kWorldHalfSize`)
+- [x] Procedural terrain: heightmap (not voxel) generated with fractal Perlin
+      noise, sea-level water, directional light (see "Terrain" above) —
+      rivers still pending, no gameplay coupling with `World` yet
 - [ ] God-power tools (raise/lower terrain, spawn/remove creatures, click
       interactions)
 - [ ] Civilization-scale systems (out of scope until the above lands)

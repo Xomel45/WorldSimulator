@@ -8,6 +8,8 @@
 
 layout(set = 0, binding = 1) uniform LightsUBO {
     vec4  ambient;                                // rgb, w = интенсивность
+    vec4  sunDir;                                 // xyz = направление К солнцу (уже L, не позиция), нормализовано
+    vec4  sunColorIntensity;                       // rgb, w = интенсивность (0 = выкл)
     vec4  spotPosCosIn;                           // xyz = позиция, w = cos(inner)
     vec4  spotDirCosOut;                          // xyz = направление, w = cos(outer)
     vec4  spotColor;                              // rgb, w = интенсивность (0 = выкл)
@@ -36,6 +38,20 @@ vec3 blinnPhong(vec3 albedo, vec3 N, vec3 V, vec3 L, float specPower, float spec
 // ao — фактор затенения ambient (1.0 = открыто, 0.0 = в щели); для растеризации 1.0.
 vec3 shade(vec3 P, vec3 N, vec3 V, vec3 albedo, float ao) {
     vec3 lit = albedo * lights.ambient.rgb * lights.ambient.w * ao;
+
+    // Солнце: направленный свет, без позиции/затухания. shadowFactor те же
+    // хуки, что у точечных/фонарика — бесплатные RT-тени в scene_rt.frag,
+    // no-op (всегда освещено) в растеризации scene.frag, тот же контракт.
+    if (lights.sunColorIntensity.w > 0.0) {
+        vec3 L = normalize(lights.sunDir.xyz);
+        if (dot(N, L) > 0.0) {
+            float sh = shadowFactor(P + N * 0.02, L, 1000.0);
+            if (sh > 0.0) {
+                vec3 c = lights.sunColorIntensity.rgb * lights.sunColorIntensity.w;
+                lit += blinnPhong(albedo, N, V, L, 16.0, 0.05) * c * sh;
+            }
+        }
+    }
 
     // Точечные источники (лампочки)
     for (int i = 0; i < lights.counts.x; ++i) {
