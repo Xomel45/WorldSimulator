@@ -57,9 +57,10 @@ engine/
                  generic mesh/scene plumbing
   ui/          ImGuiLayer.hpp/.cpp
   sim/         Genome/Brain/Creature — genetics + neural-net brain + needs.
-               No Vulkan/GLFW dependency (only glm) -> fast to compile and
-               directly unit-testable. Not yet wired into Application/game —
-               see "Creature core" below.
+               World — population + food + spatial grid, orchestrates the
+               above. No Vulkan/GLFW dependency (only glm) -> fast to compile
+               and directly unit-testable. `Application` owns a `World` and
+               renders it — see "Creature core"/"World" below.
 game/
   main.cpp     entry point
 assets/
@@ -89,7 +90,8 @@ pointer instead (the whole engine assumes exactly one window/one
 
 ## Creature core (`engine/sim/`)
 
-Pure simulation logic, no world/spawning/rendering integration yet:
+Pure simulation logic — `World` (below) is what turns it into a running
+population, `Creature` itself still never reaches into anything external:
 - **`Genome`** — flat `std::vector<float>` of 863 genes in `[-1,1]`: 13 body/
   behavior/temperament traits (speed/size/metabolism/lifespan/fertility/
   **plasticity**/**boldness**/**sociability**/**bondStrength**/**envy**/
@@ -306,8 +308,70 @@ Pure simulation logic, no world/spawning/rendering integration yet:
   succeeded, then calls these). Body traits (`maxSpeed()` etc.) and derived
   signals (`awayFromHome()`, `boredomLevel()`) are computed on-demand, not
   cached.
-- Tests: `engine/sim/tests/{genome,brain,creature}_tests.cpp`, assert-based
-  (no test framework dependency), run via `ctest --test-dir build/debug`.
+- Tests: `engine/sim/tests/{genome,brain,creature,world}_tests.cpp`,
+  assert-based (no test framework dependency), run via
+  `ctest --test-dir build/debug`.
+
+## World (`engine/sim/World.hpp`/`.cpp`)
+
+Owns the population, food, and a spatial grid; is the only thing allowed to
+call `Creature`'s world-driven mutators (`feed()`/`rest()`/`mate()`/
+`recordChild()`/`earnRespect()`) and `Creature::reproduce()` — `Creature`
+itself still never reaches outward, same invariant the module already had.
+Zero Vulkan/GLFW dependency, same as the rest of `engine_sim`.
+
+- **`Inhabitant`** = `Creature` + `lastOutputs` (that creature's `BrainOutputs`
+  from the *previous* tick). Lives in `World`, not `Creature.hpp` — keeps
+  `Creature` itself unaware it's being watched. `lastOutputs`, not the
+  current tick's, is what neighbors sense (`nearbyFamiliarAlarmLevel` etc.)
+  — avoids a same-tick chicken/egg dependency between creatures without a
+  two-solve-per-tick scheme.
+- **Spatial grid** — uniform grid (`kCellSize=15`), rebuilt fresh every
+  `tick()` from current positions (`O(n)`, no incremental bookkeeping —
+  population is in the hundreds, not millions). One grid for creatures, one
+  for food (amount > 0 only). This is the fix for the O(n²) neighbor-query
+  cost flagged when the hardware ceiling was discussed (`tools/hw_ceiling.py`).
+- **`tick(dt)`**: two passes. Pass 1 — per creature, build `SenseInputs` from
+  the grid + `lastOutputs` + a pending "grief ping" map (see below), call
+  `creature.tick()`, then resolve `eatDesire`/`restDesire` inline (continuous
+  `dt`-scaled consumption/recovery, not instant). Pass 2 — mating needs both
+  sides' `mateDesire`, only available once everyone's thought this tick: pairs
+  up eligible creatures within interact range, calls `mate()` on both, and
+  (under `kMaxPopulation`) spawns a child via `Creature::reproduce()`. Dead
+  creatures (`Creature::tick()` already sets `alive=false` at `age >=
+  lifespan()` — no new death logic here) get erased and queue a one-shot
+  grief ping for their `bondedPartnerId`/`parentIds`/`childIds`, consumed as
+  `SenseInputs::lovedOneDied` at the start of the *next* tick.
+- **Sensing approximations** (documented, not accidental): loved-one lookups
+  ignore `kSenseRadius` entirely (family is always sensed, however far —
+  `kFamilySenseRange=200` only shapes the proximity falloff); a creature's
+  own senses are built from grid/`lastOutputs` state frozen at the top of the
+  tick, but *other* creatures' `needs.fear` (for `lovedOneThreatLevel`) is
+  read live, so it's mid-tick-fresh for lower-indexed creatures in
+  `m_population` and previous-tick for higher-indexed ones — a same-tick
+  ordering wrinkle, imperceptible at a 60Hz step, not worth a second sense
+  pass to eliminate.
+- **Known gaps** (deliberately out of scope this round): no predators/threats
+  (`threatProximity` stays `0`) or combat resolution (`fleeDesire`/
+  `defendDesire` stay expressed-but-unresolved intents); no starvation death
+  (`needs.hunger` caps at `1.0` in `Creature::tick()` but never kills — an
+  existing gap, not introduced here; `kMaxPopulation=200` is the safety net
+  against unbounded growth in its place); no dominance/status contests
+  (`Creature::earnRespect()` stays uncalled); no per-creature visual
+  differentiation or non-ambient lighting (see Application integration below).
+- **Application integration**: `Application` owns a `World` (seeded from
+  `std::random_device` — real playthroughs vary run to run; determinism for
+  tests lives in `world_tests.cpp` with a fixed seed) and a single shared
+  pyramid `Mesh` (`buildCreatureMesh()` in `Application.cpp`, next to the
+  existing `buildGroundPlane()`) that every living creature's `SceneObject`
+  references — `Application::update()` calls `m_world.tick(dt)` then rebuilds
+  `m_creatureObjects` from `m_world.population()` each step (position, `size()`
+  scale, yaw from velocity when moving). Ground plane bounds now come from
+  `World::kWorldHalfSize` (previously a separately-hardcoded constant).
+  **Destructor note**: since every creature `SceneObject` shares the *same*
+  `Mesh`, it's destroyed exactly once explicitly — not by iterating
+  `m_creatureObjects` the way `m_scene`'s (distinct) meshes are, which would
+  double-destroy the shared GPU buffers.
 
 ## Current state / TODO
 
@@ -316,15 +380,16 @@ Pure simulation logic, no world/spawning/rendering integration yet:
 - [x] Creature core: genetics, neural-net brain, needs, communication,
       fight-or-flight, identity/relationships, in-group/out-group, lifetime
       learning, explicit temperament, respect/status drive, envy/resentment,
-      grief, territoriality, curiosity, empathy (`engine/sim/`) — not yet
-      wired into the running game
-- [ ] Procedural terrain (heightmap or voxel — AlphaCraft's Perlin/chunk code
-      may be a starting point)
-- [ ] World + spatial-grid system (feeds `SenseInputs` to creatures; also
+      grief, territoriality, curiosity, empathy (`engine/sim/`)
+- [x] World + spatial-grid system (feeds `SenseInputs` to creatures; also
       the fix for the O(n²) nearest-neighbour cost flagged when the hardware
       ceiling was discussed — see `tools/hw_ceiling.py`)
-- [ ] Spawning: place `Creature`s in the world, wire `tick()`/`reproduce()`
-      into `Application`'s update loop
+- [x] Spawning: population/food live in `World`, rendered as simple pyramid
+      markers, `World::tick()` wired into `Application::update()` — running
+      in the actual game for the first time (see "World" above)
+- [ ] Procedural terrain (heightmap or voxel — AlphaCraft's Perlin/chunk code
+      may be a starting point; flat ground plane for now, sized from
+      `World::kWorldHalfSize`)
 - [ ] God-power tools (raise/lower terrain, spawn/remove creatures, click
       interactions)
 - [ ] Civilization-scale systems (out of scope until the above lands)

@@ -2,6 +2,7 @@ add_library(engine_sim STATIC
     Genome.cpp
     Brain.cpp
     Creature.cpp
+    World.cpp
 )
 
 target_include_directories(engine_sim PUBLIC

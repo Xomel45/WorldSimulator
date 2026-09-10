@@ -3,6 +3,7 @@
 #include "renderer/Camera.hpp"
 #include "renderer/Lights.hpp"
 #include "renderer/SceneObject.hpp"
+#include "sim/World.hpp"
 #include "ui/ImGuiLayer.hpp"
 
 #include <cstdint>
@@ -15,6 +16,7 @@ namespace wsim {
 class Window;
 class VulkanContext;
 class InputSystem;
+struct Frustum;
 
 struct AppConfig {
     std::string_view title     = "WorldSimulator";
@@ -40,6 +42,7 @@ private:
     void update(float dt);
     void render();
     void renderDebugUI();
+    void drawObjects(const std::vector<SceneObject>& objects, const Frustum& frustum);
 
     AppConfig                      m_config;
     std::unique_ptr<Window>        m_window;
@@ -50,6 +53,15 @@ private:
     OrbitCamera               m_camera;
     std::vector<SceneObject>  m_scene;
     LightsData                m_lights;
+
+    // Симуляция + её визуальное представление. World ничего не знает про
+    // Vulkan (см. sim/World.hpp) -- Application только читает population()
+    // каждый update() и строит SceneObject'ы из позиций. Все существа делят
+    // один и тот же m_creatureMesh (см. деструктор в .cpp -- нельзя удалять
+    // меш через перебор m_creatureObjects, иначе двойной destroy()).
+    World                     m_world;
+    std::shared_ptr<Mesh>     m_creatureMesh;
+    std::vector<SceneObject>  m_creatureObjects;
 
     // Панорамирование/зум — чувствительности god-камеры.
     static constexpr float kPanSpeed    = 12.0f;  // ед./с при distance=1 (масштабируется дистанцией)
