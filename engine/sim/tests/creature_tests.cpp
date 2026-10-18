@@ -287,6 +287,67 @@ int main() {
     for (auto i : kAllTraits)
         WSIM_CHECK(child.genome.trait(i) >= -1.0f && child.genome.trait(i) <= 1.0f);
 
+    // ── Вкус ягод и яд ──
+    {
+        Rng r2(77);
+        Creature t;
+        t.genome = Genome::random(r2);
+        t.age    = t.lifespan() * 0.3f;
+        // Незнакомое манит с авансом по любопытству; знакомым становится после первой трапезы.
+        for (int k = 0; k < kBerryKindCount; ++k) {
+            const float a = t.berryAppeal(static_cast<BerryKind>(k));
+            WSIM_CHECK(!t.knowsBerry(static_cast<BerryKind>(k)) && a >= 0.6f - 1e-4f && a <= 1.1f + 1e-4f);
+        }
+        constexpr float kDt = 1.0f / 60.0f;
+        Creature good = t, bad = t, mild = t;
+        for (int i = 0; i < 120; ++i) {  // две секунды еды
+            good.tasteBerry(BerryKind::Cloudberry, berryDef(BerryKind::Cloudberry).nutrition, 0.0f, kDt);
+            bad.tasteBerry(BerryKind::Nightshade, berryDef(BerryKind::Nightshade).nutrition, berryDef(BerryKind::Nightshade).toxicity, kDt);
+            mild.tasteBerry(BerryKind::Baneberry, berryDef(BerryKind::Baneberry).nutrition, berryDef(BerryKind::Baneberry).toxicity, kDt);
+        }
+        WSIM_CHECK(good.knowsBerry(BerryKind::Cloudberry) && good.berryAppeal(BerryKind::Cloudberry) > 1.2f);   // морошка: сытная, нравится
+        WSIM_CHECK(bad.berryAppeal(BerryKind::Nightshade) < -0.8f);                                              // волчья: смертельный вкус
+        WSIM_CHECK(mild.berryAppeal(BerryKind::Baneberry) < Creature::kMinAppeal);                               // вороний глаз: тоже обходит
+        WSIM_CHECK(!good.knowsBerry(BerryKind::Raspberry) && good.berryAppeal(BerryKind::Raspberry) >= 0.6f - 1e-4f);  // чужие виды не тронуты
+        // Мнение складывается быстро: ядовитая ягода становится непривлекательной за доли секунды.
+        Creature quick = t;
+        int ticks = 0;
+        while (quick.berryAppeal(BerryKind::Nightshade) >= Creature::kMinAppeal && ticks < 600) {
+            quick.tasteBerry(BerryKind::Nightshade, 0.6f, 0.9f, kDt);
+            ++ticks;
+        }
+        WSIM_CHECK(ticks >= 2 && ticks < 40);
+        // Вкус тускнеет: за много минут отрицательное мнение возвращается к нейтральному (можно попробовать снова).
+        SenseInputs idle{};
+        for (int i = 0; i < 60 * 60 * 20; ++i) bad.tick(kDt * 1.0f, idle);  // 20 минут
+        WSIM_CHECK(!bad.alive || bad.berryAppeal(BerryKind::Nightshade) > -0.3f);
+
+        // Яд: бьёт по здоровью и силам, сам выводится, убивает достаточной дозой (deathCause 4); безопасные ягоды его не дают.
+        Creature sick = t;
+        sick.needs.energy = 0.9f;
+        sick.addToxin(0.8f);
+        const float h0 = sick.health;
+        for (int i = 0; i < 300; ++i) sick.tick(kDt, idle);
+        WSIM_CHECK(sick.alive && sick.health < h0 && sick.toxin < 0.8f && sick.toxin > 0.0f);
+        Creature dying = t;
+        dying.health = 0.15f;
+        dying.addToxin(2.0f);
+        for (int i = 0; i < 60 * 30 && dying.alive; ++i) dying.tick(kDt, idle);
+        WSIM_CHECK(!dying.alive && dying.deathCause == 4);
+        dying.toxin = 0.0f;  // (потолок дозы)
+        Creature capped = t;
+        capped.addToxin(50.0f);
+        WSIM_CHECK(capped.toxin <= 2.0f);
+
+        // Вкус и яд не наследуются: ребёнок чистый (дарвиновски, как learnedWeights).
+        Rng rr(5);
+        Creature pa = bad, pb = good;
+        pa.id = 1; pb.id = 2;
+        const Creature kid = Creature::reproduce(pa, pb, rr);
+        WSIM_CHECK(kid.toxin == 0.0f);
+        for (int k = 0; k < kBerryKindCount; ++k) WSIM_CHECK(!kid.knowsBerry(static_cast<BerryKind>(k)) && kid.taste[static_cast<std::size_t>(k)] == 0.0f);
+    }
+
     std::puts("creature_tests: OK");
     return 0;
 }

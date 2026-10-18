@@ -188,6 +188,53 @@ int main() {
         WSIM_CHECK(hungry.stats().births == 0);
     }
 
+    // ── Ягоды: вкус запоминается, отравившись, существо обходит ядовитый куст и идёт к съедобному ──
+    {
+        // Единственный куст -- волчья ягода: пробует, чувствует яд, бросает; не умирает, не объедает куст целиком.
+        Creature c = adult(3, {0.0f, 0.0f, 0.0f});
+        c.needs.hunger = 0.5f;
+        World w = scenario(3, {c}, {FoodSource{{4.0f, 0.0f, 2.0f}, 1.0f, BerryKind::Nightshade}});
+        float maxToxin = 0.0f;
+        for (int i = 0; i < static_cast<int>(25.0f / kDt); ++i) {
+            w.tick(kDt, nullptr);
+            if (!w.population().empty()) maxToxin = std::max(maxToxin, w.population()[0].creature.toxin);
+        }
+        WSIM_CHECK(w.population().size() == 1);                       // выжило
+        const Creature& cr = w.population()[0].creature;
+        WSIM_CHECK(cr.knowsBerry(BerryKind::Nightshade));             // пробовало
+        WSIM_CHECK(cr.berryAppeal(BerryKind::Nightshade) < Creature::kMinAppeal);  // и запомнило, что это плохо
+        WSIM_CHECK(maxToxin > 0.02f && maxToxin < 1.3f);              // отравилось, но не смертельно
+        WSIM_CHECK(w.food()[0].amount > 0.5f);                        // куст не съеден целиком: бросило после пары укусов
+    }
+    {
+        // Рядом волчья ягода, подальше морошка: сначала пробует ближнюю, отравляется и уходит к морошке, наедается.
+        Creature c = adult(3, {0.0f, 0.0f, 0.0f});
+        c.needs.hunger = 0.8f;
+        World w = scenario(3, {c}, {FoodSource{{3.0f, 0.0f, 0.0f}, 1.0f, BerryKind::Nightshade}, FoodSource{{14.0f, 0.0f, 5.0f}, 1.0f, BerryKind::Cloudberry}});
+        float minHunger = 1.0f, minCloud = 1.0f;
+        for (int i = 0; i < static_cast<int>(90.0f / kDt); ++i) {
+            w.tick(kDt, nullptr);
+            if (!w.population().empty()) minHunger = std::min(minHunger, w.population()[0].creature.needs.hunger);
+            minCloud = std::min(minCloud, w.food()[1].amount);
+        }
+        WSIM_CHECK(w.population().size() == 1);
+        const Creature& cr = w.population()[0].creature;
+        WSIM_CHECK(cr.knowsBerry(BerryKind::Nightshade) && cr.berryAppeal(BerryKind::Nightshade) < 0.5f);  // пары укусов хватило, чтобы перестать верить этому кусту
+        WSIM_CHECK(cr.knowsBerry(BerryKind::Cloudberry) && cr.berryAppeal(BerryKind::Cloudberry) > 1.0f);
+        WSIM_CHECK(minHunger < 0.35f);                                 // в итоге наелось съедобным
+        WSIM_CHECK(minCloud < 0.7f);                                      // морошку ели (потом куст отрастает)
+    }
+    {
+        // Статистика: смерть от яда считается отдельно.
+        Creature c = adult(3, {0.0f, 0.0f, 0.0f});
+        c.needs.hunger = 0.3f;
+        c.health = 0.05f;
+        c.addToxin(2.0f);
+        World w = scenario(3, {c}, {});
+        for (int i = 0; i < static_cast<int>(20.0f / kDt) && w.populationCount() > 0; ++i) w.tick(kDt, nullptr);
+        WSIM_CHECK(w.populationCount() == 0 && w.stats().deathsPoison == 1);
+    }
+
     std::puts("intelligence_tests: OK");
     return 0;
 }

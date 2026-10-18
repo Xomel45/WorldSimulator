@@ -30,6 +30,7 @@ constexpr float kMotherEnergyCost    = 0.22f;   // роды и вынашива�
 constexpr float kFatherEnergyCost    = 0.08f;
 constexpr float kFoodRegrowRate      = 0.04f;   // единиц/сек восстановления источника еды
 constexpr float kFoodCap             = 1.0f;
+constexpr float kToxinPerAmount      = 4.0f;    // яда за единицу съеденного при toxicity 1: до ~0.2 с волчьей ягоды -- терпимо, секунда -- почти конец
 constexpr float kFoodMinEdible       = 0.12f;   // меньше -- куст "пустой": его не видно как еду, пока не отрастёт (иначе все висят на огрызках)
 
 using Grid = std::unordered_map<std::int64_t, std::vector<std::size_t>>;
@@ -294,13 +295,23 @@ void World::tick(float dt, const Terrain* terrain) {
         senses.worldHalfSize = kWorldHalfSize;
 
         // Еда.
-        float       bestFoodDist = kSenseRadius;
+        // Куст выбирается не по одной близости: учитывается, какие ягоды существо знает и любит (вкус, см.
+        // Creature::tasteBerry). Приглянувшаяся издалека сытная ягода бьёт ближнюю посредственную; те, что отравили
+        // (привлечение < kMinAppeal), обходятся -- пока не припёрло: сильно голодный берёт и сомнительное (но не ту, что
+        // убивает: привлечение < kDesperateFloor).
+        constexpr float kAppealDistScale = 12.0f, kDesperateHunger = 0.85f, kDesperateFloor = -0.4f;
+        float       bestFoodDist = kSenseRadius, bestScore = 0.0f;
         std::size_t bestFoodK    = liveFoodIdx.size();
+        const bool  desperate    = self.needs.hunger > kDesperateHunger;
         forEachNearby(
             foodGrid, selfPos, kSenseRadius,
             [this, &liveFoodIdx](std::size_t k) { return m_food[liveFoodIdx[k]].position; },
             [&](std::size_t k, float dist) {
-                if (dist < bestFoodDist) {
+                const float appeal = self.berryAppeal(m_food[liveFoodIdx[k]].kind);
+                if (appeal < Creature::kMinAppeal && !(desperate && appeal > kDesperateFloor)) return;
+                const float score = std::max(appeal, 0.05f) / (1.0f + dist / kAppealDistScale);
+                if (score > bestScore) {
+                    bestScore    = score;
                     bestFoodDist = dist;
                     bestFoodK    = k;
                 }
@@ -423,7 +434,10 @@ void World::tick(float dt, const Terrain* terrain) {
         if (out.eatDesire > kEatDesireThreshold && foundFood && bestFoodDist <= kInteractRadius) {
             FoodSource& src  = m_food[liveFoodIdx[bestFoodK]];
             const float bite = std::min(src.amount, kEatRate * dt);
-            self.feed(bite * berryDef(src.kind).nutrition);  // морошка сытнее черники при том же объёме
+            const BerryDef& def = berryDef(src.kind);
+            self.feed(bite * def.nutrition);  // морошка сытнее черники при том же объёме
+            if (def.toxicity > 0.0f) self.addToxin(bite * def.toxicity * kToxinPerAmount);
+            self.tasteBerry(src.kind, def.nutrition, def.toxicity, dt);  // вкус запоминается, пока ест
             src.amount -= bite;
         }
         if (out.restDesire > kRestDesireThreshold) self.rest(kRestRate * dt);
@@ -494,6 +508,7 @@ void World::tick(float dt, const Terrain* terrain) {
             case 1: ++m_stats.deathsOld; break;
             case 2: ++m_stats.deathsStarved; break;
             case 3: ++m_stats.deathsExhausted; break;
+            case 4: ++m_stats.deathsPoison; break;
             default: ++m_stats.deathsOther; break;
         }
         auto             ping = [this](std::uint64_t id) {

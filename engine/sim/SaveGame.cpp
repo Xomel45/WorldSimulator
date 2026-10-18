@@ -79,6 +79,14 @@ void writeCreature(ByteWriter& w, const Inhabitant& in, std::uint32_t version) {
     w.f32(c.wanderHeading);
     w.vec3(c.foodMemory);
     w.f32(c.foodMemoryAge);
+    if (version < 3) return;
+    // v3: яд и вкус ягод (число видов пишем явно -- новые виды добавятся без смены формата).
+    w.f32(c.toxin);
+    w.u8(static_cast<std::uint8_t>(kBerryKindCount));
+    for (int k = 0; k < kBerryKindCount; ++k) {
+        w.f32(c.taste[static_cast<std::size_t>(k)]);
+        w.u8(c.tasteSamples[static_cast<std::size_t>(k)]);
+    }
 }
 
 bool readCreature(ByteReader& r, Inhabitant& in, std::uint32_t version) {
@@ -113,6 +121,15 @@ bool readCreature(ByteReader& r, Inhabitant& in, std::uint32_t version) {
         c.wanderHeading  = r.f32();
         c.foodMemory     = r.vec3();
         c.foodMemoryAge  = r.f32();
+    }
+    if (version >= 3) {
+        c.toxin = std::clamp(r.f32(), 0.0f, 2.0f);
+        const std::uint8_t kinds = r.u8();
+        for (std::uint8_t k = 0; k < kinds && r.ok(); ++k) {
+            const float taste = r.f32();
+            const std::uint8_t samples = r.u8();
+            if (k < kBerryKindCount) { c.taste[k] = std::isfinite(taste) ? std::clamp(taste, -3.0f, 3.0f) : 0.0f; c.tasteSamples[k] = samples; }
+        }
     }
     return r.ok();
 }

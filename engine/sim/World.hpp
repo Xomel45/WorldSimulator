@@ -56,7 +56,7 @@ struct Hazard {
 // Счётчики жизни мира -- для отладочного окна и тестов баланса.
 struct WorldStats {
     std::uint64_t births = 0, matings = 0;
-    std::uint64_t deathsOld = 0, deathsStarved = 0, deathsExhausted = 0, deathsOther = 0;
+    std::uint64_t deathsOld = 0, deathsStarved = 0, deathsExhausted = 0, deathsPoison = 0, deathsOther = 0;
 };
 
 // Полное состояние мира для сохранения/загрузки (всё, что нужно, чтобы продолжить симуляцию

@@ -276,7 +276,17 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
     if (needs.hunger >= 0.95f) health -= 0.03f * dt;
     if (needs.energy <= 0.02f) health -= 0.012f * dt;
     if (needs.hunger < 0.6f && needs.energy > 0.2f) health = std::min(1.0f, health + 0.01f * dt);
-    if (health <= 0.0f && alive) { alive = false; deathCause = needs.hunger >= 0.95f ? 2 : 3; }
+    // Яд: пока он в крови, здоровье и силы тают, сам выводится. Вкус со временем тускнеет к нейтральному: через
+    // четверть часа и ядовитая ягода "забывается" настолько, что её можно попробовать снова (иначе голодающий не мог бы
+    // вернуться к кусту, о который когда-то обжёгся).
+    if (toxin > 0.0f) {
+        health -= toxin * 0.02f * dt;
+        needs.energy = std::max(0.0f, needs.energy - toxin * 0.01f * dt);
+        toxin        = std::max(0.0f, toxin - 0.03f * dt);
+    }
+    for (std::size_t k = 0; k < taste.size(); ++k)
+        if (tasteSamples[k] > 0) taste[k] += (0.5f - taste[k]) * 0.002f * dt;
+    if (health <= 0.0f && alive) { alive = false; deathCause = toxin > 0.05f ? 4 : (needs.hunger >= 0.95f ? 2 : 3); }
 
     // Reward-modulated Hebbian: подкрепляем/ослабляем связи, которые только
     // что сработали, в зависимости от того, стало ли лучше или хуже за этот
@@ -300,6 +310,27 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
 }
 
 void Creature::feed(float amount) noexcept { needs.hunger = std::clamp(needs.hunger - amount, 0.0f, 1.0f); }
+
+float Creature::berryAppeal(BerryKind kind) const noexcept {
+    const auto k = static_cast<std::size_t>(kind);
+    if (tasteSamples[k] == 0) return 0.6f + 0.5f * curiosity();  // незнакомое: любопытные пробуют охотнее
+    return taste[k];
+}
+
+void Creature::tasteBerry(BerryKind kind, float nutrition, float toxicity, float dt) noexcept {
+    constexpr float kHarmWeight = 2.0f;   // ядовитость в единицах сытности: волчья ягода 0.6 - 1.8 < 0
+    constexpr float kLearnRate  = 3.0f;   // 1/с: пара десятых секунды -- и мнение уже сложилось
+    const auto k = static_cast<std::size_t>(kind);
+    if (tasteSamples[k] == 0) taste[k] = berryAppeal(kind);  // начинаем с аванса, а не с нуля
+    const float experience = nutrition - kHarmWeight * toxicity;
+    // Плохое запоминается втрое быстрее хорошего (как у настоящих животных): одной тошноты хватает на недели.
+    constexpr float kBadnessBias = 3.0f;
+    const float speed = kLearnRate * (0.6f + 0.8f * plasticity() / 0.05f) * (experience < taste[k] ? kBadnessBias : 1.0f);
+    taste[k] += (experience - taste[k]) * (1.0f - std::exp(-speed * dt));
+    if (tasteSamples[k] < 255) ++tasteSamples[k];
+}
+
+void Creature::addToxin(float amount) noexcept { toxin = std::clamp(toxin + amount, 0.0f, 2.0f); }
 void Creature::rest(float amount) noexcept { needs.energy = std::clamp(needs.energy + amount, 0.0f, 1.0f); }
 
 void Creature::mate(std::uint64_t partnerId) noexcept {

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "sim/Berries.hpp"
 #include "sim/Brain.hpp"
 #include "sim/Genome.hpp"
 
@@ -106,7 +107,15 @@ public:
     // потомство требует зрелости (isMature) и сил (canMate) -- иначе популяция взрывается за секунды.
     float     health = 1.0f;
     float     matingCooldown = 0.0f;
-    std::uint8_t deathCause = 0;       // 0 жив, 1 старость, 2 голод, 3 истощение (для статистики мира)
+    std::uint8_t deathCause = 0;       // 0 жив, 1 старость, 2 голод, 3 истощение, 4 яд (для статистики мира)
+
+    // Яд и вкус ягод. toxin -- накопленный яд (0 -- здоров): бьёт по здоровью и силам и сам выводится.
+    // taste/tasteSamples -- память о вкусе каждого вида ягод: чем кончилась прошлая трапеза (сытность минус вред)
+    // и сколько "тиков еды" это длилось (0 -- вид незнаком). Живёт всю жизнь, потомству не передаётся
+    // (как learnedWeights: дарвиновски, не ламарковски).
+    float toxin = 0.0f;
+    std::array<float, kBerryKindCount>        taste{};
+    std::array<std::uint8_t, kBerryKindCount> tasteSamples{};
 
     // Поведение: текущая линия, сколько она держится (гистерезис против дёрганья), направление блуждания
     // и память о последнем месте с едой (место, где еду видели, -- туда идём, когда еды в поле зрения нет).
@@ -169,6 +178,16 @@ public:
     BrainOutputs tick(float dt, const SenseInputs& senses) noexcept;
 
     void feed(float amount) noexcept;                    // мир вызывает при успешном поедании
+
+    // Ягоды (мир вызывает на каждом тике поедания куста). tasteBerry -- запомнить вкус: сытность `nutrition` против
+    // вреда `toxicity` (скорость обучения -- от пластичности). addToxin -- принять яд (еда или чья-то "помощь").
+    void tasteBerry(BerryKind kind, float nutrition, float toxicity, float dt) noexcept;
+    void addToxin(float amount) noexcept;
+    // Насколько привлекает вид: незнакомый -- с авансом по любопытству (0.6..1.1), знакомый -- его вкус
+    // (сытная ягода ~1+, ядовитая < 0). Мир берёт куст с лучшим привлечением на расстояние и обходит те, что < kMinAppeal.
+    [[nodiscard]] float berryAppeal(BerryKind kind) const noexcept;
+    [[nodiscard]] bool  knowsBerry(BerryKind kind) const noexcept { return tasteSamples[static_cast<std::size_t>(kind)] > 0; }
+    static constexpr float kMinAppeal = 0.15f;  // ниже -- обходит куст, пока не припёрло (см. World)
     void rest(float amount) noexcept;                     // мир вызывает при успешном отдыхе
     void mate(std::uint64_t partnerId) noexcept;           // мир вызывает при успешном спаривании: сбрасывает либидо, запоминает партнёра
     void recordChild(std::uint64_t childId);                // мир вызывает после назначения ребёнку id

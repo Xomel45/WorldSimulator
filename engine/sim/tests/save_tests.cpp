@@ -86,6 +86,30 @@ int main() {
         WSIM_CHECK(c.world.populationCount() > 0);
     }
 
+    // ── Формат v3: яд и вкус ягод переживают сохранение; v2 (без них) читается, поля нулевые ──
+    {
+        SaveGame withTaste = parsed;
+        WSIM_CHECK(!withTaste.world.population.empty());
+        Creature& cr = withTaste.world.population[0].creature;
+        cr.toxin = 0.37f;
+        cr.taste[static_cast<std::size_t>(BerryKind::Nightshade)] = -1.1f;
+        cr.tasteSamples[static_cast<std::size_t>(BerryKind::Nightshade)] = 42;
+        cr.taste[static_cast<std::size_t>(BerryKind::Cloudberry)] = 1.45f;
+        cr.tasteSamples[static_cast<std::size_t>(BerryKind::Cloudberry)] = 200;
+        SaveGame back;
+        std::string e3;
+        WSIM_CHECK(parseSave(serializeSave(withTaste), back, e3));
+        const Creature& rc = back.world.population[0].creature;
+        WSIM_CHECK(rc.toxin == 0.37f && rc.taste[static_cast<std::size_t>(BerryKind::Nightshade)] == -1.1f &&
+                   rc.tasteSamples[static_cast<std::size_t>(BerryKind::Nightshade)] == 42 &&
+                   rc.taste[static_cast<std::size_t>(BerryKind::Cloudberry)] == 1.45f && rc.tasteSamples[static_cast<std::size_t>(BerryKind::Cloudberry)] == 200);
+
+        SaveGame v2back;
+        WSIM_CHECK(parseSave(serializeSave(withTaste, 2), v2back, e3));
+        const Creature& oc = v2back.world.population[0].creature;
+        WSIM_CHECK(oc.toxin == 0.0f && !oc.knowsBerry(BerryKind::Nightshade) && !oc.knowsBerry(BerryKind::Cloudberry));
+    }
+
     // ── Метаданные читаются отдельно, без разбора мира ───────────────────────
     {
         SaveMeta m;
