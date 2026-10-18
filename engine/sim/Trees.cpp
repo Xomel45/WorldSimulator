@@ -79,9 +79,18 @@ Candidate candidate(const Terrain& terrain, int cx, int cz) {
     const float birchness = smoothNoise(seed, x, z, 45.0f, 11);
     switch (biome) {
         case Biome::Forest:
-        case Biome::Plains:  t.species = birchness > 0.55f ? TreeSpecies::Birch : TreeSpecies::Oak; break;
-        case Biome::Taiga:   t.species = pick < 0.15f ? TreeSpecies::Birch : TreeSpecies::Pine; break;
-        case Biome::Tundra:  t.species = TreeSpecies::Pine; t.scale *= 0.75f; break;  // карликовые
+        case Biome::Plains:  // изредка сосновые боры среди дубрав и берёзовых рощ (на равнинах чаще)
+            t.species = pick < (biome == Biome::Plains ? 0.12f : 0.06f) ? TreeSpecies::Pine
+                        : birchness > 0.55f                              ? TreeSpecies::Birch
+                                                                         : TreeSpecies::Oak;
+            break;
+        case Biome::Taiga: {
+            // Ель -- основа тайги; сосны (боры) там, где суше: чем меньше влажность, тем их больше.
+            const float pineShare = std::clamp(0.7f - cl.moisture, 0.05f, 0.4f);
+            t.species = pick < 0.10f ? TreeSpecies::Birch : (pick < 0.10f + pineShare ? TreeSpecies::Pine : TreeSpecies::Spruce);
+            break;
+        }
+        case Biome::Tundra:  t.species = pick < 0.2f ? TreeSpecies::Pine : TreeSpecies::Spruce; t.scale *= 0.75f; break;  // карликовые
         case Biome::Savanna: t.species = TreeSpecies::Acacia; break;
         case Biome::Desert:  t.species = TreeSpecies::Cactus; break;
         case Biome::Jungle:
@@ -92,10 +101,12 @@ Candidate candidate(const Terrain& terrain, int cx, int cz) {
     return c;
 }
 
+bool isConifer(TreeSpecies s) { return s == TreeSpecies::Spruce || s == TreeSpecies::Pine; }
+
 // Годится ли место по рельефу (текущая высота -- с правками игрока).
 bool suitable(const Terrain& terrain, TreeInstance& t) {
     const float h = terrain.heightAt(t.x, t.z);
-    if (h < Trees::kMinHeight || h > (t.species == TreeSpecies::Pine ? Trees::kMaxHeightPine : Trees::kMaxHeight)) return false;
+    if (h < Trees::kMinHeight || h > (isConifer(t.species) ? Trees::kMaxHeightConifer : Trees::kMaxHeight)) return false;
     const float e = 1.5f;
     const float dx = (terrain.heightAt(t.x + e, t.z) - terrain.heightAt(t.x - e, t.z)) / (2.0f * e);
     const float dz = (terrain.heightAt(t.x, t.z + e) - terrain.heightAt(t.x, t.z - e)) / (2.0f * e);
@@ -105,7 +116,7 @@ bool suitable(const Terrain& terrain, TreeInstance& t) {
     // Высота остужает климат: лёд -- без деревьев, прохладные склоны -- хвойные, жаркие виды выше своей зоны гибнут.
     const float temp = withAltitude(terrain.climateAt(t.x, t.z), h).temperature;
     if (temp < Trees::kMinTemperature) return false;
-    if ((t.species == TreeSpecies::Oak || t.species == TreeSpecies::Birch) && temp < 0.24f) t.species = TreeSpecies::Pine;
+    if ((t.species == TreeSpecies::Oak || t.species == TreeSpecies::Birch) && temp < 0.24f) t.species = TreeSpecies::Spruce;
     if ((t.species == TreeSpecies::Cactus || t.species == TreeSpecies::Acacia || t.species == TreeSpecies::Palm) && temp < 0.5f) return false;
     return true;
 }

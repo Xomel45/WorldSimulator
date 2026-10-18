@@ -293,12 +293,13 @@ Application::Application(AppConfig config)
         m_camera.restore({x, m_terrain.heightAt(x, z), z}, -90.0f, pitch, dist);
     }
 
-    // WSIM_CAM_TREE=oak|birch|pine|acacia|cactus|palm -- камера на ближайшее к центру дерево этого вида (проверка моделей деревьев).
+    // WSIM_CAM_TREE=oak|birch|spruce|pine|acacia|cactus|palm -- камера на ближайшее к центру дерево этого вида (проверка моделей деревьев).
     if (const char* kind = std::getenv("WSIM_CAM_TREE")) {
         const std::string name = kind;
         TreeSpecies want = TreeSpecies::Oak;
         if (name == "birch") want = TreeSpecies::Birch;
         else if (name == "pine") want = TreeSpecies::Pine;
+        else if (name == "spruce") want = TreeSpecies::Spruce;
         else if (name == "acacia") want = TreeSpecies::Acacia;
         else if (name == "cactus") want = TreeSpecies::Cactus;
         else if (name == "palm") want = TreeSpecies::Palm;

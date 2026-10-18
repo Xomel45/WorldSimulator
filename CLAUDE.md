@@ -596,15 +596,17 @@ new worlds just rebuild chunks; player terrain edits never move a biome border):
   temperate / hot × dry / mid / wet) so borders are smooth colour ramps, adds desert dune ridges, and snow now comes from
   temperature (`smoothstep(0.01,0.07, T+noise)`) instead of a fixed height; beach/rock logic unchanged.
 - **Trees by biome** (`Trees.cpp`): per cell the biome is read from the base climate jittered ±0.04 (borders are ragged, not
-  ruler-straight) and sets density and species — Forest 1.0× oak/birch, Taiga 1.3× pine (+15% birch), Jungle 1.15× big oak
-  (scale ×1.25) + 30% palm, Plains 0.35× oak/birch, Tundra 0.35× dwarf pine, Savanna 0.3× acacia, Desert 0.14× cactus (the
-  sparse biomes get a small floor chance so there are lone trees). `suitable()` then applies the altitude climate: below
-  `kMinTemperature=0.07` no trees (ice), cold oak/birch become pine, heat-loving species die out above their zone; pines
-  may climb to height 13 (others 10). New models in `TreeGen.cpp` (`TreeSpecies::{Pine,Acacia,Cactus,Palm}`, 4 variants each,
+  ruler-straight) and sets density and species — Forest 1.0× oak/birch (+6% pine), Taiga 1.3× **spruce** (tiered cones) with
+  10% birch and **pine** (tall bare trunk + flat crown cap) 5-40% growing as moisture drops (pine barrens on the dry side),
+  Jungle 1.15× big oak (scale ×1.25) + 30% palm, Plains 0.35× oak/birch (+12% pine), Tundra 0.35× dwarf spruce (20% pine),
+  Savanna 0.3× acacia, Desert 0.14× cactus (the sparse biomes get a small floor chance so there are lone trees). `suitable()` then applies the altitude climate: below
+  `kMinTemperature=0.07` no trees (ice), cold oak/birch become spruce, heat-loving species die out above their zone; conifers
+  may climb to height 13 (others 10). New models in `TreeGen.cpp` (`TreeSpecies::{Spruce,Acacia,Cactus,Palm,Pine}`, 4 variants each,
+  enum value = species number in the model salts, so `Pine` is last;
   same flat-shaded style; cactus arms are straight prisms + elbow blob because a tube bent 90° twists its quads — the
   `checkMesh` normal test catches that); `TerrainChunks` bakes all `kTreeSpeciesCount` templates.
 - Birds are rarer in desert (0.2×) and tundra (0.4×). Debug: `WSIM_CAM_AT=x,z[,dist[,pitch]]` (e.g. `0,0,200,-50` for an
-  overview), `WSIM_CAM_TREE=oak|birch|pine|acacia|cactus|palm`.
+  overview), `WSIM_CAM_TREE=oak|birch|spruce|pine|acacia|cactus|palm`.
 - Tests: climate determinism/range/edit-independence/lapse/thresholds/biome shares (`terrain_tests`); per-biome species sets
   and density order on "interior" points over 6 seeds (`trees_tests`); every new model passes `checkMesh` (`procgen_tests`).
 - Not done: creatures/food do not care about biomes yet (bushes, regrowth, metabolism, speed in snow/sand), no rivers or
@@ -704,7 +706,7 @@ instantly). Now:
 
 ## Trees (`engine/sim/Trees.*`, `procgen/TreeGen`, `TerrainChunks::buildTrees`; `trees_tests`, `procgen_tests`)
 
-(Since the biomes round there are six species — pine, acacia, cactus, palm were added; see "Biomes".) Two original species, **oak** (thick trunk, two side branches, wide dark-green crown of 3 big + 2 small lumpy blobs) and
+(Since the biomes round there are seven species — spruce, pine, acacia, cactus, palm were added; see "Biomes".) Two original species, **oak** (thick trunk, two side branches, wide dark-green crown of 3 big + 2 small lumpy blobs) and
 **birch** (slender tall white trunk with dark bands, slight lean/bend, narrow light-olive crown of 3 elongated
 blobs, a few thin branches), 4 model variants each. Low-poly flat-shaded like houses/boulders; leaves use the
 "mottled" material (`alpha 0.75`, world-space speckle), bark is plain vertex colour.

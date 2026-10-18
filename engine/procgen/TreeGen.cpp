@@ -128,8 +128,8 @@ MeshData birch(int v) {
     return m;
 }
 
-// Сосна: прямой тёмный ствол и пять ярусов хвои-конусов, нижние шире; ярусы чуть сдвинуты и повёрнуты.
-MeshData pine(int v) {
+// Ель: прямой тёмный ствол и пять ярусов хвои-конусов, нижние шире; ярусы чуть сдвинуты и повёрнуты.
+MeshData spruce(int v) {
     MeshData m;
     const glm::vec3 bark{0.26f, 0.18f, 0.12f};
     const float height = rrange(2, v, 1, 4.6f, 5.8f), r0 = rrange(2, v, 2, 0.17f, 0.23f);
@@ -224,12 +224,42 @@ MeshData palm(int v) {
     return m;
 }
 
+// Сосна: высокий стройный ствол, внизу тёмный, а выше рыжий; голый до самой кроны. Крона -- неровная "шапка" из
+// нескольких плоских комков сине-зелёной хвои, чуть набок; пара коротких веток под ней.
+MeshData pine(int v) {
+    MeshData m;
+    std::vector<SolidEllipsoid> solids;
+    const glm::vec3 low{0.34f, 0.22f, 0.15f}, high{0.64f, 0.38f, 0.21f};
+    const float height = rrange(6, v, 1, 5.8f, 7.0f), r0 = rrange(6, v, 2, 0.17f, 0.22f);
+    const float leanX = rrange(6, v, 3, -0.45f, 0.45f), leanZ = rrange(6, v, 4, -0.45f, 0.45f);
+    auto at = [&](float t) { return glm::vec3(leanX * t * t, -0.5f + (height + 0.5f) * t, leanZ * t * t); };
+    addTube(m, {at(0.0f), at(0.35f), at(0.7f), at(1.0f)}, {r0 * 1.2f, r0 * 0.95f, r0 * 0.7f, r0 * 0.45f}, {low, glm::mix(low, high, 0.6f), high}, 7);
+    // Пара коротких сучьев под кроной.
+    for (int k = 0; k < 2; ++k) {
+        const float a = rrange(6, v, 10 + k, 0.0f, 6.28f), t = 0.68f + 0.1f * static_cast<float>(k);
+        const glm::vec3 from = at(t), to = from + glm::vec3(std::cos(a) * 0.9f, 0.5f, std::sin(a) * 0.9f);
+        addTaperedPrism(m, from, to, r0 * 0.4f, r0 * 0.16f, 4, high * 0.9f);
+    }
+    // Крона: низкий широкий комок, над ним два поменьше и один боковой -- "шапка" с неровным краем.
+    const glm::vec3 needles{0.11f, 0.30f, 0.17f};
+    const glm::vec3 top = at(1.0f);
+    blobT(m, solids, top + glm::vec3(0.0f, 0.55f, 0.0f), {1.9f, 0.8f, 1.9f}, needles, 0.5f, 400 + v, 1, kMottled);
+    blobT(m, solids, top + glm::vec3(rrange(6, v, 20, -0.5f, 0.5f), 1.25f, rrange(6, v, 21, -0.5f, 0.5f)), {1.3f, 0.65f, 1.3f},
+            needles * 1.12f, 0.5f, 410 + v, 0, kMottled);
+    const float a = rrange(6, v, 22, 0.0f, 6.28f);
+    blobT(m, solids, top + glm::vec3(std::cos(a) * 1.3f, 0.2f, std::sin(a) * 1.3f), {1.1f, 0.55f, 1.1f}, needles * 0.92f, 0.5f, 420 + v, 0, kMottled);
+    blobT(m, solids, top + glm::vec3(-std::cos(a) * 1.0f, 0.35f, -std::sin(a) * 1.0f), {0.95f, 0.5f, 0.95f}, needles * 1.05f, 0.5f, 430 + v, 0, kMottled);
+    removeBuriedTriangles(m, solids, 1.0f);
+    return m;
+}
+
 }  // namespace
 
 MeshData buildTree(TreeSpecies species, int variant) {
     variant = std::clamp(variant, 0, kTreeVariants - 1);
     switch (species) {
         case TreeSpecies::Birch:  return birch(variant);
+        case TreeSpecies::Spruce: return spruce(variant);
         case TreeSpecies::Pine:   return pine(variant);
         case TreeSpecies::Acacia: return acacia(variant);
         case TreeSpecies::Cactus: return cactus(variant);

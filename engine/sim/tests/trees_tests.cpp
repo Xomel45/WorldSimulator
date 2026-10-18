@@ -45,7 +45,7 @@ int main() {
         std::set<TreeSpecies> kinds;
         for (const auto& t : a) {
             const float h = terrain.heightAt(t.x, t.z);
-            WSIM_CHECK(h >= Trees::kMinHeight && h <= (t.species == TreeSpecies::Pine ? Trees::kMaxHeightPine : Trees::kMaxHeight));
+            WSIM_CHECK(h >= Trees::kMinHeight && h <= (t.species == TreeSpecies::Spruce || t.species == TreeSpecies::Pine ? Trees::kMaxHeightConifer : Trees::kMaxHeight));
             WSIM_CHECK(!terrain.isUnderwater(t.x, t.z));
             WSIM_CHECK(t.scale >= 0.6f && t.scale <= 1.7f && t.variant < kTreeVariants);
             kinds.insert(t.species);
@@ -110,9 +110,9 @@ int main() {
         const auto allowed = [](Biome b, TreeSpecies s) {
             switch (b) {
                 case Biome::Forest:
-                case Biome::Plains:  return s == TreeSpecies::Oak || s == TreeSpecies::Birch;
-                case Biome::Taiga:   return s == TreeSpecies::Pine || s == TreeSpecies::Birch;
-                case Biome::Tundra:  return s == TreeSpecies::Pine;
+                case Biome::Plains:  return s == TreeSpecies::Oak || s == TreeSpecies::Birch || s == TreeSpecies::Pine;
+                case Biome::Taiga:   return s == TreeSpecies::Spruce || s == TreeSpecies::Pine || s == TreeSpecies::Birch;
+                case Biome::Tundra:  return s == TreeSpecies::Spruce || s == TreeSpecies::Pine;
                 case Biome::Savanna: return s == TreeSpecies::Acacia;
                 case Biome::Desert:  return s == TreeSpecies::Cactus;
                 case Biome::Jungle:  return s == TreeSpecies::Oak || s == TreeSpecies::Palm;

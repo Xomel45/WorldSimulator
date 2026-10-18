@@ -9,10 +9,11 @@
 
 namespace wsim {
 
-// Дуб и берёза -- умеренный пояс; сосна -- тайга, тундра и холодные склоны; акация -- саванна; кактус -- пустыня;
-// пальма -- джунгли (вместе с очень крупными дубами).
-enum class TreeSpecies : std::uint8_t { Oak, Birch, Pine, Acacia, Cactus, Palm };
-inline constexpr int kTreeSpeciesCount = 6;
+// Дуб и берёза -- умеренный пояс; ель (ярусы-конусы) -- тайга, тундра и холодные склоны; сосна (высокий голый ствол,
+// крона шапкой) -- боры на суховатой стороне холодного и умеренного пояса; акация -- саванна; кактус -- пустыня;
+// пальма -- джунгли (вместе с очень крупными дубами). Порядок значений -- номер вида в процедурных моделях (TreeGen).
+enum class TreeSpecies : std::uint8_t { Oak, Birch, Spruce, Acacia, Cactus, Palm, Pine };
+inline constexpr int kTreeSpeciesCount = 7;
 inline constexpr int kTreeVariants     = 4;  // моделей на вид
 
 struct TreeInstance {
@@ -36,8 +37,8 @@ public:
     static constexpr float kCell       = 7.0f;
     static constexpr float kTrunkRadius = 0.45f;  // ствол, о который упираются существа
     static constexpr float kMinHeight  = 0.9f;    // ниже -- пляж/вода
-    static constexpr float kMaxHeight  = 10.0f;   // выше -- голые скалы и снег (сосны забираются до kMaxHeightPine)
-    static constexpr float kMaxHeightPine = 13.0f;
+    static constexpr float kMaxHeight  = 10.0f;   // выше -- голые скалы и снег (хвойные забираются до kMaxHeightConifer)
+    static constexpr float kMaxHeightConifer = 13.0f;
     static constexpr float kMinTemperature = 0.07f;  // холоднее (с поправкой на высоту) деревья не растут -- лёд
     static constexpr float kMaxSlope   = 0.55f;   // круче -- деревья не растут
 
