@@ -303,7 +303,7 @@ void Fauna::streamWildlife(float dt, const Terrain& terrain, std::span<const Cre
 }
 
 void Fauna::tick(float dt, const Terrain* terrain, std::span<const CreatureView> creatures, Rng& rng, float halfSize, std::vector<Bite>& bites,
-                 std::span<const glm::vec2> focus, std::vector<Structure>* structures, float night) {
+                 std::span<const glm::vec2> focus, std::vector<Structure>* structures, float night, float cold) {
     const std::size_t n = m_animals.size();
     const std::span<const Structure> built = structures ? std::span<const Structure>(*structures) : std::span<const Structure>();
 
@@ -396,8 +396,27 @@ void Fauna::tick(float dt, const Terrain* terrain, std::span<const CreatureView>
                     }
                     if (a.state == AnimalState::Wander) {
                         a.heading += (unitRand(rng) - 0.5f) * 1.6f * dt * 4.0f * 0.25f;
+                        // Миграция: раз в ~3 с (по возрасту -- без хранимого состояния) перелётный присматривает направление получше:
+                        // зимой -- где теплее, в остальное время -- где его биом; курс доворачивается к нему.
+                        if (terrain && isMigratory(a.species) && std::fmod(a.age, 3.0f) < dt) {
+                            const bool winter = cold > 0.5f;
+                            auto score = [&](glm::vec2 q) {
+                                if (terrain->isUnderwater(q.x, q.y)) return -2.0f;
+                                const float h = terrain->heightAt(q.x, q.y);
+                                if (winter) return withAltitude(terrain->climateAt(q.x, q.y), h).temperature;
+                                return speciesLivesIn(a.species, terrain->biomeAt(q.x, q.y)) ? 1.0f : 0.0f;
+                            };
+                            float bestScore = score(pos) + 0.05f, bestAng = 0.0f;
+                            bool  found = false;
+                            for (int k = 0; k < 8; ++k) {
+                                const float ang = 0.7854f * static_cast<float>(k);
+                                const float sc = score(pos + glm::vec2{std::cos(ang), std::sin(ang)} * 70.0f);
+                                if (sc > bestScore) { bestScore = sc; bestAng = ang; found = true; }
+                            }
+                            if (found) a.heading += wrapPi(bestAng - a.heading) * 0.45f;
+                        }
                         desired   = headingVec(a.heading);
-                        speedFrac = 0.28f;
+                        speedFrac = 0.28f * (1.0f - 0.5f * night);   // ночью травоядные сонны
                         // Стадо: тянется к центру своих, если отстал.
                         glm::vec2 sum{0.0f};
                         int       mates = 0;
@@ -461,7 +480,8 @@ void Fauna::tick(float dt, const Terrain* terrain, std::span<const CreatureView>
                 if (a.stateTimer <= 0.0f) { a.state = AnimalState::Wander; a.wanderTimer = 6.0f; }
                 // стоит над добычей
             } else if (a.state != AnimalState::Hunt) {
-                if (a.hunger > 0.5f && a.searchCooldown <= 0.0f) {
+                const bool napping = isNocturnal(a.species) && night < 0.25f;   // ночной хищник днём дремлет
+                if (a.hunger > 0.5f && a.searchCooldown <= 0.0f && !napping) {
                     // Выбор добычи: ближайшее животное из списка; голодный (и умеющий) -- существо, если животных рядом нет.
                     float best = d.sense * (1.0f + 0.3f * night);
                     const Animal* target = nullptr;
@@ -491,6 +511,7 @@ void Fauna::tick(float dt, const Terrain* terrain, std::span<const CreatureView>
                         a.state = a.state == AnimalState::Rest ? AnimalState::Wander : AnimalState::Rest;
                         a.wanderTimer = a.state == AnimalState::Rest ? 8.0f + 12.0f * unitRand(rng) : 10.0f + 15.0f * unitRand(rng);
                     }
+                    if (napping) a.state = AnimalState::Rest;
                     if (a.state == AnimalState::Wander) {
                         a.heading += (unitRand(rng) - 0.5f) * 1.6f * dt;
                         desired   = headingVec(a.heading);

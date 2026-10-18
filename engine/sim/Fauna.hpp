@@ -46,6 +46,10 @@ struct SpeciesDef {
 [[nodiscard]] bool speciesFromId(std::string_view id, Species& out) noexcept;
 [[nodiscard]] inline bool isPredator(Species s) noexcept { return speciesDef(s).diet == Diet::Predator; }
 // Подходит ли вид биому (вес > 0).
+// Ночные звери (лиса, ягуар): днём дремлют, охотятся в сумерках и ночью. Перелётные травоядные (заяц, олень, антилопа): зимой тянутся
+// к тёплым местам, весной возвращаются в свои биомы.
+[[nodiscard]] inline bool isNocturnal(Species s) noexcept { return s == Species::Fox || s == Species::Jaguar; }
+[[nodiscard]] inline bool isMigratory(Species s) noexcept { return s == Species::Deer || s == Species::Antelope || s == Species::Hare; }
 [[nodiscard]] inline bool speciesLivesIn(Species s, Biome b) noexcept { return speciesDef(s).biome[static_cast<std::size_t>(b)] > 0.0f; }
 // Какой вид селится в биоме: u в [0,1) выбирает по весам (травоядные и хищники вместе); false -- в биоме никого нет.
 [[nodiscard]] bool pickSpeciesFor(Biome biome, float u, Species& out) noexcept;
@@ -120,7 +124,7 @@ public:
     // с краёв); halfSize <= 0 -- мир без границ: вокруг существ и точек интереса focus впервые попавшие в поле ячейки заселяются
     // (раз и навсегда -- ячейка запоминается как исследованная), а вымирающие виды пополняются кольцом вокруг этих точек.
     void tick(float dt, const Terrain* terrain, std::span<const CreatureView> creatures, Rng& rng, float halfSize, std::vector<Bite>& bites,
-              std::span<const glm::vec2> focus = {}, std::vector<Structure>* structures = nullptr, float night = 0.0f);   // night 0..1: хищники ночью голоднее и зорче
+              std::span<const glm::vec2> focus = {}, std::vector<Structure>* structures = nullptr, float night = 0.0f, float cold = 0.0f);   // night 0..1: хищники ночью голоднее и зорче
 
     // Удар по животному (копьё существа): здоровье падает, раненый убегает; убитое снимается со следующим шагом (deathCause 5).
     bool hurt(std::uint64_t id, float damage);   // true -- животное погибло от удара

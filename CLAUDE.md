@@ -956,6 +956,21 @@ Creatures now cut trees down, carry logs, craft tools and fight predators with t
   (`mixedBirths`). Genes already crossed over, so this is gene flow plus diplomacy. Measured: 0-60 per run (the growing seeds mix most).
 - Not done: leaders issuing orders (raids and camp founding are still individual), succession by inheritance, leader-specific traits/culture, wilting visible in shadows, spring blossoms, tribe-coloured clothing.
 
+### Stage 12: squads, nocturnal animals, migration (+ the shadow-cache optimization)
+
+- **Optimization pass**: profiled first — the simulation costs **0.3-0.4 ms/tick** (worst spikes 2 ms) at 80-150 creatures, 60 animals and ~50 structures, i.e. ~2% of a 60 Hz frame (hot spot: `Terrain::noise2D` through `heightAt` calls, 45%),
+  while uncapped the game runs ~390 fps with 2.45 ms CPU render, 700 of it shadow draw calls. The win was therefore in rendering: the **far shadow-cascade cache** (see "Rendering": 704 → ~100 shadow draws, negligible image difference).
+  Not done on purpose: a height cache (sim is not the bottleneck; interpolation would diverge from the rendered terrain), AVX/`-march` flags (portability, no hot arithmetic loop), SIMD for the brain.
+- **Squads** (`SquadData`, `World::updateSquads`/`disbandSquad`, `Creature::squad`, `Behavior::March` "В походе с отрядом"): at most one per tribe. Every 12 s a tribe whose **leader** is healthy and whose tribe has ≥ 8 members looks for a hostile stockpile (relation < -0.2, owner's pile
+  ≥ 2 logs, ≤ 160 units from the leader); fighters = armed (or bold Hunters), healthy, not hungry, not asleep, within 70 units, at most `min(8, 40% of the tribe)`, ≥ 3 with the leader. **Phases**: 0 *gather* around the leader (until 70% are within 8 units or 25 s) → 1 *march*
+  to the enemy pile and raid it (existing raid mechanics, ≤ 150 s, ends when 70% carry ≥ 3 logs or the pile is empty) → 2 *return* to the nearest own pile (≤ 90 s) → disband, 240 s cooldown. Members who starve (> 0.9) or fall below 30% health drop out; < 2 left disbands it.
+  The target's defenders fight them with the usual `Defend`. Saved (**v13**: creature byte + `SQAD` section). Measured (10 seeds × 20 sim-min): squads on 5 seeds, squad raids 0-10, no extinctions (an unrestricted first version let one poor seed die out; the 8-member / 40% / 240 s limits fixed it).
+- **Nocturnal animals** (`isNocturnal`: fox, jaguar): by day (night < 0.25) they doze (`Rest`, no hunting) and hunt at dusk and night; all herbivores are drowsy at night (speed ×(1−0.5·night)). Tested (a fox never hunts at night = 0, hunts at night = 1).
+- **Migration** (`isMigratory`: deer, antelope, hare; `Fauna::tick(…, night, cold)`): every ~3 s (gated by the animal's age, so no stored state) a wandering migrant samples 8 directions 70 units away and bends its heading 45% towards the best one — in cold (> 0.5) the warmest spot
+  (altitude-corrected temperature), otherwise the nearest suitable biome (it returns in spring). Tested: after 4 minutes of cold the herd stands on warmer ground than the same herd without cold.
+- Debug window: squads (active/phase/formed/disbanded/raids); inspector "в отряде".
+- Not done: hibernation, birds/flight migration, squad orders other than raiding (hunting parties, escorts, settling new camps), squad morale/retreat, leader dying mid-march (the squad just disbands), nocturnal herbivores.
+
 ## Temporal upscaler and frame generation (`VulkanTemporal.cpp`, `taau.comp`, `framegen.comp`)
 
 Own implementation (not AMD's FSR 2/3): the official FidelityFX SDK builds with MSVC/`.bat` scripts, has HLSL shaders that
@@ -1376,7 +1391,8 @@ source of truth for the hex constants at the top of `MainMenu.cpp`.
 - [x] Stage 9: tribes, banners, raids and defence (see "Stage 9")
 - [x] Stage 10: trade, gifts, alliances (see "Stage 10")
 - [x] Stage 11: seasonal leaves, leaders, mixed marriages (see "Stage 11")
-- [ ] Next: nocturnal species, migration/hibernation, leader-led camps/war parties, spring blossoms
+- [x] Stage 12: squads, nocturnal animals, migration, shadow cache (see "Stage 12")
+- [ ] Next: hibernation/birds, hunting parties and settling expeditions, spring blossoms, leader succession
 - [ ] More powers (fire, rain, disasters, food, smite individuals), undo
 - [x] Sound: procedural synth + miniaudio (see "Sound")
 - [x] Day/night cycle (see "Stage 4"; night ambience sound still missing)

@@ -218,6 +218,8 @@ Decision decide(Creature& c, const SenseInputs& s, const BrainOutputs& raw, floa
         if (buildKind) S(Behavior::Build) = (buildKind == 1 ? 2.6f : (buildKind == 4 ? 1.8f : (buildKind == 5 ? 1.9f : (buildKind == 6 ? 1.7f : 2.4f)))) * (c.role() == Role::Builder && buildKind >= 4 ? 1.5f : 1.0f);
     }
 
+    // Отряд: идёт со всеми (сбор -> поход -> возвращение); у склада врага берёт брёвна (d.raid), как одиночный грабитель.
+    if (c.squad != 0 && s.squadDist < kNoTarget && c.health > 0.4f && n.fear < 0.7f && n.hunger < 0.85f) S(Behavior::March) = 3.2f;
     // Вождь: праздный соплеменник держится недалеко от вождя (тянется к нему, когда ушёл дальше ~22 единиц; общительные охотнее).
     if (c.tribe != 0 && s.leaderDist < kNoTarget && s.leaderDist > 22.0f) S(Behavior::Follow) = 0.55f + 0.5f * c.sociability();
     // Базовая линия: бродит, любопытные -- охотнее; идущий искать новые места не бросает это на полпути.
@@ -318,6 +320,14 @@ Decision decide(Creature& c, const SenseInputs& s, const BrainOutputs& raw, floa
             dir = dirTo(c.position, s.intruderPos);
             if (s.intruderDist <= 1.8f) { speed = 0.3f; d.strike = true; }
             else speed = 1.0f;
+            break;
+        case Behavior::March:
+            dir = dirTo(c.position, s.squadPos);
+            if (s.squadPhase == 1) {
+                if (s.squadDist <= 2.2f) { speed = 0.0f; d.raid = true; }
+                else speed = 0.9f * std::clamp(s.squadDist / 6.0f, 0.5f, 1.0f);
+            } else if (s.squadDist <= 3.0f) speed = 0.0f;                                  // сбор/дом: на месте ждёт остальных
+            else speed = 0.9f * std::clamp(s.squadDist / 6.0f, 0.5f, 1.0f);
             break;
         case Behavior::Follow:
             dir = dirTo(c.position, s.leaderPos);

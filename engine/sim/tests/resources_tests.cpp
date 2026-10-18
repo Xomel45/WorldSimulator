@@ -924,6 +924,108 @@ int main() {
         for (int tr = 1; tr <= 3; ++tr) WSIM_CHECK(back.world.leaders[static_cast<std::size_t>(tr)] == w.leaderId(tr));
     }
 
+    // ── Этап 12: отряды, ночные звери, миграция ──
+    {
+        Terrain t(World::kWorldHalfSize, 11);
+        // Ровная суша 90 единиц по x: лагерь племени 1 слева, склад племени 2 справа.
+        glm::vec2 at{0, 0};
+        bool ok = false;
+        for (float z = -80; z <= 80 && !ok; z += 4)
+            for (float x = -90; x <= 0 && !ok; x += 4) {
+                bool land = true;
+                for (float q = 0; q <= 90 && land; q += 6) land = t.heightAt(x + q, z) > 1.0f && t.heightAt(x + q, z) < 6.0f;
+                if (land) { at = {x, z}; ok = true; }
+            }
+        WSIM_CHECK(ok);
+        World w = lone(91, {at.x, at.y}, kSkillSpear);
+        WorldState st = w.exportState();
+        Inhabitant base = st.population[0];
+        st.population.clear();
+        for (int i = 0; i < 5; ++i) {
+            Inhabitant m = base;
+            m.creature.id = 500 + static_cast<std::uint64_t>(i);
+            m.creature.tribe = 1;
+            m.creature.spearDur = 1.0f;
+            m.creature.position = {at.x + 1.0f + static_cast<float>(i), 0.0f, at.y + 1.0f};
+            m.creature.homePosition = m.creature.position;
+            m.creature.needs.hunger = 0.15f;
+            m.creature.genome.setTrait(Genome::kBoldness, 1.0f);
+            st.population.push_back(m);
+        }
+        st.nextId = 600;
+        st.leaders[1] = 500;
+        st.structures = {Structure{StructureKind::Stockpile, at.x, at.y, 0.0f, 1.0f, 3.0f, 1}, Structure{StructureKind::Stockpile, at.x + 60.0f, at.y, 0.0f, 1.0f, 12.0f, 2}};
+        st.relations[1 * 4 + 2] = st.relations[2 * 4 + 1] = -0.8f;
+        st.time = 20.0;
+        WSIM_CHECK(w.importState(st));
+        int maxPhase = 0;
+        for (int i = 0; i < 60 * 240 && !(w.stats().squadsDisbanded >= 1); ++i) {
+            w.tick(kDt, &t);
+            if (w.squad(1).active) maxPhase = std::max<int>(maxPhase, w.squad(1).phase);
+            if (i % 300 == 299) feedAll(w);
+        }
+        WSIM_CHECK(w.stats().squadsFormed == 1);
+        WSIM_CHECK(maxPhase == 2 || w.stats().squadRaids >= 1);   // дошли до склада врага (грабёж) или вернулись
+        WSIM_CHECK(w.stats().squadRaids >= 1 && w.stats().logsStolen >= 2);
+        WSIM_CHECK(w.stats().squadsDisbanded == 1 && !w.squad(1).active);
+        for (const Inhabitant& in : w.population()) WSIM_CHECK(in.creature.squad == 0);   // после роспуска никто не числится в отряде
+        // Сохранение: отряд посреди похода.
+        World w2 = lone(91, {at.x, at.y}, kSkillSpear);
+        WorldState s2 = st;
+        s2.squads[1].active = true; s2.squads[1].target = 2; s2.squads[1].phase = 1; s2.squads[1].timer = 10.0f; s2.squads[1].goal = {at.x + 60.0f, at.y};
+        s2.squads[1].members = {500, 501, 502};
+        for (int i = 0; i < 3; ++i) s2.population[static_cast<std::size_t>(i)].creature.squad = 1;
+        WSIM_CHECK(w2.importState(s2));
+        PhysicsWorld physics;
+        SaveGame back;
+        std::string err;
+        WSIM_CHECK(parseSave(serializeSave(captureSave("q", 0, 0.0f, t, w2, physics, CameraState{})), back, err));
+        WSIM_CHECK(back.world.squads[1].active && back.world.squads[1].members.size() == 3 && back.world.squads[1].phase == 1 && back.world.population[0].creature.squad == 1);
+
+        // Ночные звери днём дремлют, ночью охотятся; перелётные в стужу тянутся к теплу.
+        auto huntsAt = [&](float night) {
+            Fauna fauna;
+            Rng rng(6);
+            Fauna::State fs;
+            fs.nextId = 50;
+            Animal fox;
+            fox.id = 1; fox.species = Species::Fox; fox.position = {0.0f, 0.0f, 0.0f}; fox.hunger = 0.95f; fox.age = speciesDef(Species::Fox).maturity * 1.5f;
+            Animal hare;
+            hare.id = 2; hare.species = Species::Hare; hare.position = {10.0f, 0.0f, 0.0f}; hare.hunger = 0.1f; hare.age = speciesDef(Species::Hare).maturity * 1.5f;
+            fs.animals = {fox, hare};
+            WSIM_CHECK(fauna.importState(fs));
+            std::vector<Bite> bites;
+            bool hunted = false;
+            for (int i = 0; i < 60 * 20; ++i) {
+                fauna.tick(kDt, nullptr, {}, rng, 500.0f, bites, {}, nullptr, night);
+                for (const Animal& an : fauna.animals()) hunted |= an.species == Species::Fox && an.state == AnimalState::Hunt;
+            }
+            return hunted || fauna.stats().kills > 0;
+        };
+        WSIM_CHECK(!huntsAt(0.0f) && huntsAt(1.0f));
+
+        // Миграция: в стужу перелётные олени за три минуты уходят туда, где теплее, чем без стужи.
+        auto meanTemp = [&](float cold) {
+            Fauna fauna;
+            Rng rng(9);
+            Fauna::State fs;
+            fs.nextId = 90;
+            for (int i = 0; i < 8; ++i) {
+                Animal d;
+                d.id = 1 + static_cast<std::uint64_t>(i); d.species = Species::Deer; d.position = {at.x + static_cast<float>(i), 0.0f, at.y};
+                d.hunger = 0.1f; d.age = speciesDef(Species::Deer).maturity * 1.5f; d.heading = 0.4f * static_cast<float>(i);
+                fs.animals.push_back(d);
+            }
+            WSIM_CHECK(fauna.importState(fs));
+            std::vector<Bite> bites;
+            for (int i = 0; i < 60 * 240; ++i) fauna.tick(kDt, &t, {}, rng, 0.0f, bites, {}, nullptr, 0.0f, cold);
+            float sum = 0.0f;
+            for (const Animal& an : fauna.animals()) sum += withAltitude(t.climateAt(an.position.x, an.position.z), t.heightAt(an.position.x, an.position.z)).temperature;
+            return fauna.animals().empty() ? 0.0f : sum / static_cast<float>(fauna.animals().size());
+        };
+        WSIM_CHECK(meanTemp(1.0f) > meanTemp(0.0f) + 0.01f);
+    }
+
     std::puts("resources_tests: OK");
     return 0;
 }

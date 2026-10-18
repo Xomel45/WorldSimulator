@@ -1485,7 +1485,7 @@ void Application::drawInspector(const CameraData& cam) {
     dl->AddText(font, fs, {x0 + pad, y}, style::rgba(style::kDim), buf);
     y += fs * 1.35f;
     {   // Ресурсы и орудия.
-        std::string kit = std::string(cr->tribe && m_world.leaderId(cr->tribe) == cr->id ? "вождь · " : "") + std::string(cr->tribe ? (cr->tribe == 1 ? "красное племя · " : (cr->tribe == 2 ? "синее племя · " : "жёлтое племя · ")) : "") + roleName(cr->role()) + " · брёвен " + std::to_string(static_cast<int>(cr->wood)) + " · жажда " + std::to_string(static_cast<int>(cr->thirst * 100.0f)) + "%";
+        std::string kit = std::string(cr->squad ? "в отряде · " : "") + std::string(cr->tribe && m_world.leaderId(cr->tribe) == cr->id ? "вождь · " : "") + std::string(cr->tribe ? (cr->tribe == 1 ? "красное племя · " : (cr->tribe == 2 ? "синее племя · " : "жёлтое племя · ")) : "") + roleName(cr->role()) + " · брёвен " + std::to_string(static_cast<int>(cr->wood)) + " · жажда " + std::to_string(static_cast<int>(cr->thirst * 100.0f)) + "%";
         if (cr->hasBucket) kit += " · ведро " + std::to_string(static_cast<int>(cr->water));
         if (cr->hasSpear()) kit += " · копьё";
         if (cr->hasShield()) kit += " · щит";
@@ -1765,6 +1765,9 @@ void Application::renderDebugUI() {
         ImGui::Text("Tribes %zu/%zu/%zu, relations 1-2 %.2f, 1-3 %.2f, 2-3 %.2f | raids %llu (logs %llu), strikes %llu, killed in conflicts %llu", m_world.tribeCount(1), m_world.tribeCount(2), m_world.tribeCount(3),
                     m_world.relation(1, 2), m_world.relation(1, 3), m_world.relation(2, 3), static_cast<unsigned long long>(m_world.stats().raids), static_cast<unsigned long long>(m_world.stats().logsStolen),
                     static_cast<unsigned long long>(m_world.stats().strikes), static_cast<unsigned long long>(m_world.stats().deathsConflict));
+        ImGui::Text("Squads: %d/%d/%d active (phase %d/%d/%d), formed %llu, disbanded %llu, squad raids %llu", m_world.squad(1).active ? 1 : 0, m_world.squad(2).active ? 1 : 0, m_world.squad(3).active ? 1 : 0,
+                    m_world.squad(1).phase, m_world.squad(2).phase, m_world.squad(3).phase, static_cast<unsigned long long>(m_world.stats().squadsFormed),
+                    static_cast<unsigned long long>(m_world.stats().squadsDisbanded), static_cast<unsigned long long>(m_world.stats().squadRaids));
         ImGui::Text("Leaders #%llu / #%llu / #%llu (changes %llu), mixed-tribe births %llu", static_cast<unsigned long long>(m_world.leaderId(1)), static_cast<unsigned long long>(m_world.leaderId(2)),
                     static_cast<unsigned long long>(m_world.leaderId(3)), static_cast<unsigned long long>(m_world.stats().leaderChanges), static_cast<unsigned long long>(m_world.stats().mixedBirths));
         ImGui::Text("Diplomacy: allies 1-2 %d, 1-3 %d, 2-3 %d | gifts %llu logs, traded %llu logs, alliances formed %llu / broken %llu", m_world.allied(1, 2) ? 1 : 0, m_world.allied(1, 3) ? 1 : 0, m_world.allied(2, 3) ? 1 : 0,

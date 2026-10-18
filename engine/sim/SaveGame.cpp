@@ -24,7 +24,7 @@ constexpr std::uint32_t tag(const char (&s)[5]) {
            static_cast<std::uint32_t>(s[3]) << 24;
 }
 constexpr std::uint32_t kTagTerrain = tag("TERR"), kTagWorld = tag("WRLD"), kTagPhysics = tag("PHYS"), kTagCamera = tag("CAMR"),
-                         kTagStream = tag("STRM"), kTagStructs = tag("STRC"), kTagStructs2 = tag("STR2"), kTagStructs3 = tag("STR3"), kTagTribes = tag("STRB"),   // потоковые кусты: время, загруженные ячейки, записи о спящих, происхождение кустов
+                         kTagStream = tag("STRM"), kTagStructs = tag("STRC"), kTagStructs2 = tag("STR2"), kTagStructs3 = tag("STR3"), kTagTribes = tag("STRB"), kTagSquads = tag("SQAD"),   // потоковые кусты: время, загруженные ячейки, записи о спящих, происхождение кустов
                          kTagFauna = tag("FAUN"),    // дикие животные (старые сохранения без неё -- мир без зверей)
                          kTagBerries = tag("BRRY");  // вид ягод каждого куста (по порядку WRLD.food); старые сохранения -- без неё, все кусты малина
 
@@ -128,6 +128,8 @@ void writeCreature(ByteWriter& w, const Inhabitant& in, std::uint32_t version) {
     w.u8(static_cast<std::uint8_t>(c.skills >> 8));   // v11: умения не влезли в байт
     if (version < 12) return;
     w.u8(c.tribe);                                     // v12
+    if (version < 13) return;
+    w.u8(c.squad);                                     // v13
 }
 
 bool readCreature(ByteReader& r, Inhabitant& in, std::uint32_t version) {
@@ -236,6 +238,7 @@ bool readCreature(ByteReader& r, Inhabitant& in, std::uint32_t version) {
     if (version >= 10) c.hutNear = r.boolean();
     if (version >= 11) c.skills = static_cast<std::uint16_t>(c.skills | (static_cast<std::uint16_t>(r.u8()) << 8)) & kAllSkills;
     if (version >= 12) { const std::uint8_t tb = r.u8(); c.tribe = tb < World::kMaxTribes ? tb : 0; }
+    if (version >= 13) { const std::uint8_t sq = r.u8(); c.squad = sq < World::kMaxTribes ? sq : 0; }
     return r.ok();
 }
 
@@ -328,6 +331,15 @@ std::vector<std::uint8_t> serializeSave(const SaveGame& g, std::uint32_t version
         for (std::int64_t k : f.explored) b.i64(k);
         b.f32(f.streamTimer);
         section(payload, kTagFauna, b);
+    }
+    {
+        ByteWriter b;
+        for (const SquadData& q : g.world.squads) {
+            b.boolean(q.active); b.u8(q.target); b.u8(q.phase); b.f32(q.timer); b.f32(q.cooldown); b.f32(q.goal.x); b.f32(q.goal.y);
+            b.u32(static_cast<std::uint32_t>(q.members.size()));
+            for (std::uint64_t id : q.members) b.u64(id);
+        }
+        section(payload, kTagSquads, b);
     }
     {
         ByteWriter b;
@@ -539,6 +551,18 @@ bool parseSave(std::span<const std::uint8_t> bytes, SaveGame& out, std::string& 
                 for (std::uint32_t i = 0; i < m && sr.ok(); ++i) f.explored.push_back(sr.i64());
             }
             if (sr.ok() && sr.remaining() >= 4) f.streamTimer = sr.f32();
+        } else if (t == kTagSquads) {
+            for (SquadData& q : g.world.squads) {
+                q.active = sr.boolean();
+                q.target = static_cast<std::uint8_t>(sr.u8() % World::kMaxTribes);
+                q.phase  = static_cast<std::uint8_t>(std::min<int>(sr.u8(), 2));
+                const float tm = sr.f32(), cd = sr.f32(), gx = sr.f32(), gz = sr.f32();
+                q.timer = std::isfinite(tm) ? std::clamp(tm, 0.0f, 1000.0f) : 0.0f;
+                q.cooldown = std::isfinite(cd) ? std::clamp(cd, 0.0f, 1000.0f) : 0.0f;
+                q.goal = {std::isfinite(gx) ? gx : 0.0f, std::isfinite(gz) ? gz : 0.0f};
+                const std::uint32_t m = sr.count(8, 8);
+                for (std::uint32_t i = 0; i < m && sr.ok(); ++i) q.members.push_back(sr.u64());
+            }
         } else if (t == kTagTribes) {
             for (float& v : g.world.relations) { const float x = sr.f32(); v = std::isfinite(x) ? std::clamp(x, -1.0f, 1.0f) : 0.0f; }
             if (sr.ok() && sr.remaining() >= 32) for (std::uint64_t& id : g.world.leaders) id = sr.u64();
