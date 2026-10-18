@@ -941,7 +941,7 @@ int main() {
         WorldState st = w.exportState();
         Inhabitant base = st.population[0];
         st.population.clear();
-        for (int i = 0; i < 5; ++i) {
+        for (int i = 0; i < 9; ++i) {
             Inhabitant m = base;
             m.creature.id = 500 + static_cast<std::uint64_t>(i);
             m.creature.tribe = 1;
