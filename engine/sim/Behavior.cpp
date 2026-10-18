@@ -136,10 +136,11 @@ Decision decide(Creature& c, const SenseInputs& s, const BrainOutputs& raw, floa
     const bool  canCraft = tool != 0 && c.wood >= c.woodNeeded();
     if (canCraft && n.fear < 0.4f && n.hunger < 0.7f) S(Behavior::Craft) = 1.2f + 1.2f * danger01;
     const bool stockSeen = s.stockDist < kNoTarget;
+    const bool forFire   = c.knows(kSkillFire) && s.fireDist >= kNoTarget && s.night > 0.1f && c.wood < kFireWood;   // к ночи -- дрова на костёр
     const bool forHut    = c.knows(kSkillHut) && s.hutDist >= kNoTarget && c.wood < kHutWood;   // нет хижины рядом -- рубит на неё
     const bool forStock  = c.knows(kSkillStockpile) && stockSeen && s.stockAmount < 24.0f && c.wood < kMaxWood;   // рубит про запас общине
-    if (!canCraft && (c.wantsWood() || forStock || forHut) && treeSeen && n.fear < 0.4f && n.hunger < 0.6f && tired < 0.65f)
-        S(Behavior::Chop) = c.wantsWood() ? 0.55f + 1.3f * danger01 : (forHut ? 1.3f : 0.45f);
+    if (!canCraft && (c.wantsWood() || forStock || forHut || forFire) && treeSeen && n.fear < 0.4f && n.hunger < 0.6f && tired < 0.65f)
+        S(Behavior::Chop) = (c.wantsWood() ? 0.55f + 1.3f * danger01 : (forHut || forFire ? 1.3f : 0.45f)) * (c.role() == Role::Woodcutter ? 1.6f : 1.0f);
     // Склад: берёт нужные брёвна оттуда (вместо рубки) и сдаёт излишки.
     const bool withdrawNow = stockSeen && s.stockAmount >= 1.0f && c.wantsWood() && s.stockDist < 45.0f;
     const bool depositNow  = c.knows(kSkillStockpile) && stockSeen && c.wood > c.woodGoal() + 0.99f;
@@ -157,8 +158,9 @@ Decision decide(Creature& c, const SenseInputs& s, const BrainOutputs& raw, floa
     if (s.terrain && waterSeen && (c.thirst > 0.65f || (wasDrinking && (c.thirst > 0.08f || (c.hasBucket && c.water < 2.9f))) || (c.hasBucket && c.water < 1.5f && c.thirst > 0.25f)))
         S(Behavior::Drink) = 0.5f + 2.6f * c.thirst + (c.thirst > 0.85f ? 1.5f : 0.0f);
     // Охота: голодный с копьём, добыча рядом, ягод поблизости нет.
-    if (c.hasSpear() && s.preyDist < kNoTarget && n.hunger > 0.5f && n.fear < 0.4f && !(foodVisible && s.foodDist < 10.0f))
-        S(Behavior::Hunt) = 1.2f + 1.6f * n.hunger;
+    const bool hunterRole = c.role() == Role::Hunter;   // охотник берётся за копьё раньше и охотнее
+    if (c.hasSpear() && s.preyDist < kNoTarget && n.hunger > (hunterRole ? 0.32f : 0.5f) && n.fear < 0.4f && !(foodVisible && s.foodDist < 10.0f))
+        S(Behavior::Hunt) = (1.2f + 1.6f * n.hunger) * (hunterRole ? 1.35f : 1.0f);
 
     // Стройка. Мост: цель (еда/исследование) за водой, а за ней есть суша -- кладёт настил на первую клетку воды перед собой.
     // Баррикада: видит хищника на расстоянии -- ставит заслон между собой и ним. Ловушка: помнит хищника -- ставит на подходе.
@@ -203,7 +205,12 @@ Decision decide(Creature& c, const SenseInputs& s, const BrainOutputs& raw, floa
             buildKind = 5;
             buildAt   = here + glm::vec2{std::cos(c.wanderHeading), std::sin(c.wanderHeading)} * 2.5f;
         }
-        if (buildKind) S(Behavior::Build) = buildKind == 1 ? 2.6f : (buildKind == 4 ? 1.8f : (buildKind == 5 ? 1.9f : 2.4f));
+        // Костёр: к вечеру нет другого поблизости, есть дрова.
+        if (!buildKind && c.knows(kSkillFire) && c.wood >= kFireWood && s.fireDist > 15.0f && s.night > 0.1f && n.hunger < 0.7f && n.fear < 0.3f) {
+            buildKind = 6;
+            buildAt   = here + glm::vec2{std::cos(c.wanderHeading), std::sin(c.wanderHeading)} * 1.8f;
+        }
+        if (buildKind) S(Behavior::Build) = (buildKind == 1 ? 2.6f : (buildKind == 4 ? 1.8f : (buildKind == 5 ? 1.9f : (buildKind == 6 ? 1.7f : 2.4f)))) * (c.role() == Role::Builder && buildKind >= 4 ? 1.5f : 1.0f);
     }
 
     // Базовая линия: бродит, любопытные -- охотнее; идущий искать новые места не бросает это на полпути.
@@ -289,7 +296,10 @@ Decision decide(Creature& c, const SenseInputs& s, const BrainOutputs& raw, floa
         case Behavior::Craft:     speed = 0.0f; d.craft = tool; break;
         case Behavior::Build:     speed = 0.0f; d.build = buildKind; d.buildAt = buildAt; d.buildYaw = buildYaw; break;
         case Behavior::Sleep:
-            if (s.hutDist < kNoTarget && s.hutDist > 2.4f) { dir = dirTo(c.position, s.hutPos); speed = 0.6f * std::clamp(s.hutDist / 6.0f, 0.4f, 1.0f); }
+            if (s.hutDist < kNoTarget) {            // хижина лучше костра
+                if (s.hutDist > 2.4f) { dir = dirTo(c.position, s.hutPos); speed = 0.6f * std::clamp(s.hutDist / 6.0f, 0.4f, 1.0f); }
+                else { speed = 0.0f; d.rest = true; d.sleep = true; }
+            } else if (s.fireDist < kNoTarget && s.fireDist > 3.5f) { dir = dirTo(c.position, s.firePos); speed = 0.6f * std::clamp(s.fireDist / 6.0f, 0.4f, 1.0f); }
             else { speed = 0.0f; d.rest = true; d.sleep = true; }
             break;
         case Behavior::Drink:

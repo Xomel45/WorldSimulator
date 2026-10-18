@@ -23,8 +23,14 @@ enum class Behavior : std::uint8_t { Wander, SeekFood, Eat, Rest, Flee, SeekMate
 
 // Умения (маска Creature::skills). Рубить деревья умеют все (врождённо); изготовление орудий -- знание: открывается в опасности или
 // от случая и передаётся соседям и потомству по наблюдению (World::tick), как вкус ягод -- но у знания нет "забывания".
-enum Skill : std::uint8_t { kSkillSpear = 1, kSkillShield = 2, kSkillBridge = 4, kSkillBarricade = 8, kSkillTrap = 16, kSkillBucket = 32, kSkillStockpile = 64, kSkillHut = 128 };
-inline constexpr std::uint8_t kAllSkills = 255;
+enum Skill : std::uint16_t { kSkillSpear = 1, kSkillShield = 2, kSkillBridge = 4, kSkillBarricade = 8, kSkillTrap = 16, kSkillBucket = 32, kSkillStockpile = 64, kSkillHut = 128, kSkillFire = 256 };
+inline constexpr std::uint16_t kAllSkills = 511;
+inline constexpr float kFireWood = 2.0f;   // брёвен на костёр
+
+// Роль в общине -- склонность из генов (наследуется): охотники смелее и крупнее, строители любопытны и общительны, остальные рубят.
+// Роль меняет приоритеты (охотник охотится раньше, дровосек рубит охотнее, строитель строит и учится строить быстрее), но не запрещает ничего.
+enum class Role : std::uint8_t { Woodcutter, Hunter, Builder };
+[[nodiscard]] const char* roleName(Role r) noexcept;
 inline constexpr float kHutWood = 4.0f;   // брёвен на хижину
 inline constexpr float kBucketWood = 2.0f, kStockpileWood = 3.0f, kBucketCapacity = 3.0f;   // ведро: цена, глотков воды
 inline constexpr float kBridgeWood = 1.0f, kBarricadeWood = 3.0f, kTrapWood = 2.0f;   // досок на настил / баррикаду / ловушку
@@ -102,7 +108,8 @@ struct SenseInputs {
     float     preyDist = kNoTarget;   glm::vec3 preyPos{};  std::uint64_t preyId = 0;
     float     stockDist = kNoTarget;  glm::vec3 stockPos{};  float stockAmount = 0.0f;
     float     night = 0.0f;                                  // 0 день .. 1 ночь (только в мире с рельефом: тесты без рельефа не спят)
-    float     hutDist = kNoTarget;    glm::vec3 hutPos{};   // ближайшая хижина
+    float     hutDist = kNoTarget;    glm::vec3 hutPos{};   // подходящая хижина (своя/семьи ближе чужих)
+    float     fireDist = kNoTarget;   glm::vec3 firePos{};  // ближайший горящий костёр
 };
 
 class Creature {
@@ -161,7 +168,7 @@ public:
     // Ресурсы и орудия (этап "цивилизация"). wood -- брёвна в руках; spearDur/shieldDur -- прочность копья/щита (0 -- нет);
     // skills -- маска умений; dangerMemory -- сколько ещё секунд помнит хищника рядом (подталкивает мастерить и рубить).
     // chopRequest -- просит мир рубить дерево treeCx/treeCz (кэш поиска ближайшего: treeKnown/treeX/treeZ/treeSearch, ведёт мир).
-    std::uint8_t skills = 0;
+    std::uint16_t skills = 0;
     float        wood = 0.0f, spearDur = 0.0f, shieldDur = 0.0f, dangerMemory = 0.0f, chopProgress = 0.0f, craftProgress = 0.0f;
     std::uint8_t chopRequest = 0;
     // Жажда (только в мире с рельефом), ведро с водой, охота и склад. thirst 0..1 (1 -- здоровье тает); water -- глотков в ведре;
@@ -179,6 +186,7 @@ public:
     std::int32_t treeCx = 0, treeCz = 0;
     float        treeX = 0.0f, treeZ = 0.0f, treeSearch = 0.0f;
     [[nodiscard]] bool  knows(Skill s) const noexcept { return (skills & s) != 0; }
+    [[nodiscard]] Role  role() const noexcept;
     [[nodiscard]] bool  hasSpear() const noexcept { return spearDur > 0.0f; }
     [[nodiscard]] bool  hasShield() const noexcept { return shieldDur > 0.0f; }
     // Сколько брёвен нужно на следующее орудие, которое существо умеет, но не имеет (0 -- нечего мастерить); какое именно (1 копьё, 2 щит).

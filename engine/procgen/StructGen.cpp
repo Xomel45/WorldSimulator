@@ -98,6 +98,21 @@ MeshData buildHut() {
     return m;
 }
 
+MeshData buildCampfire() {
+    MeshData m;
+    for (int i = 0; i < 8; ++i) {   // кольцо камней
+        const float a = 0.7854f * static_cast<float>(i);
+        const float x = std::cos(a) * 0.62f, z = std::sin(a) * 0.62f, h = 0.16f + 0.05f * static_cast<float>(i % 3);
+        addBox(m, {x - 0.13f, 0.0f, z - 0.13f}, {x + 0.13f, h, z + 0.13f}, i % 2 ? glm::vec3{0.45f, 0.45f, 0.47f} : glm::vec3{0.36f, 0.36f, 0.38f});
+    }
+    addBox(m, {-0.42f, 0.08f, -0.07f}, {0.42f, 0.2f, 0.07f}, kDarkWood);   // два скрещённых полена
+    addBox(m, {-0.07f, 0.2f, -0.42f}, {0.07f, 0.32f, 0.42f}, kDarkWood);
+    addBox(m, {-0.22f, 0.32f, -0.22f}, {0.22f, 0.62f, 0.22f}, {1.0f, 0.42f, 0.08f});    // пламя ярусами: красное -> жёлтое
+    addBox(m, {-0.14f, 0.62f, -0.14f}, {0.14f, 0.92f, 0.14f}, {1.0f, 0.66f, 0.12f});
+    addBox(m, {-0.07f, 0.92f, -0.07f}, {0.07f, 1.18f, 0.07f}, {1.0f, 0.88f, 0.35f});
+    return m;
+}
+
 MeshData buildBucket() {
     MeshData m;
     addBox(m, {-0.13f, 0.0f, -0.13f}, {0.13f, 0.28f, 0.13f}, kWood);

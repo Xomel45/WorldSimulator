@@ -9,7 +9,9 @@ namespace wsim {
 
 // Постройки существ в мире (не путать с Building -- дома бога-декорации). Мосты живут в Terrain (проходимость воды), здесь --
 // баррикады (останавливают зверей) и ловушки (ранят и обездвиживают хищника). Данные без логики: решают World и Fauna.
-enum class StructureKind : std::uint8_t { Barricade = 1, Trap = 2, Stockpile = 3, Hut = 4 };
+enum class StructureKind : std::uint8_t { Barricade = 1, Trap = 2, Stockpile = 3, Hut = 4, Campfire = 5 };
+inline constexpr float kFireRadius = 3.0f;        // горящий костёр отпугивает зверей: ближе не подходят
+inline constexpr float kFireBurnSeconds = 200.0f; // полный запас топлива -- на столько секунд (hp 1 -> 0)
 inline constexpr float kHutRadius = 1.5f;   // хижина (круглый в плане) не пускает зверей, спящие рядом под защитой стен
 inline constexpr float kStockpileCapacity = 40.0f;   // брёвен на складе
 
@@ -23,12 +25,18 @@ struct Structure {
     float         yaw = 0.0f;   // радианы: ось баррикады (cos -> x, sin -> z)
     float         hp = 1.0f;    // ловушка при срабатывании -> 0 и исчезает
     float         stock = 0.0f; // склад: сколько брёвен лежит
+    std::uint64_t owner = 0;    // хижина: id хозяина (0 -- ничья); костёр: hp -- топливо 1..0
 };
 
 // Преграждает ли баррикада (или хижина) зверям точку (x, z) с запасом margin (расстояние до отрезка оси).
 [[nodiscard]] inline bool barricadeBlocks(const Structure& s, float x, float z, float margin) {
     if (s.kind == StructureKind::Hut) {
         const float dx = x - s.x, dz = z - s.z, r = kHutRadius + margin;
+        return dx * dx + dz * dz < r * r;
+    }
+    if (s.kind == StructureKind::Campfire) {
+        if (s.hp <= 0.0f) return false;
+        const float dx = x - s.x, dz = z - s.z, r = kFireRadius + margin;
         return dx * dx + dz * dz < r * r;
     }
     if (s.kind != StructureKind::Barricade) return false;

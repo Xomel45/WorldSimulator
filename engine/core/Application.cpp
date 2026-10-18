@@ -261,6 +261,7 @@ Application::Application(AppConfig config)
         m_stockMesh     = make(procgen::buildStockpile());
         m_bucketMesh    = make(procgen::buildBucket());
         m_hutMesh       = make(procgen::buildHut());
+        m_fireMesh      = make(procgen::buildCampfire());
         for (int n = 1; n <= 4; ++n) m_logMeshes[static_cast<std::size_t>(n - 1)] = make(procgen::buildLogs(n));
     }
     for (std::uint32_t i = 0; i < kHouseVariants; ++i) {
@@ -329,6 +330,10 @@ Application::Application(AppConfig config)
             (void)m_world.placeStructure(&m_terrain, StructureKind::Trap, x, -3.0f, 0.0f);
         }
         (void)m_world.placeStructure(&m_terrain, StructureKind::Stockpile, 9.0f, 5.0f, 0.0f);
+        for (int placed = 0, k = 0; placed < 2 && k < 300; ++k) {   // два костра
+            const float ang = 1.9f * static_cast<float>(k) + 1.0f, r = 5.0f + 0.15f * static_cast<float>(k);
+            if (m_terrain.heightAt(std::cos(ang) * r, std::sin(ang) * r) > 1.0f && m_world.placeStructure(&m_terrain, StructureKind::Campfire, std::cos(ang) * r, std::sin(ang) * r, 0.0f)) ++placed;
+        }
         for (int placed = 0, k = 0; placed < 2 && k < 200; ++k) {   // две хижины на ближайшей суше
             const float ang = 0.7f * static_cast<float>(k), r = 6.0f + 0.2f * static_cast<float>(k);
             if (m_terrain.heightAt(std::cos(ang) * r, std::sin(ang) * r) > 1.0f && m_world.placeStructure(&m_terrain, StructureKind::Hut, std::cos(ang) * r, std::sin(ang) * r, 0.0f)) ++placed;
@@ -434,7 +439,7 @@ Application::~Application() {
         for (auto& mesh : m_animalMeshes)
             if (mesh) mesh->destroy(m_context->device());
         for (auto& mesh : m_houseMeshes) mesh->destroy(m_context->device());
-        for (auto* mesh : {&m_plankMesh, &m_barricadeMesh, &m_trapMesh, &m_spearMesh, &m_shieldMesh, &m_stockMesh, &m_bucketMesh, &m_hutMesh})
+        for (auto* mesh : {&m_plankMesh, &m_barricadeMesh, &m_trapMesh, &m_spearMesh, &m_shieldMesh, &m_stockMesh, &m_bucketMesh, &m_hutMesh, &m_fireMesh})
             if (*mesh) (*mesh)->destroy(m_context->device());
         for (auto& mesh : m_logMeshes)
             if (mesh) mesh->destroy(m_context->device());
@@ -693,8 +698,12 @@ void Application::update(float dt) {
             Transform t;
             t.position = {s.x, m_terrain.heightAt(s.x, s.z), s.z};
             if (s.kind == StructureKind::Barricade) t.rotation.y = -glm::degrees(s.yaw);
+            if (s.kind == StructureKind::Campfire) {   // пламя пляшет и оседает с топливом
+                const float flick = 0.88f + 0.12f * std::sin(static_cast<float>(ImGui::GetTime()) * 9.0f + s.x);
+                t.scale = glm::vec3(1.0f, std::max(0.35f, s.hp) * flick, 1.0f);
+            }
             if (s.kind == StructureKind::Stockpile) t.scale = glm::vec3(1.0f, 0.55f + 0.45f * std::min(1.0f, s.stock / 20.0f), 1.0f);   // растёт с запасом
-            m_structObjects.push_back({s.kind == StructureKind::Barricade ? m_barricadeMesh : (s.kind == StructureKind::Stockpile ? m_stockMesh : (s.kind == StructureKind::Hut ? m_hutMesh : m_trapMesh)), t, /*solid=*/false});
+            m_structObjects.push_back({s.kind == StructureKind::Barricade ? m_barricadeMesh : (s.kind == StructureKind::Stockpile ? m_stockMesh : (s.kind == StructureKind::Hut ? m_hutMesh : (s.kind == StructureKind::Campfire ? m_fireMesh : m_trapMesh))), t, /*solid=*/false});
         }
     }
 
@@ -876,6 +885,25 @@ void Application::render() {
             m_context->setClearColor({std::pow(c.r, 1.0f / 2.2f), std::pow(c.g, 1.0f / 2.2f), std::pow(c.b, 1.0f / 2.2f), 1.0f});
         }
         m_lights.fogColorDensity = {sky, 0.0009f};
+        // Костры светят: ближайшие к камере (до 6) -- тёплые точечные источники.
+        {
+            int n = 0;
+            std::vector<const Structure*> fires;
+            for (const Structure& s : m_world.structures())
+                if (s.kind == StructureKind::Campfire && s.hp > 0.02f) fires.push_back(&s);
+            const glm::vec3 cam = m_camera.target();
+            std::sort(fires.begin(), fires.end(), [&](const Structure* a, const Structure* b) {
+                return std::hypot(a->x - cam.x, a->z - cam.z) < std::hypot(b->x - cam.x, b->z - cam.z);
+            });
+            for (const Structure* s : fires) {
+                if (n >= 6) break;
+                const float flick = 0.9f + 0.1f * std::sin(static_cast<float>(ImGui::GetTime()) * 11.0f + s->z);
+                m_lights.pointPosRadius[n] = {s->x, m_terrain.heightAt(s->x, s->z) + 0.9f, s->z, 20.0f};
+                m_lights.pointColorInt[n]  = {1.0f, 0.55f, 0.22f, 4.0f * (0.5f + 0.5f * s->hp) * flick};
+                ++n;
+            }
+            m_lights.counts.x = playing ? n : 0;
+        }
         m_lights.fogParams.x     = 0.015f;
         m_lights.fogParams.y     = static_cast<float>(ImGui::GetTime());
         CascadeSet cascades;
@@ -1398,13 +1426,13 @@ void Application::drawInspector(const CameraData& cam) {
     dl->AddText(font, fs, {x0 + pad, y}, style::rgba(style::kDim), buf);
     y += fs * 1.35f;
     {   // Ресурсы и орудия.
-        std::string kit = "Брёвен " + std::to_string(static_cast<int>(cr->wood)) + " · жажда " + std::to_string(static_cast<int>(cr->thirst * 100.0f)) + "%";
+        std::string kit = std::string(roleName(cr->role())) + " · брёвен " + std::to_string(static_cast<int>(cr->wood)) + " · жажда " + std::to_string(static_cast<int>(cr->thirst * 100.0f)) + "%";
         if (cr->hasBucket) kit += " · ведро " + std::to_string(static_cast<int>(cr->water));
         if (cr->hasSpear()) kit += " · копьё";
         if (cr->hasShield()) kit += " · щит";
         {
             std::string know;
-            for (auto [sk, nm] : {std::pair{kSkillSpear, "копьё"}, {kSkillShield, "щит"}, {kSkillBridge, "мост"}, {kSkillBarricade, "баррикада"}, {kSkillTrap, "ловушка"}, {kSkillBucket, "ведро"}, {kSkillStockpile, "склад"}, {kSkillHut, "хижина"}})
+            for (auto [sk, nm] : {std::pair{kSkillSpear, "копьё"}, {kSkillShield, "щит"}, {kSkillBridge, "мост"}, {kSkillBarricade, "баррикада"}, {kSkillTrap, "ловушка"}, {kSkillBucket, "ведро"}, {kSkillStockpile, "склад"}, {kSkillHut, "хижина"}, {kSkillFire, "костёр"}})
                 if (cr->knows(sk)) { know += know.empty() ? "" : ", "; know += nm; }
             if (!know.empty()) kit += " · умеет: " + know;
         }

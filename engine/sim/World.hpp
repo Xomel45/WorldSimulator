@@ -76,7 +76,7 @@ struct WorldStats {
     std::uint64_t deathsPredation = 0;  // существа, растерзанные хищниками
     std::uint64_t treesFelled = 0, spearsMade = 0, shieldsMade = 0, spearHits = 0, shieldBlocks = 0, skillsLearned = 0;
     std::uint64_t planksLaid = 0, barricadesBuilt = 0, trapsSet = 0;
-    std::uint64_t meatKills = 0, bucketsMade = 0, bushesWatered = 0, stockpilesBuilt = 0, hutsBuilt = 0, bitesBlockedByWalls = 0, logsStored = 0, logsTaken = 0, deathsThirst = 0;
+    std::uint64_t meatKills = 0, bucketsMade = 0, bushesWatered = 0, stockpilesBuilt = 0, hutsBuilt = 0, firesBuilt = 0, firesStoked = 0, bitesBlockedByWalls = 0, logsStored = 0, logsTaken = 0, deathsThirst = 0;
 };
 
 // Полное состояние мира для сохранения/загрузки (всё, что нужно, чтобы продолжить симуляцию

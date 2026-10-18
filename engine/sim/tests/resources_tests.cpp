@@ -25,7 +25,7 @@ bool findForest(const Terrain& t, glm::vec2& at) {
 }
 
 // Одно существо, сытое и здоровое, в заданной точке (остальное население убрано).
-World lone(std::uint32_t seed, glm::vec2 at, std::uint8_t skills) {
+World lone(std::uint32_t seed, glm::vec2 at, std::uint16_t skills) {
     World w(seed);
     WorldState st = w.exportState();
     st.population.resize(1);
@@ -501,6 +501,126 @@ int main() {
             for (const Animal& a : fauna.animals()) closest = std::min(closest, std::hypot(a.position.x, a.position.z));
         }
         WSIM_CHECK(closest > kHutRadius - 0.2f);
+    }
+
+    // ── Этап 5: костёр, роли, хозяин хижины ──
+    {
+        // Роли зависят от генов (детерминированно) и распределены по всем трём.
+        Rng rng(77);
+        int counts[3] = {0, 0, 0};
+        for (int i = 0; i < 300; ++i) {
+            Creature c;
+            c.genome = Genome::random(rng);
+            WSIM_CHECK(c.role() == c.role());
+            ++counts[static_cast<int>(c.role())];
+        }
+        for (int k : counts) WSIM_CHECK(k >= 30);
+        Creature bold, shy;
+        Rng r2(5);
+        bold.genome = Genome::random(r2);
+        bold.genome.setTrait(Genome::kBoldness, 1.0f);
+        bold.genome.setTrait(Genome::kSize, 1.0f);
+        shy = bold;
+        shy.genome.setTrait(Genome::kBoldness, -1.0f);
+        shy.genome.setTrait(Genome::kSize, -1.0f);
+        shy.genome.setTrait(Genome::kCuriosity, 1.0f);
+        WSIM_CHECK(bold.role() == Role::Hunter && shy.role() == Role::Builder);
+
+        Terrain t(World::kWorldHalfSize, 29);
+        glm::vec2 at;
+        WSIM_CHECK(findForest(t, at));
+
+        // Костёр: вечером знающий с дровами разводит его; он горит kFireBurnSeconds и гаснет.
+        World w = lone(41, at, kSkillFire);
+        WorldState st = w.exportState();
+        st.time = 150.0;   // сумерки (ночность > 0.1)
+        st.population[0].creature.wood = 2.0f;
+        WSIM_CHECK(w.importState(st));
+        for (int i = 0; i < 60 * 30 && w.stats().firesBuilt == 0; ++i) { w.tick(kDt, &t); if (i % 300 == 299) feedAll(w); }
+        WSIM_CHECK(w.stats().firesBuilt == 1);
+        const Structure* fire = nullptr;
+        for (const Structure& s2 : w.structures()) if (s2.kind == StructureKind::Campfire) fire = &s2;
+        WSIM_CHECK(fire != nullptr && fire->hp > 0.9f);
+        WSIM_CHECK(!w.placeStructure(&t, StructureKind::Campfire, fire->x + 5.0f, fire->z, 0.0f));   // не ближе 10
+        WorldState burnt = w.exportState();
+        for (Structure& s2 : burnt.structures) s2.hp = 0.001f;
+        burnt.population[0].creature.wood = 0.0f;
+        WSIM_CHECK(w.importState(burnt));
+        for (int i = 0; i < 60 * 2; ++i) w.tick(kDt, &t);
+        bool anyFire = false;
+        for (const Structure& s2 : w.structures()) anyFire |= s2.kind == StructureKind::Campfire;
+        WSIM_CHECK(!anyFire);
+
+        // Подкладывает дрова, когда огонь слабеет.
+        World w2 = lone(42, at, kSkillFire);
+        WorldState s3 = w2.exportState();
+        s3.time = 150.0;
+        s3.population[0].creature.wood = 1.0f;
+        s3.structures.push_back({StructureKind::Campfire, at.x + 1.0f, at.y, 0.0f, 0.2f});
+        WSIM_CHECK(w2.importState(s3));
+        w2.tick(kDt, &t);
+        WSIM_CHECK(w2.stats().firesStoked == 1 && w2.structures()[0].hp > 0.6f);
+
+        // Горящий костёр отпугивает зверей.
+        Fauna fauna;
+        Rng rng2(3);
+        std::vector<Structure> built = {{StructureKind::Campfire, 0.0f, 0.0f, 0.0f, 1.0f}};
+        Fauna::State fs;
+        fs.nextId = 50;
+        Animal wolf;
+        wolf.id = 1; wolf.species = Species::Wolf; wolf.position = {-6.0f, 0.0f, 0.0f}; wolf.hunger = 0.95f; wolf.age = speciesDef(Species::Wolf).maturity * 1.5f;
+        fs.animals = {wolf};
+        WSIM_CHECK(fauna.importState(fs));
+        std::vector<CreatureView> creatures = {{9, {0.0f, 0.0f, 0.0f}}};
+        std::vector<Bite> bites;
+        float closest = 1e9f;
+        for (int i = 0; i < 60 * 20; ++i) {
+            fauna.tick(kDt, nullptr, creatures, rng2, 100.0f, bites, {}, &built);
+            for (const Animal& an : fauna.animals()) closest = std::min(closest, std::hypot(an.position.x, an.position.z));
+        }
+        WSIM_CHECK(closest > kFireRadius - 0.3f);
+
+        // Хозяин хижины: строитель становится владельцем, дом -- там; ночью идёт в свою, а не в ближайшую чужую.
+        World w3 = lone(43, at, kSkillSpear | kSkillHut);
+        WorldState s4 = w3.exportState();
+        s4.population[0].creature.wood = 4.0f;
+        s4.population[0].creature.spearDur = 1.0f;
+        WSIM_CHECK(w3.importState(s4));
+        for (int i = 0; i < 60 * 40 && w3.stats().hutsBuilt == 0; ++i) { w3.tick(kDt, &t); if (i % 300 == 299) feedAll(w3); }
+        WSIM_CHECK(w3.stats().hutsBuilt == 1);
+        const std::uint64_t myId = w3.population()[0].creature.id;
+        WSIM_CHECK(w3.structures()[0].owner == myId);
+
+        World w4 = lone(44, at, 0);
+        WorldState s5 = w4.exportState();
+        const std::uint64_t id = s5.population[0].creature.id;
+        s5.time = 201.0;
+        s5.population[0].creature.position = {at.x, 0.0f, at.y};
+        s5.population[0].creature.needs.hunger = 0.2f;
+        s5.structures.push_back({StructureKind::Hut, at.x + 9.0f, at.y, 0.0f, 1.0f, 0.0f, id + 1000});   // ближе, но чужая
+        s5.structures.push_back({StructureKind::Hut, at.x - 20.0f, at.y, 0.0f, 1.0f, 0.0f, id});       // дальше, своя
+        WSIM_CHECK(w4.importState(s5));
+        float dOwn = 1e9f, dForeign = 1e9f;
+        for (int i = 0; i < 60 * 40; ++i) {
+            w4.tick(kDt, &t);
+            const glm::vec3 p = w4.population()[0].creature.position;
+            dOwn = std::min(dOwn, std::hypot(p.x - (at.x - 20.0f), p.z - at.y));
+            dForeign = std::min(dForeign, std::hypot(p.x - (at.x + 9.0f), p.z - at.y));
+        }
+        WSIM_CHECK(dOwn < 3.0f && dForeign > 3.0f);
+
+        // Сохранение: 16-битные умения (костёр) и хозяин хижины.
+        WorldState s6 = w4.exportState();
+        s6.population[0].creature.skills = kSkillFire | kSkillSpear;
+        WSIM_CHECK(w4.importState(s6));
+        PhysicsWorld physics;
+        SaveGame back;
+        std::string err;
+        WSIM_CHECK(parseSave(serializeSave(captureSave("f", 0, 0.0f, t, w4, physics, CameraState{})), back, err));
+        WSIM_CHECK(back.world.population[0].creature.knows(kSkillFire) && back.world.population[0].creature.knows(kSkillSpear));
+        std::uint64_t owners = 0;
+        for (const Structure& s7 : back.world.structures) owners += s7.owner != 0;
+        WSIM_CHECK(owners == 2);
     }
 
     std::puts("resources_tests: OK");

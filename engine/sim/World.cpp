@@ -154,6 +154,7 @@ bool World::placeStructure(const Terrain* terrain, StructureKind kind, float x, 
         if (d < 1.6f) return false;
         if (kind == StructureKind::Stockpile && s.kind == StructureKind::Stockpile && d < 25.0f) return false;   // один склад на стойбище
         if (kind == StructureKind::Hut && s.kind == StructureKind::Hut && d < 6.0f) return false;
+        if (kind == StructureKind::Campfire && s.kind == StructureKind::Campfire && d < 10.0f) return false;
         near += d < 8.0f && s.kind == kind;
     }
     if (near >= 3) return false;
@@ -455,6 +456,10 @@ void World::tick(float dt, Terrain* mutableTerrain) {
     const Terrain* terrain = mutableTerrain;
     m_time += dt;
     if (terrain && m_streaming) streamBushes(*terrain, dt);
+    // Костры сгорают (hp -- топливо); догоревшие убираем.
+    for (Structure& st : m_structures)
+        if (st.kind == StructureKind::Campfire) st.hp = std::max(0.0f, st.hp - dt / kFireBurnSeconds);
+    std::erase_if(m_structures, [](const Structure& st) { return st.kind == StructureKind::Campfire && st.hp <= 0.0f; });
 
     // 1. Прошлотиковые пинги горя -- одноразовые, читаются один раз и всё.
     const std::unordered_map<std::uint64_t, float> grief = std::move(m_pendingGrief);
@@ -610,16 +615,26 @@ void World::tick(float dt, Terrain* mutableTerrain) {
         }
         // Ночь и хижина: ближайшая в 40 единицах.
         if (terrain) senses.night = nightness(m_time);
-        std::size_t hutIdx = m_structures.size();
+        std::size_t hutIdx = m_structures.size(), fireIdx = m_structures.size();
         {
-            float best = 40.0f;
+            // Хижина: своя/семьи предпочтительнее (чужая считается на 30 единиц дальше); костёр -- ближайший горящий.
+            float bestScore = 70.0f, bestFire = 40.0f;
             for (std::size_t k = 0; k < m_structures.size(); ++k) {
                 const Structure& st = m_structures[k];
-                if (st.kind != StructureKind::Hut) continue;
                 const float d = std::hypot(st.x - selfPos.x, st.z - selfPos.z);
-                if (d < best) { best = d; hutIdx = k; }
+                if (st.kind == StructureKind::Hut && d < 40.0f) {
+                    const bool mine = st.owner == 0 || st.owner == self.id || st.owner == self.bondedPartnerId || st.owner == self.parentIds[0] || st.owner == self.parentIds[1] ||
+                                      std::find(self.childIds.begin(), self.childIds.end(), st.owner) != self.childIds.end();
+                    const float score = d + (mine ? 0.0f : 30.0f);
+                    if (score < bestScore) { bestScore = score; hutIdx = k; }
+                } else if (st.kind == StructureKind::Campfire && st.hp > 0.05f && d < bestFire) { bestFire = d; fireIdx = k; }
             }
-            if (hutIdx != m_structures.size()) { senses.hutDist = best; senses.hutPos = {m_structures[hutIdx].x, selfPos.y, m_structures[hutIdx].z}; }
+            if (hutIdx != m_structures.size()) {
+                const Structure& h = m_structures[hutIdx];
+                senses.hutDist = std::hypot(h.x - selfPos.x, h.z - selfPos.z);
+                senses.hutPos = {h.x, selfPos.y, h.z};
+            }
+            if (fireIdx != m_structures.size()) { senses.fireDist = bestFire; senses.firePos = {m_structures[fireIdx].x, selfPos.y, m_structures[fireIdx].z}; }
         }
         // Вода: берег ищем лучами (редко, кэш в существе), когда хочется пить или пополнить ведро.
         if (terrain && (self.thirst > 0.4f || self.behavior == Behavior::Drink || (self.hasBucket && self.water < 1.5f && self.thirst > 0.25f))) {
@@ -658,7 +673,7 @@ void World::tick(float dt, Terrain* mutableTerrain) {
         }
 
         // Дерево для рубки: ищем (редко, результат кэшируется в существе), только пока оно нужно.
-        if (terrain && (self.wantsWood() || (self.knows(kSkillHut) && hutIdx == m_structures.size() && self.wood < kHutWood) || (self.knows(kSkillStockpile) && stockIdx != m_structures.size() && m_structures[stockIdx].stock < 24.0f && self.wood < kMaxWood))) {
+        if (terrain && (self.wantsWood() || (self.knows(kSkillHut) && hutIdx == m_structures.size() && self.wood < kHutWood) || (self.knows(kSkillFire) && fireIdx == m_structures.size() && senses.night > 0.1f && self.wood < kFireWood) || (self.knows(kSkillStockpile) && stockIdx != m_structures.size() && m_structures[stockIdx].stock < 24.0f && self.wood < kMaxWood))) {
             if (self.treeKnown && terrain->treeFelled(self.treeCx, self.treeCz)) self.treeKnown = false;   // срубил кто-то другой
             self.treeSearch -= dt;
             if (!self.treeKnown && self.treeSearch <= 0.0f) {
@@ -817,6 +832,16 @@ void World::tick(float dt, Terrain* mutableTerrain) {
             self.spearDur  = std::max(0.0f, self.spearDur - 0.06f);
             if (m_fauna.hurt(senses.preyId, 0.55f)) { self.feed(0.7f); ++m_stats.meatKills; }
         }
+        // Костёр: тёплый сон рядом (энергия восстанавливается быстрее); знающий с брёвнами подкладывает, когда огонь слабеет.
+        if (fireIdx != m_structures.size()) {
+            Structure& fire = m_structures[fireIdx];
+            if (senses.fireDist < 5.0f && self.behavior == Behavior::Sleep) self.rest(0.03f * dt);
+            if (senses.fireDist < 3.0f && self.knows(kSkillFire) && self.wood >= 1.0f && fire.hp < 0.35f && senses.night > 0.1f) {
+                self.wood -= 1.0f;
+                fire.hp = std::min(1.0f, fire.hp + 0.5f);
+                ++m_stats.firesStoked;
+            }
+        }
         // Склад: сдать излишки / взять нужное.
         if (self.stockRequest != 0 && stockIdx != m_structures.size() && senses.stockDist <= 2.8f) {
             Structure& st = m_structures[stockIdx];
@@ -859,7 +884,12 @@ void World::tick(float dt, Terrain* mutableTerrain) {
                 ++m_stats.stockpilesBuilt;
             } else if (self.buildRequest == 5 && self.wood >= kHutWood && placeStructure(terrain, StructureKind::Hut, self.buildAt.x, self.buildAt.y, 0.0f)) {
                 self.wood -= kHutWood;
+                m_structures.back().owner = self.id;          // хозяин: он и его семья спят здесь охотнее
+                self.homePosition = {self.buildAt.x, selfPos.y, self.buildAt.y};   // дом там, где хижина
                 ++m_stats.hutsBuilt;
+            } else if (self.buildRequest == 6 && self.wood >= kFireWood && placeStructure(terrain, StructureKind::Campfire, self.buildAt.x, self.buildAt.y, 0.0f)) {
+                self.wood -= kFireWood;
+                ++m_stats.firesBuilt;
             } else if (self.buildRequest == 3 && self.wood >= kTrapWood && placeStructure(terrain, StructureKind::Trap, self.buildAt.x, self.buildAt.y, 0.0f)) {
                 self.wood -= kTrapWood;
                 ++m_stats.trapsSet;
@@ -889,9 +919,12 @@ void World::tick(float dt, Terrain* mutableTerrain) {
                                     {kSkillBridge, static_cast<Skill>(0), (0.0002f + (waterAhead ? 0.006f : 0.0f)) * curious},
                                     {kSkillBucket, static_cast<Skill>(0), (0.0002f + (self.thirst > 0.5f ? 0.006f : 0.0f)) * curious},
                                     {kSkillStockpile, kSkillSpear, (0.0004f + (self.wood >= 3.0f ? 0.004f : 0.0f)) * curious},
-                                    {kSkillHut, kSkillSpear, (0.0008f + (senses.night > 0.5f ? 0.008f : 0.0f)) * curious}};
+                                    {kSkillHut, kSkillSpear, (0.0008f + (senses.night > 0.5f ? 0.008f : 0.0f)) * curious},
+                                    {kSkillFire, static_cast<Skill>(0), (0.0004f + (senses.night > 0.3f ? 0.006f : 0.0f)) * curious}};
+            const float builderBoost = self.role() == Role::Builder ? 2.0f : 1.0f;   // строитель открывает постройки вдвое быстрее
+            const Skill kBuildSkills = static_cast<Skill>(kSkillBridge | kSkillBarricade | kSkillTrap | kSkillStockpile | kSkillHut | kSkillFire);
             for (const Learn& l : learns)
-                if (!self.knows(l.skill) && (l.needs == 0 || self.knows(l.needs)) && roll(l.skill, l.rate)) { self.skills |= l.skill; ++m_stats.skillsLearned; }
+                if (!self.knows(l.skill) && (l.needs == 0 || self.knows(l.needs)) && roll(l.skill, l.rate * ((l.skill & kBuildSkills) ? builderBoost : 1.0f))) { self.skills |= l.skill; ++m_stats.skillsLearned; }
             if (self.skills != kAllSkills) {
                 forEachNearby(
                     creatureGrid, selfPos, 8.0f, [this](std::size_t j) { return m_population[j].creature.position; },

@@ -859,6 +859,20 @@ Creatures now cut trees down, carry logs, craft tools and fight predators with t
 - Not done: **division of labour** (no roles — everyone builds/chops/hunts by the same rules), creatures do not live in or "own" huts (no family homes, no sleeping inside the model, no door), night makes no difference to predators or
   animals (no nocturnal species, no sleeping animals), windows do not glow, no seasons/weather, no light sources (campfire) for creatures at night, sleep does not wake on noise except by fear > 0.3.
 
+### Stage 5: campfire, roles, hut ownership
+
+- **Campfire** (`StructureKind::Campfire`, `kSkillFire = 256`, 2 logs, 2 s, cooldown 100 s, ≥10 apart, `Structure::hp` = fuel 1→0 over `kFireBurnSeconds = 200`, then removed in `World::tick`): built at dusk (`night > 0.1`) by a creature that knows it and sees no fire within 15 units;
+  creatures that know it chop for it in the evening. A burning fire **repels animals within `kFireRadius = 3`** (same step block/look-ahead as barricades and huts), **warms sleepers within 5 units** (extra rest 0.03/s) and is
+  **stoked** by a knowing creature with logs within 3 units when `hp < 0.35` (+0.5, `firesStoked`; rare in practice — a fire normally outlasts the night as lit). A sleeper with no hut walks to the nearest fire (within 40) and sleeps near it.
+  Rendering: `StructGen::buildCampfire` (stone ring, logs, tiered flame; flame height follows the fuel and flickers) **and a warm point light** per fire (the 6 nearest to the camera, radius 20, flicker; `LightsData::counts.x` was unused before).
+- **Roles** (`Creature::role()`, pure function of the genes, so inherited): `Hunter` (bold + big), `Builder` (curious + sociable + not bold), `Woodcutter` (the rest). Effects (priorities only, nothing is forbidden): hunters start hunting at hunger 0.32 (others 0.5) with
+  ×1.35 score; woodcutters chop ×1.6; builders build huts/stockpiles/fires ×1.5 and **discover building skills twice as fast** (this is why huts became common: 0-15 per 20 sim-min). Inspector shows the role.
+- **Hut ownership** (`Structure::owner`): the builder owns it and moves their `homePosition` there; a sleeper picks the best hut by `distance + 30 if owned by a non-relative` (own, partner, parent, child count as "mine"; unowned is free), so families gather at their house
+  (tested: goes to its own farther hut and not the nearer foreign one). Not a real "household": no capacity, no eviction, no inheritance.
+- **Skills are 16-bit now** (`kAllSkills = 511`); saves **v11** (high byte after the v10 tail; new `STR3` section with the owner; STR2/STRC still read; kinds 1-5).
+- Measured (20 sim-min, 9 seeds): fires 3-18 per run, huts 0-15; populations are small (3-45 alive at 20 min — lower than before stages 3-4; the extra chopping/sleeping time costs foraging; nobody went extinct, but seed 7 ended at 3, so expect to tune food/sleep next).
+- Not done: real division of labour (no assignment by need, no teaching of roles), shared meals, fire as cooking/warmth need (no cold), fire spread/danger, fire-fearing creatures, animals that use fire-lit areas, torches, night ambience, seasons.
+
 ## Temporal upscaler and frame generation (`VulkanTemporal.cpp`, `taau.comp`, `framegen.comp`)
 
 Own implementation (not AMD's FSR 2/3): the official FidelityFX SDK builds with MSVC/`.bat` scripts, has HLSL shaders that
@@ -1272,7 +1286,8 @@ source of truth for the hex constants at the top of `MainMenu.cpp`.
 - [x] Civilization stage 2: bridges, barricades, traps, visible gear (see "Stage 2")
 - [x] Civilization stage 3: stockpile, buckets + thirst, meat hunting (see "Stage 3")
 - [x] Civilization stage 4: day/night, sleep, huts (see "Stage 4")
-- [ ] Civilization stage 5: division of labour, fire/campfire, family homes, nocturnal animals, seasons
+- [x] Civilization stage 5: campfire, roles, hut ownership (see "Stage 5")
+- [ ] Civilization stage 6: ecology rebalance (populations are low), seasons/weather, nocturnal animals, sounds (night, building, animals)
 - [ ] More powers (fire, rain, disasters, food, smite individuals), undo
 - [x] Sound: procedural synth + miniaudio (see "Sound")
 - [x] Day/night cycle (see "Stage 4"; night ambience sound still missing)

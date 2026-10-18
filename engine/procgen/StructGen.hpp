@@ -13,6 +13,7 @@ namespace wsim::procgen {
 [[nodiscard]] MeshData buildShield();          // щит в плоскости YZ (носится сбоку)
 [[nodiscard]] MeshData buildStockpile();       // склад: помост, штабель брёвен и навес на столбах
 [[nodiscard]] MeshData buildHut();             // хижина: бревенчатые стены, двускатная крыша, дверной проём (дверь к +Z), радиус ~1.4
+[[nodiscard]] MeshData buildCampfire();        // костёр: кольцо камней, поленья и пламя (высота пламени ~1 при полном топливе; масштаб по Y)
 [[nodiscard]] MeshData buildBucket();          // ведро с дужкой (носится сбоку)
 [[nodiscard]] MeshData buildLogs(int count);   // связка брёвен count = 1..4 (на спине, вдоль X)
 

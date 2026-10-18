@@ -86,6 +86,24 @@ bool Creature::canMate() const noexcept {
     return isMature() && matingCooldown <= 0.0f && needs.libido >= 0.4f && needs.energy >= 0.45f && needs.hunger <= 0.4f && health >= 0.6f;
 }
 
+const char* roleName(Role r) noexcept {
+    switch (r) {
+        case Role::Woodcutter: return "дровосек";
+        case Role::Hunter:     return "охотник";
+        case Role::Builder:    return "строитель";
+    }
+    return "?";
+}
+
+Role Creature::role() const noexcept {
+    const float bold = boldness(), cur = curiosity(), soc = sociability(), big = (size() - 0.7f) / 0.7f;
+    const float hunter = 0.6f * bold + 0.4f * big;
+    const float builder = 0.5f * cur + 0.3f * (1.0f - bold) + 0.2f * soc;
+    const float cutter = 0.45f * (1.0f - cur) + 0.3f * big + 0.25f * (1.0f - soc) + 0.05f;
+    if (hunter >= builder && hunter >= cutter) return Role::Hunter;
+    return builder >= cutter ? Role::Builder : Role::Woodcutter;
+}
+
 const char* behaviorName(Behavior b) noexcept {
     switch (b) {
         case Behavior::Wander:    return "Бродит";
@@ -217,7 +235,7 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
             buildRequest  = static_cast<std::uint8_t>(dec.build);
             buildAt       = dec.buildAt;
             buildYaw      = dec.buildYaw;
-            buildTimer    = dec.build == 1 ? 0.3f : (dec.build == 2 ? 25.0f : (dec.build == 4 ? 60.0f : (dec.build == 5 ? 90.0f : 40.0f)));
+            buildTimer    = dec.build == 1 ? 0.3f : (dec.build == 2 ? 25.0f : (dec.build == 4 ? 60.0f : (dec.build == 5 ? 90.0f : (dec.build == 6 ? 100.0f : 40.0f))));
         }
     } else {
         buildProgress = 0.0f;
