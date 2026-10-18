@@ -77,7 +77,7 @@ struct WorldStats {
     std::uint64_t deathsPredation = 0;  // существа, растерзанные хищниками
     std::uint64_t treesFelled = 0, spearsMade = 0, shieldsMade = 0, spearHits = 0, shieldBlocks = 0, skillsLearned = 0;
     std::uint64_t planksLaid = 0, barricadesBuilt = 0, trapsSet = 0;
-    std::uint64_t meatKills = 0, bucketsMade = 0, bushesWatered = 0, stockpilesBuilt = 0, hutsBuilt = 0, raids = 0, logsStolen = 0, strikes = 0, deathsConflict = 0, giftLogs = 0, tradeLogs = 0, alliancesFormed = 0, alliancesBroken = 0, firesBuilt = 0, firesStoked = 0, bitesBlockedByWalls = 0, coldTicks = 0, logsStored = 0, logsTaken = 0, deathsThirst = 0;
+    std::uint64_t meatKills = 0, bucketsMade = 0, bushesWatered = 0, stockpilesBuilt = 0, hutsBuilt = 0, raids = 0, logsStolen = 0, strikes = 0, deathsConflict = 0, mixedBirths = 0, leaderChanges = 0, giftLogs = 0, tradeLogs = 0, alliancesFormed = 0, alliancesBroken = 0, firesBuilt = 0, firesStoked = 0, bitesBlockedByWalls = 0, coldTicks = 0, logsStored = 0, logsTaken = 0, deathsThirst = 0;
 };
 
 // События мира для звука и эффектов (не состояние: очищаются takeEvents(), в сохранения не входят).
@@ -99,6 +99,7 @@ struct WorldState {
     Fauna::State                                         fauna;         // дикие животные
     std::vector<Structure>                               structures;    // баррикады и ловушки
     std::array<float, 16>                                relations{};   // отношения племён [a*4+b], -1 вражда .. 1 дружба
+    std::array<std::uint64_t, 4>                         leaders{};     // вожди племён (id существа, 0 -- нет)
     // Потоковая подгрузка кустов: мировое время, материализованные ячейки и записи о спящих (старые сохранения -- пусто).
     float                                                streamTimer = 100.0f;   // таймер подгрузки кустов (для продолжения бит в бит)
     bool                                                 streaming = false;
@@ -199,6 +200,10 @@ public:
     [[nodiscard]] float relation(int a, int b) const noexcept { return (a > 0 && b > 0 && a < kMaxTribes && b < kMaxTribes) ? m_relations[a][b] : 0.0f; }
     void setRelation(int a, int b, float v) noexcept;
     [[nodiscard]] std::size_t tribeCount(int tribe) const noexcept;
+    // Вождь племени (id; 0 -- нет): раз в kElectionSeconds выбирается лучший по зрелости, храбрости, общительности, детям, уважению и здоровью
+    // (действующему -- бонус, чтобы не менялись по пустякам). Соплеменники держатся поближе к вождю.
+    static constexpr double kElectionSeconds = 5.0;
+    [[nodiscard]] std::uint64_t leaderId(int tribe) const noexcept { return (tribe > 0 && tribe < kMaxTribes) ? m_leaders[tribe] : 0; }
     // Союз двух племён (отношения выше 0.6, расходятся ниже 0.3 -- с гистерезисом); только для статистики и показа.
     [[nodiscard]] bool allied(int a, int b) const noexcept { return a > 0 && b > 0 && a < kMaxTribes && b < kMaxTribes && m_allied[a][b]; }
     // Можно ли племени tribe пользоваться чужим складом: ничей, свой или дружественный (отношения > 0.3).
@@ -240,6 +245,9 @@ private:
     std::vector<Structure>     m_structures;
     float                      m_relations[kMaxTribes][kMaxTribes]{};
     bool                       m_allied[kMaxTribes][kMaxTribes]{};
+    std::uint64_t              m_leaders[kMaxTribes]{};
+    std::int64_t               m_electionSlot = -1;
+    void electLeaders();
 
     // Потоковая подгрузка кустов (см. growBerryBushes/streamBushes в World.cpp).
     bool                          m_streaming = false;

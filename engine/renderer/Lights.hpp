@@ -29,7 +29,7 @@ struct LightsData {
     glm::mat4  cascadeVP[kShadowCascades]{};         // мир -> клип света, по каскадам
     glm::vec4  cascadeSplit{};                       // дальние границы каскадов по глубине вида
     glm::vec4  cascadeTexel{};                       // размер текселя каскада в юнитах мира
-    glm::vec4  shadowParams{};                       // x = тени включены, y = 1/размер карты, z = смещение глубины
+    glm::vec4  shadowParams{};                       // x = тени включены, y = 1/размер карты, z = смещение глубины, w = фаза года 0..1 (листва)
 };
 
 }  // namespace wsim

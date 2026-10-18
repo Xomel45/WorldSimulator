@@ -125,6 +125,7 @@ const char* behaviorName(Behavior b) noexcept {
         case Behavior::Sleep:     return "Спит";
         case Behavior::Raid:      return "Грабит чужой склад";
         case Behavior::Defend:    return "Гонит чужака";
+        case Behavior::Follow:   return "Идёт за вождём";
         case Behavior::Count:     break;
     }
     return "?";

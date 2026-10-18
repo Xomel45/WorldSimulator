@@ -218,6 +218,8 @@ Decision decide(Creature& c, const SenseInputs& s, const BrainOutputs& raw, floa
         if (buildKind) S(Behavior::Build) = (buildKind == 1 ? 2.6f : (buildKind == 4 ? 1.8f : (buildKind == 5 ? 1.9f : (buildKind == 6 ? 1.7f : 2.4f)))) * (c.role() == Role::Builder && buildKind >= 4 ? 1.5f : 1.0f);
     }
 
+    // Вождь: праздный соплеменник держится недалеко от вождя (тянется к нему, когда ушёл дальше ~22 единиц; общительные охотнее).
+    if (c.tribe != 0 && s.leaderDist < kNoTarget && s.leaderDist > 22.0f) S(Behavior::Follow) = 0.55f + 0.5f * c.sociability();
     // Базовая линия: бродит, любопытные -- охотнее; идущий искать новые места не бросает это на полпути.
     S(Behavior::Wander) = 0.3f + c.curiosity() * c.boredomLevel() * 0.8f + (c.exploreTimer > 0.0f ? 0.6f : 0.0f) + (s.terrain && !waterSeen && c.thirst > 0.6f ? 0.9f : 0.0f);
 
@@ -316,6 +318,10 @@ Decision decide(Creature& c, const SenseInputs& s, const BrainOutputs& raw, floa
             dir = dirTo(c.position, s.intruderPos);
             if (s.intruderDist <= 1.8f) { speed = 0.3f; d.strike = true; }
             else speed = 1.0f;
+            break;
+        case Behavior::Follow:
+            dir = dirTo(c.position, s.leaderPos);
+            speed = 0.6f * std::clamp(s.leaderDist / 30.0f, 0.4f, 1.0f);
             break;
         case Behavior::Drink:
             dir = dirTo(c.position, s.waterPos);

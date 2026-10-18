@@ -186,6 +186,24 @@ std::size_t World::tribeCount(int tribe) const noexcept {
     return n;
 }
 
+void World::electLeaders() {
+    for (int tr = 1; tr < kMaxTribes; ++tr) {
+        std::uint64_t best = 0;
+        float bestScore = -1.0f;
+        for (const Inhabitant& in : m_population) {
+            const Creature& c = in.creature;
+            if (!c.alive || c.tribe != tr || !c.isMature()) continue;
+            const float f = c.age / std::max(c.lifespan(), 1.0f);
+            const float maturity = std::clamp(1.0f - std::fabs(f - 0.4f) * 2.0f, 0.0f, 1.0f);
+            const float kids = std::min(static_cast<float>(c.childIds.size()), 4.0f) / 4.0f;
+            float score = 0.6f * maturity + 0.3f * c.boldness() + 0.3f * c.sociability() + 0.15f * kids + 0.2f * c.needs.respect + 0.2f * c.health;
+            if (c.id == m_leaders[tr]) score += 0.15f;   // действующему вождю -- бонус
+            if (score > bestScore) { bestScore = score; best = c.id; }
+        }
+        if (best != m_leaders[tr]) { m_leaders[tr] = best; ++m_stats.leaderChanges; }
+    }
+}
+
 void World::formTribes(const Terrain& terrain, int count) {
     std::uniform_real_distribution<float> unit(0.0f, 1.0f);
     count = std::clamp(count, 1, kMaxTribes - 1);
@@ -478,6 +496,7 @@ WorldState World::exportState() const {
     st.buildings  = m_buildings;
     st.fauna      = m_fauna.exportState();
     st.structures = m_structures;
+    for (int tr = 0; tr < kMaxTribes; ++tr) st.leaders[static_cast<std::size_t>(tr)] = m_leaders[tr];
     for (int a = 0; a < kMaxTribes; ++a) for (int b = 0; b < kMaxTribes; ++b) st.relations[static_cast<std::size_t>(a * kMaxTribes + b)] = m_relations[a][b];
     st.streaming  = m_streaming;
     st.time       = m_time;
@@ -502,6 +521,8 @@ bool World::importState(const WorldState& st) {
     m_food       = st.food;
     m_buildings  = st.buildings;
     m_structures = st.structures;
+    for (int tr = 0; tr < kMaxTribes; ++tr) m_leaders[tr] = st.leaders[static_cast<std::size_t>(tr)];
+    m_electionSlot = static_cast<std::int64_t>(std::floor((std::isfinite(st.time) ? st.time : 0.0) / kElectionSeconds));
     for (int a = 0; a < kMaxTribes; ++a) for (int b = 0; b < kMaxTribes; ++b) { const float v = st.relations[static_cast<std::size_t>(a * kMaxTribes + b)]; m_relations[a][b] = std::isfinite(v) ? std::clamp(v, -1.0f, 1.0f) : 0.0f; }
     if (!m_fauna.importState(st.fauna)) return false;
     m_streaming = st.streaming;
@@ -553,6 +574,11 @@ void World::tick(float dt, Terrain* mutableTerrain) {
             const bool now = was ? m_relations[a][b] > 0.3f : m_relations[a][b] > 0.6f;
             if (now != was) { m_allied[a][b] = m_allied[b][a] = now; ++(now ? m_stats.alliancesFormed : m_stats.alliancesBroken); }
         }
+    // Выборы вождей по слотам мирового времени (производны от времени -- сохранять номер слота не нужно).
+    {
+        const auto slot = static_cast<std::int64_t>(std::floor(m_time / kElectionSeconds));
+        if (slot != m_electionSlot) { m_electionSlot = slot; electLeaders(); }
+    }
     // Костры сгорают (hp -- топливо); догоревшие убираем.
     const float coldNow = terrain ? coldness(m_time) : 0.0f, rainNow = terrain ? rain(m_time) : 0.0f;
     for (Structure& st : m_structures)
@@ -738,6 +764,15 @@ void World::tick(float dt, Terrain* mutableTerrain) {
                         senses.intruderPos = o.position;
                         senses.intruderId = o.id;
                     });
+            }
+        }
+        // Вождь своего племени.
+        if (self.tribe != 0 && m_leaders[self.tribe] != 0 && m_leaders[self.tribe] != self.id) {
+            const auto lit = idIndex.find(m_leaders[self.tribe]);
+            if (lit != idIndex.end() && m_population[lit->second].creature.alive) {
+                const Creature& lead = m_population[lit->second].creature;
+                senses.leaderDist = std::hypot(lead.position.x - selfPos.x, lead.position.z - selfPos.z);
+                senses.leaderPos  = lead.position;
             }
         }
         // Ночь и хижина: ближайшая в 40 единицах.
@@ -1222,6 +1257,8 @@ void World::tick(float dt, Terrain* mutableTerrain) {
             [&](std::size_t j, float dist) {
                 if (j == i || mated[j]) return;
                 if (freshOutputs[j].mateDesire <= kMateDesireThreshold || !m_population[j].creature.canMate()) return;
+                const Creature& ci = m_population[i].creature; const Creature& cj = m_population[j].creature;
+                if (ci.tribe != 0 && cj.tribe != 0 && ci.tribe != cj.tribe && m_relations[ci.tribe][cj.tribe] < 0.0f) return;   // враги не женятся
                 if (dist < bestDist) {
                     bestDist = dist;
                     bestJ    = j;
@@ -1248,6 +1285,11 @@ void World::tick(float dt, Terrain* mutableTerrain) {
             Creature child = Creature::reproduce(a, b, m_rng);
             child.id       = m_nextId++;
             child.tribe    = a.tribe;
+            if (a.tribe != b.tribe && b.tribe != 0) {   // смешанный брак: ребёнок берёт племя одного из родителей, племена сближаются
+                if (a.tribe == 0 || unit(m_rng) < 0.5f) child.tribe = b.tribe;
+                if (a.tribe != 0) setRelation(a.tribe, b.tribe, m_relations[a.tribe][b.tribe] + 0.05f);
+                ++m_stats.mixedBirths;
+            }
             const float ang = 6.2831853f * unit(m_rng), r = 0.8f + 1.4f * unit(m_rng);
             child.position = a.position + glm::vec3(std::cos(ang) * r, 0.0f, std::sin(ang) * r);
             if (terrain && terrain->isUnderwater(child.position.x, child.position.z)) child.position = a.position;  // не рождаются в воде

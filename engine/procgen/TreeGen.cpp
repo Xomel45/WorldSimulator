@@ -72,14 +72,14 @@ MeshData oak(int v) {
     // Крона: широкая, из комков разной величины; цвета -- оттенки тёмной дубовой зелени. Материал "пятнистый".
     const glm::vec3 leaf{0.18f, 0.37f, 0.11f};
     const float cy = height + 1.05f;
-    blobT(m, solids, {top.x, cy + 0.3f, top.z}, {2.2f, 1.7f, 2.2f}, leaf, 0.55f, 1 + v, 1, kMottled);
+    blobT(m, solids, {top.x, cy + 0.3f, top.z}, {2.2f, 1.7f, 2.2f}, leaf, 0.55f, 1 + v, 1, kLeaf);
     for (int k = 0; k < 3; ++k) {
         const float a = rrange(0, v, 20 + k, 0.0f, 6.28f), d = rrange(0, v, 23 + k, 1.2f, 1.7f);
         blobT(m, solids, {top.x + std::cos(a) * d, cy - 0.15f + 0.3f * rnd(0, v, 26 + k), top.z + std::sin(a) * d},
-                {1.45f, 1.15f, 1.45f}, leaf * (0.9f + 0.2f * rnd(0, v, 30 + k)), 0.5f, 10 + 3 * k + v, 1, kMottled);
+                {1.45f, 1.15f, 1.45f}, leaf * (0.9f + 0.2f * rnd(0, v, 30 + k)), 0.5f, 10 + 3 * k + v, 1, kLeaf);
     }
     blobT(m, solids, {top.x + rrange(0, v, 40, -0.5f, 0.5f), cy + 1.3f, top.z + rrange(0, v, 41, -0.5f, 0.5f)}, {1.2f, 0.85f, 1.2f},
-            leaf * 1.12f, 0.5f, 50 + v, 0, kMottled);
+            leaf * 1.12f, 0.5f, 50 + v, 0, kLeaf);
     removeBuriedTriangles(m, solids, 1.0f);
     return m;
 }
@@ -122,7 +122,7 @@ MeshData birch(int v) {
         const float t = 0.62f + 0.19f * static_cast<float>(k);
         const glm::vec3 c = at(t) + glm::vec3(rrange(1, v, 80 + k, -0.35f, 0.35f), 0.35f, rrange(1, v, 83 + k, -0.35f, 0.35f));
         const float r = (k == 1 ? 1.05f : (k == 0 ? 0.95f : 0.7f)) * rrange(1, v, 86 + k, 0.9f, 1.1f);
-        blobT(m, solids, c, {r, r * 1.35f, r}, leaf * (0.92f + 0.18f * rnd(1, v, 89 + k)), 0.5f, 100 + 7 * k + v, k == 1 ? 1 : 0, kMottled);
+        blobT(m, solids, c, {r, r * 1.35f, r}, leaf * (0.92f + 0.18f * rnd(1, v, 89 + k)), 0.5f, 100 + 7 * k + v, k == 1 ? 1 : 0, kLeaf);
     }
     removeBuriedTriangles(m, solids, 1.0f);
     return m;
@@ -163,8 +163,8 @@ MeshData acacia(int v) {
     }
     const glm::vec3 leaf{0.40f, 0.48f, 0.15f};
     const float cy = height + 0.7f;
-    blobT(m, solids, {fork.x, cy, fork.z}, {2.9f, 0.55f, 2.7f}, leaf, 0.35f, 200 + v, 1, kMottled);
-    blobT(m, solids, {fork.x + rrange(3, v, 20, -0.9f, 0.9f), cy + 0.35f, fork.z + rrange(3, v, 21, -0.9f, 0.9f)}, {1.8f, 0.4f, 1.7f}, leaf * 1.1f, 0.35f, 210 + v, 0, kMottled);
+    blobT(m, solids, {fork.x, cy, fork.z}, {2.9f, 0.55f, 2.7f}, leaf, 0.35f, 200 + v, 1, kLeaf);
+    blobT(m, solids, {fork.x + rrange(3, v, 20, -0.9f, 0.9f), cy + 0.35f, fork.z + rrange(3, v, 21, -0.9f, 0.9f)}, {1.8f, 0.4f, 1.7f}, leaf * 1.1f, 0.35f, 210 + v, 0, kLeaf);
     removeBuriedTriangles(m, solids, 1.0f);
     return m;
 }

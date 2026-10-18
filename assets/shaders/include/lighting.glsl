@@ -25,7 +25,7 @@ layout(set = 0, binding = 1) uniform LightsUBO {
     mat4  cascadeVP[WSIM_SHADOW_CASCADES];         // мир -> клип света по каскадам
     vec4  cascadeSplit;                            // дальние границы каскадов по глубине вида
     vec4  cascadeTexel;                            // размер текселя каскада в юнитах мира
-    vec4  shadowParams;                            // x = тени включены, y = 1/размер карты, z = смещение глубины
+    vec4  shadowParams;                            // x = тени включены, y = 1/размер карты, z = смещение глубины, w = фаза года 0..1 (листва)
 } lights;
 
 #ifdef WSIM_RASTER_SHADOWS

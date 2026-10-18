@@ -19,7 +19,7 @@ inline constexpr float kNoTarget       = 1.0e9f; // "цели нет" в пол�
 
 // Чем занято существо. Выбирается слоем поведения (Behavior.cpp) из потребностей, ощущений, черт
 // и выходов мозга; видно в инспекторе и нужно для озвучки/отладки.
-enum class Behavior : std::uint8_t { Wander, SeekFood, Eat, Rest, Flee, SeekMate, Socialize, GoHome, Sick, Sabotage, Chop, Craft, Build, Drink, Haul, Hunt, Sleep, Raid, Defend, Count };
+enum class Behavior : std::uint8_t { Wander, SeekFood, Eat, Rest, Flee, SeekMate, Socialize, GoHome, Sick, Sabotage, Chop, Craft, Build, Drink, Haul, Hunt, Sleep, Raid, Defend, Follow, Count };
 
 // Умения (маска Creature::skills). Рубить деревья умеют все (врождённо); изготовление орудий -- знание: открывается в опасности или
 // от случая и передаётся соседям и потомству по наблюдению (World::tick), как вкус ягод -- но у знания нет "забывания".
@@ -112,6 +112,7 @@ struct SenseInputs {
     float     night = 0.0f;                                  // 0 день .. 1 ночь (только в мире с рельефом: тесты без рельефа не спят)
     // Племена: чужой склад во враждебном племени (куда идти грабить) и чужак рядом со своим лагерем (кого гнать).
     float     rivalStockDist = kNoTarget;  glm::vec3 rivalStockPos{};
+    float     leaderDist = kNoTarget;     glm::vec3 leaderPos{};   // вождь своего племени (если это не сам существо)
     float     intruderDist = kNoTarget;    glm::vec3 intruderPos{};  std::uint64_t intruderId = 0;
     float     hutDist = kNoTarget;    glm::vec3 hutPos{};   // подходящая хижина (своя/семьи ближе чужих)
     float     fireDist = kNoTarget;   glm::vec3 firePos{};  // ближайший горящий костёр

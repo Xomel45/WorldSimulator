@@ -332,6 +332,7 @@ std::vector<std::uint8_t> serializeSave(const SaveGame& g, std::uint32_t version
     {
         ByteWriter b;
         for (float v : g.world.relations) b.f32(v);
+        for (std::uint64_t id : g.world.leaders) b.u64(id);   // вожди (в конце: старые файлы без них читаются)
         section(payload, kTagTribes, b);
     }
     {
@@ -540,6 +541,7 @@ bool parseSave(std::span<const std::uint8_t> bytes, SaveGame& out, std::string& 
             if (sr.ok() && sr.remaining() >= 4) f.streamTimer = sr.f32();
         } else if (t == kTagTribes) {
             for (float& v : g.world.relations) { const float x = sr.f32(); v = std::isfinite(x) ? std::clamp(x, -1.0f, 1.0f) : 0.0f; }
+            if (sr.ok() && sr.remaining() >= 32) for (std::uint64_t& id : g.world.leaders) id = sr.u64();
         } else if (t == kTagStructs || t == kTagStructs2 || t == kTagStructs3) {   // STRC (v8, без склада), STR2 (со складом), STR3 (с хозяином)
             const bool v2 = t != kTagStructs, v3 = t == kTagStructs3;
             const std::uint32_t m = sr.count(World::kMaxStructures, v3 ? 29 : (v2 ? 21 : 17));

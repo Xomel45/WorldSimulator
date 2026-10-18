@@ -937,6 +937,21 @@ Creatures now cut trees down, carry logs, craft tools and fight predators with t
 - Measured (10 seeds × 20 sim-min): alliances formed on 4 seeds, 3-4 logs traded on 2, no gifts in the probe (surplus carriers rarely coincide with a friendly pile in range), mean population ≈ 35. Tests cover trade with friends vs none with the cold, gifts, contact drift both ways and alliance formation.
 - Not done: barter of other goods (only logs exist), treaties/war declarations as events, tribe leaders, joint tribe projects, skill sharing speed-ups between allies, relation effects on mating across tribes, UI for diplomacy beyond the debug window.
 
+### Stage 11: leaf colours by season, leaders, mixed marriages
+
+- **Leaf colour by season** (smooth, triangular profiles over the year phase; `materials.glsl: leafMaterial`, material code `MAT_LEAF = 0.85` / `MeshBuilder::kLeaf` for the *deciduous* trees' foliage — oak, birch, acacia;
+  spruce, pine and palm stay evergreen on the old mottled code 0.75). The year phase `p` (0..1) rides in the previously unused `LightsData::shadowParams.w` (menu: fixed 0.3, summer). Two **triangle waves** on the circular year distance:
+  *autumn colour* peak at p = 0.62, half-width 0.20 (linear rise and fall): green → yellow (first half of the rise) → red-brown (peak); *wilting* peak at p = 0.85, half-width 0.15: leaves go brown and **thin out** (fragments are `discard`ed by
+  noise up to 80% at the peak, so winter trees look nearly bare). Spring (p ≈ 0) is back to full green. `WSIM_TIME` previews: 300 summer, 560 early autumn, 740 peak autumn, 1020 bare winter (`WSIM_CAM_TREE=oak`). Shadow maps are not
+  thinned (a bare tree still throws a full crown shadow); bushes/houses/creatures are unchanged.
+- **Leaders** (`World::leaderId(tribe)`, `electLeaders`, every 5 world-seconds — a slot of the world time, so nothing but the ids needs saving): the mature member with the best score
+  `0.6·maturity (best at 40% of lifespan) + 0.3·boldness + 0.3·sociability + 0.15·children + 0.2·respect + 0.2·health`, the incumbent +0.15. Followers who drift > 22 units away from their leader get `Behavior::Follow`
+  ("Идёт за вождём", score `0.55 + 0.5·sociability`, beats idle wandering, loses to real needs), so a tribe stays together around its leader. The leader wears a **golden crown** (`StructGen::buildCrown`); inspector prefix "вождь ·".
+  Saves: leaders in the `STRB` tail (old files without it load with no leaders until the first election). Measured: ~16-26 changes per 20 sim-min (deaths and ageing).
+- **Mixed marriages**: a mating pair of different tribes is allowed unless their relation is below 0 ("enemies do not marry"); a mixed birth gives the child one parent's tribe (coin flip, the mother if the father is tribeless) and **warms the pair's relation by 0.05**
+  (`mixedBirths`). Genes already crossed over, so this is gene flow plus diplomacy. Measured: 0-60 per run (the growing seeds mix most).
+- Not done: leaders issuing orders (raids and camp founding are still individual), succession by inheritance, leader-specific traits/culture, wilting visible in shadows, spring blossoms, tribe-coloured clothing.
+
 ## Temporal upscaler and frame generation (`VulkanTemporal.cpp`, `taau.comp`, `framegen.comp`)
 
 Own implementation (not AMD's FSR 2/3): the official FidelityFX SDK builds with MSVC/`.bat` scripts, has HLSL shaders that
@@ -1356,7 +1371,8 @@ source of truth for the hex constants at the top of `MainMenu.cpp`.
 - [x] Stage 8: seasonal ground (autumn colour, snow), work and animal sounds (see "Stage 8")
 - [x] Stage 9: tribes, banners, raids and defence (see "Stage 9")
 - [x] Stage 10: trade, gifts, alliances (see "Stage 10")
-- [ ] Next: tree seasons, nocturnal species, migration/hibernation, cross-tribe mating, tribe leaders
+- [x] Stage 11: seasonal leaves, leaders, mixed marriages (see "Stage 11")
+- [ ] Next: nocturnal species, migration/hibernation, leader-led camps/war parties, spring blossoms
 - [ ] More powers (fire, rain, disasters, food, smite individuals), undo
 - [x] Sound: procedural synth + miniaudio (see "Sound")
 - [x] Day/night cycle (see "Stage 4"; night ambience sound still missing)

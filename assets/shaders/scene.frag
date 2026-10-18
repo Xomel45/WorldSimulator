@@ -37,6 +37,11 @@ void main() {
     if (matIs(fragColor.a, MAT_TERRAIN))        albedo = terrainMaterial(fragPos, N, dist, fragColor.rg, lights.fogParams.z, lights.fogParams.w);
     else if (water)                              albedo = waterMaterial(fragPos, N, V, dist, fresnel);
     else if (matIs(fragColor.a, MAT_CREATURE))   albedo = creatureMaterial(albedo, fragPos);
+    else if (matIs(fragColor.a, MAT_LEAF)) {
+        float bare;
+        albedo = leafMaterial(albedo, fragPos, lights.shadowParams.w, bare);
+        if (bare > 0.0 && wsimVNoise(fragPos * 2.6 + 3.0) < bare * 0.8) discard;   // зимой листва редеет
+    }
 
     vec3 lit = shade(fragPos, N, V, albedo, 1.0);
 

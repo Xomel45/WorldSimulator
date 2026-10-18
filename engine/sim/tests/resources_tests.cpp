@@ -843,6 +843,87 @@ int main() {
         WSIM_CHECK(allies.allied(1, 2) && allies.stats().alliancesFormed == 1);
     }
 
+    // ── Этап 11: вожди, смешанные браки ──
+    {
+        Terrain t(World::kWorldHalfSize, 11);
+        World w(11);
+        w.settleOnLand(t);
+        w.formTribes(t);
+        for (int i = 0; i < 60 * 7; ++i) { w.tick(kDt, &t); (void)w.takeDirty(); }
+        for (int tr = 1; tr <= 3; ++tr) {
+            const std::uint64_t lid = w.leaderId(tr);
+            WSIM_CHECK(lid != 0);
+            bool member = false;
+            for (const Inhabitant& in : w.population()) member |= in.creature.id == lid && in.creature.tribe == tr && in.creature.alive;
+            WSIM_CHECK(member);
+        }
+        // Вождь пропал -- в течение выборного слота (5 с) избирается другой из того же племени.
+        const std::uint64_t old1 = w.leaderId(1);
+        WorldState st = w.exportState();
+        std::erase_if(st.population, [&](const Inhabitant& in) { return in.creature.id == old1; });
+        WSIM_CHECK(w.importState(st));
+        for (int i = 0; i < 60 * 6; ++i) w.tick(kDt, &t);
+        WSIM_CHECK(w.leaderId(1) != 0 && w.leaderId(1) != old1);
+
+        // Соплеменники подтягиваются к вождю, когда ушли далеко.
+        World f = lone(81, {0.0f, 0.0f}, 0);
+        WorldState fs = f.exportState();
+        Inhabitant leader = fs.population[0], follower = fs.population[0];
+        leader.creature.id += 900;
+        leader.creature.tribe = 1;
+        leader.creature.position = {0.0f, 0.0f, 0.0f};
+        follower.creature.tribe = 1;
+        follower.creature.position = {60.0f, 0.0f, 0.0f};
+        follower.creature.homePosition = follower.creature.position;
+        follower.creature.genome.setTrait(Genome::kSociability, 1.0f);
+        fs.population = {leader, follower};
+        fs.nextId = leader.creature.id + 50;
+        fs.leaders[1] = leader.creature.id;
+        WSIM_CHECK(f.importState(fs));
+        float minD = 1e9f;
+        for (int i = 0; i < 60 * 90; ++i) {
+            f.tick(kDt, nullptr);
+            if (i % 300 == 299) feedAll(f);
+            minD = std::min(minD, std::fabs(f.population()[1].creature.position.x - f.population()[0].creature.position.x));
+        }
+        WSIM_CHECK(minD < 30.0f);
+
+        // Браки: дружественные племена обзаводятся общими детьми, враждебные -- нет.
+        auto marriage = [&](float rel) {
+            World m = lone(82, {0.0f, 0.0f}, 0);
+            WorldState ms = m.exportState();
+            Inhabitant a2 = ms.population[0], b2 = ms.population[0];
+            b2.creature.id += 33;
+            a2.creature.position = {0.0f, 0.0f, 0.0f};
+            b2.creature.position = {2.0f, 0.0f, 0.0f};
+            a2.creature.tribe = 1;
+            b2.creature.tribe = 2;
+            for (Inhabitant* in : {&a2, &b2}) {
+                in->creature.needs.libido = 0.9f;
+                in->creature.needs.hunger = 0.15f;
+                in->creature.needs.energy = 0.95f;
+                in->creature.age = in->creature.lifespan() * 0.3f;
+                in->creature.genome.setTrait(Genome::kFertility, 1.0f);
+            }
+            ms.population = {a2, b2};
+            ms.nextId = b2.creature.id + 50;
+            ms.relations[1 * 4 + 2] = ms.relations[2 * 4 + 1] = rel;
+            WSIM_CHECK(m.importState(ms));
+            for (int i = 0; i < 60 * 40; ++i) { m.tick(kDt, nullptr); if (i % 300 == 299) feedAll(m); }
+            return m;
+        };
+        World friendly = marriage(0.3f), hostile = marriage(-0.5f);
+        WSIM_CHECK(friendly.stats().births >= 1 && friendly.stats().mixedBirths >= 1 && friendly.relation(1, 2) > 0.3f);
+        WSIM_CHECK(hostile.stats().births == 0);
+
+        // Сохранение: вожди.
+        PhysicsWorld physics;
+        SaveGame back;
+        std::string err;
+        WSIM_CHECK(parseSave(serializeSave(captureSave("l", 0, 0.0f, t, w, physics, CameraState{})), back, err));
+        for (int tr = 1; tr <= 3; ++tr) WSIM_CHECK(back.world.leaders[static_cast<std::size_t>(tr)] == w.leaderId(tr));
+    }
+
     std::puts("resources_tests: OK");
     return 0;
 }

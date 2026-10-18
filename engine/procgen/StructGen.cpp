@@ -123,6 +123,17 @@ MeshData buildBanner(int tribe) {
     return m;
 }
 
+MeshData buildCrown() {
+    MeshData m;
+    const glm::vec3 gold{0.95f, 0.78f, 0.15f};
+    addBox(m, {-0.2f, 0.0f, -0.2f}, {0.2f, 0.09f, 0.2f}, gold);                      // обруч
+    for (int i = 0; i < 4; ++i) {                                                     // зубцы по углам
+        const float x = (i % 2 ? 0.17f : -0.17f), z = (i / 2 ? 0.17f : -0.17f);
+        addBox(m, {x - 0.04f, 0.09f, z - 0.04f}, {x + 0.04f, 0.24f, z + 0.04f}, tint(gold, 1.05f));
+    }
+    return m;
+}
+
 MeshData buildBucket() {
     MeshData m;
     addBox(m, {-0.13f, 0.0f, -0.13f}, {0.13f, 0.28f, 0.13f}, kWood);

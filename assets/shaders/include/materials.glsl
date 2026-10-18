@@ -7,6 +7,7 @@
 const float MAT_TERRAIN  = 0.25;
 const float MAT_WATER    = 0.50;
 const float MAT_CREATURE = 0.75;
+const float MAT_LEAF     = 0.85;   // листва лиственных деревьев (сезонная окраска)
 
 bool matIs(float a, float code) { return abs(a - code) < 0.05; }
 
@@ -118,4 +119,21 @@ vec3 waterMaterial(vec3 P, inout vec3 N, vec3 V, float dist, out float fresnel) 
 vec3 creatureMaterial(vec3 base, vec3 P) {
     float spots = wsimVNoise(P * 5.0 + 9.0);
     return base * (0.88 + 0.24 * spots);
+}
+
+// Расстояние на круге года (фаза 0..1).
+float wrapDist(float a, float b) { float d = abs(a - b); return min(d, 1.0 - d); }
+
+// Листва по времени года: ТРЕУГОЛЬНЫЕ профили по фазе года. Осенняя окраска -- пик 0.62, полуширина 0.20 (линейный подъём и спад):
+// зелёный -> жёлтый (до половины подъёма) -> красно-бурый (пик). Увядание -- пик 0.85, полуширина 0.15: листья буреют, часть опадает
+// (bare -- доля отбрасываемых пятен, шейдер их discard-ит). Всё плавно и постепенно, без скачков.
+vec3 leafMaterial(vec3 base, vec3 P, float phase, out float bare) {
+    vec3 c      = creatureMaterial(base, P);
+    float spots = wsimVNoise(P * 5.0 + 9.0);
+    float a     = clamp(1.0 - wrapDist(phase, 0.62) / 0.20, 0.0, 1.0);
+    vec3 yellow = vec3(0.80, 0.62, 0.10) * (0.8 + 0.4 * spots);
+    vec3 red    = vec3(0.64, 0.20, 0.07) * (0.8 + 0.4 * spots);
+    c = a < 0.5 ? mix(c, yellow, a * 2.0) : mix(yellow, red, (a - 0.5) * 2.0);
+    bare = clamp(1.0 - wrapDist(phase, 0.85) / 0.15, 0.0, 1.0);
+    return mix(c, vec3(0.30, 0.22, 0.14) * (0.8 + 0.4 * spots), bare * 0.75);
 }

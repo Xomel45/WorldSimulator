@@ -24,6 +24,7 @@ struct MeshData {
 
 inline constexpr float kPlainMaterial = 1.0f;
 inline constexpr float kMottled       = 0.75f;
+inline constexpr float kLeaf          = 0.85f;   // листья лиственных деревьев: шейдер красит их по времени года (осень, бурые и редкие зимой)
 
 // Грани бокса, которые можно не строить (маска `skip` у addBox): те, что прижаты к другой геометрии или
 // ушли под землю и снаружи не видны.

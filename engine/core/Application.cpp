@@ -263,6 +263,7 @@ Application::Application(AppConfig config)
         m_bucketMesh    = make(procgen::buildBucket());
         m_hutMesh       = make(procgen::buildHut());
         m_fireMesh      = make(procgen::buildCampfire());
+        m_crownMesh     = make(procgen::buildCrown());
         for (int t = 1; t <= 3; ++t) m_bannerMeshes[static_cast<std::size_t>(t - 1)] = make(procgen::buildBanner(t));
         for (int n = 1; n <= 4; ++n) m_logMeshes[static_cast<std::size_t>(n - 1)] = make(procgen::buildLogs(n));
     }
@@ -446,7 +447,7 @@ Application::~Application() {
         for (auto& mesh : m_animalMeshes)
             if (mesh) mesh->destroy(m_context->device());
         for (auto& mesh : m_houseMeshes) mesh->destroy(m_context->device());
-        for (auto* mesh : {&m_plankMesh, &m_barricadeMesh, &m_trapMesh, &m_spearMesh, &m_shieldMesh, &m_stockMesh, &m_bucketMesh, &m_hutMesh, &m_fireMesh})
+        for (auto* mesh : {&m_plankMesh, &m_barricadeMesh, &m_trapMesh, &m_spearMesh, &m_shieldMesh, &m_stockMesh, &m_bucketMesh, &m_hutMesh, &m_fireMesh, &m_crownMesh})
             if (*mesh) (*mesh)->destroy(m_context->device());
         for (auto& mesh : m_logMeshes)
             if (mesh) mesh->destroy(m_context->device());
@@ -663,6 +664,7 @@ void Application::update(float dt) {
             if (c.hasSpear()) gear(m_spearMesh, {0.55f, 0.5f, 0.0f}, 0.0f);
             if (c.hasShield()) gear(m_shieldMesh, {-0.55f, 0.1f, 0.15f}, 0.0f);
             if (c.hasBucket) gear(m_bucketMesh, {0.4f, 0.0f, 0.55f}, 0.0f);
+            if (c.tribe >= 1 && c.tribe <= 3 && m_world.leaderId(c.tribe) == c.id) gear(m_crownMesh, {0.0f, 1.0f, 0.1f}, 0.0f);   // венец вождя
             if (c.tribe >= 1 && c.tribe <= 3) gear(m_bannerMeshes[static_cast<std::size_t>(c.tribe - 1)], {0.0f, 0.5f, -0.45f}, 0.0f);   // знамя племени
             if (c.wood >= 1.0f) gear(m_logMeshes[static_cast<std::size_t>(std::clamp(static_cast<int>(c.wood), 1, 4) - 1)], {0.0f, 0.95f, -0.35f}, 0.0f);
         }
@@ -912,6 +914,7 @@ void Application::render() {
             // Снег ложится зимой и тает к весне (чуть отстаёт от холода); осень красит землю.
             m_lights.fogParams.z = playing ? std::clamp((cold - 0.3f) / 0.5f, 0.0f, 1.0f) : 0.0f;
             m_lights.fogParams.w = autumn;
+            m_leafPhase = playing ? World::yearPhase(tm) : 0.3f;   // в меню -- лето
         }
         {
             const glm::vec3 c = sky / (sky + glm::vec3(1.0f));
@@ -964,7 +967,7 @@ void Application::render() {
         } else {
             m_lights.spotColor = {};
         }
-        m_lights.shadowParams = {shadowsOn ? 1.0f : 0.0f, 1.0f / static_cast<float>(VulkanContext::kShadowMapSize), 1.0f, 0.0f};
+        m_lights.shadowParams = {shadowsOn ? 1.0f : 0.0f, 1.0f / static_cast<float>(VulkanContext::kShadowMapSize), 1.0f, m_leafPhase};
         m_context->updateLights(m_lights);
 
         const Frustum frustum = Frustum::fromMatrix(camData.proj * camData.view);
@@ -1459,7 +1462,7 @@ void Application::drawInspector(const CameraData& cam) {
     dl->AddText(font, fs, {x0 + pad, y}, style::rgba(style::kDim), buf);
     y += fs * 1.35f;
     {   // Ресурсы и орудия.
-        std::string kit = std::string(cr->tribe ? (cr->tribe == 1 ? "красное племя · " : (cr->tribe == 2 ? "синее племя · " : "жёлтое племя · ")) : "") + roleName(cr->role()) + " · брёвен " + std::to_string(static_cast<int>(cr->wood)) + " · жажда " + std::to_string(static_cast<int>(cr->thirst * 100.0f)) + "%";
+        std::string kit = std::string(cr->tribe && m_world.leaderId(cr->tribe) == cr->id ? "вождь · " : "") + std::string(cr->tribe ? (cr->tribe == 1 ? "красное племя · " : (cr->tribe == 2 ? "синее племя · " : "жёлтое племя · ")) : "") + roleName(cr->role()) + " · брёвен " + std::to_string(static_cast<int>(cr->wood)) + " · жажда " + std::to_string(static_cast<int>(cr->thirst * 100.0f)) + "%";
         if (cr->hasBucket) kit += " · ведро " + std::to_string(static_cast<int>(cr->water));
         if (cr->hasSpear()) kit += " · копьё";
         if (cr->hasShield()) kit += " · щит";
@@ -1739,6 +1742,8 @@ void Application::renderDebugUI() {
         ImGui::Text("Tribes %zu/%zu/%zu, relations 1-2 %.2f, 1-3 %.2f, 2-3 %.2f | raids %llu (logs %llu), strikes %llu, killed in conflicts %llu", m_world.tribeCount(1), m_world.tribeCount(2), m_world.tribeCount(3),
                     m_world.relation(1, 2), m_world.relation(1, 3), m_world.relation(2, 3), static_cast<unsigned long long>(m_world.stats().raids), static_cast<unsigned long long>(m_world.stats().logsStolen),
                     static_cast<unsigned long long>(m_world.stats().strikes), static_cast<unsigned long long>(m_world.stats().deathsConflict));
+        ImGui::Text("Leaders #%llu / #%llu / #%llu (changes %llu), mixed-tribe births %llu", static_cast<unsigned long long>(m_world.leaderId(1)), static_cast<unsigned long long>(m_world.leaderId(2)),
+                    static_cast<unsigned long long>(m_world.leaderId(3)), static_cast<unsigned long long>(m_world.stats().leaderChanges), static_cast<unsigned long long>(m_world.stats().mixedBirths));
         ImGui::Text("Diplomacy: allies 1-2 %d, 1-3 %d, 2-3 %d | gifts %llu logs, traded %llu logs, alliances formed %llu / broken %llu", m_world.allied(1, 2) ? 1 : 0, m_world.allied(1, 3) ? 1 : 0, m_world.allied(2, 3) ? 1 : 0,
                     static_cast<unsigned long long>(m_world.stats().giftLogs), static_cast<unsigned long long>(m_world.stats().tradeLogs),
                     static_cast<unsigned long long>(m_world.stats().alliancesFormed), static_cast<unsigned long long>(m_world.stats().alliancesBroken));
