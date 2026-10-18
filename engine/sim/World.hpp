@@ -6,6 +6,7 @@
 #include "sim/Structures.hpp"
 #include "sim/Terrain.hpp"
 
+#include <array>
 #include <cstddef>
 #include <string>
 #include <cstdint>
@@ -76,11 +77,11 @@ struct WorldStats {
     std::uint64_t deathsPredation = 0;  // существа, растерзанные хищниками
     std::uint64_t treesFelled = 0, spearsMade = 0, shieldsMade = 0, spearHits = 0, shieldBlocks = 0, skillsLearned = 0;
     std::uint64_t planksLaid = 0, barricadesBuilt = 0, trapsSet = 0;
-    std::uint64_t meatKills = 0, bucketsMade = 0, bushesWatered = 0, stockpilesBuilt = 0, hutsBuilt = 0, firesBuilt = 0, firesStoked = 0, bitesBlockedByWalls = 0, coldTicks = 0, logsStored = 0, logsTaken = 0, deathsThirst = 0;
+    std::uint64_t meatKills = 0, bucketsMade = 0, bushesWatered = 0, stockpilesBuilt = 0, hutsBuilt = 0, raids = 0, logsStolen = 0, strikes = 0, deathsConflict = 0, firesBuilt = 0, firesStoked = 0, bitesBlockedByWalls = 0, coldTicks = 0, logsStored = 0, logsTaken = 0, deathsThirst = 0;
 };
 
 // События мира для звука и эффектов (не состояние: очищаются takeEvents(), в сохранения не входят).
-enum class EventType : std::uint8_t { TreeFelled, Built, Stab, Bitten, Plank };
+enum class EventType : std::uint8_t { TreeFelled, Built, Stab, Bitten, Plank, Raid, Strike };
 struct WorldEvent {
     EventType type = EventType::Built;
     glm::vec3 pos{};
@@ -97,6 +98,7 @@ struct WorldState {
     std::vector<std::pair<std::uint64_t, float>>         pendingGrief;  // по возрастанию id
     Fauna::State                                         fauna;         // дикие животные
     std::vector<Structure>                               structures;    // баррикады и ловушки
+    std::array<float, 16>                                relations{};   // отношения племён [a*4+b], -1 вражда .. 1 дружба
     // Потоковая подгрузка кустов: мировое время, материализованные ячейки и записи о спящих (старые сохранения -- пусто).
     float                                                streamTimer = 100.0f;   // таймер подгрузки кустов (для продолжения бит в бит)
     bool                                                 streaming = false;
@@ -189,6 +191,15 @@ public:
     bool placeStructure(const Terrain* terrain, StructureKind kind, float x, float z, float yaw);
     [[nodiscard]] std::span<const Structure> structures() const noexcept { return m_structures; }
 
+    // ── Племена ──
+    static constexpr int kMaxTribes = 4;   // индексы 1..3 -- племена, 0 -- ничьи
+    // Делит существ на `count` лагерей (по кругу), расселяет их кучками на суше порознь, у каждого лагеря ставит склад с запасом
+    // (хозяин -- племя) и задаёт случайные отношения между племенами (от вражды до дружбы). Вызывается при создании мира.
+    void formTribes(const Terrain& terrain, int count = 3);
+    [[nodiscard]] float relation(int a, int b) const noexcept { return (a > 0 && b > 0 && a < kMaxTribes && b < kMaxTribes) ? m_relations[a][b] : 0.0f; }
+    void setRelation(int a, int b, float v) noexcept;
+    [[nodiscard]] std::size_t tribeCount(int tribe) const noexcept;
+
     // ── Дикие животные (sim/Fauna): травоядные и хищники по биомам ──
     // Заселяет игровую область заново (при создании мира и в "Новом мире"); ГСЧ мировой.
     void growWildlife(const Terrain& terrain);
@@ -221,6 +232,7 @@ private:
     std::vector<WorldEvent>    m_events;
     void pushEvent(EventType t, glm::vec3 pos) { if (m_events.size() < 64) m_events.push_back({t, pos}); }
     std::vector<Structure>     m_structures;
+    float                      m_relations[kMaxTribes][kMaxTribes]{};
 
     // Потоковая подгрузка кустов (см. growBerryBushes/streamBushes в World.cpp).
     bool                          m_streaming = false;

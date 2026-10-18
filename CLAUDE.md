@@ -908,6 +908,24 @@ Creatures now cut trees down, carry logs, craft tools and fight predators with t
 - **Animal voices** (`SoundDirector::animalVoices`): on the edge into `Hunt` a predator growls (pitch lower for larger species), on the edge into `Flee` a herbivore gives an alarm call; per-animal cooldown 8-16 s, budget 1.5/s, same hearing range.
 - Not done: tree colours/bare winter trees, wet ground in rain, footsteps, creature death/birth sounds, distinct species voices (the three growl/alarm timbres are shared), ice on water, snow on roofs/structures.
 
+### Stage 9: tribes (plus a population rebalance)
+
+- **Rebalance first**: bush patch chance `kBaseChance` 0.26 → **0.36** (10 seeds × 20 sim-min: mean 37 alive, end 63, no extinctions, births 1012; before 32/36).
+- **Tribes** (`Creature::tribe` 1..3, 0 = none; `World::kMaxTribes = 4`, `formTribes(terrain, count = 3)`, called at world start and in "Новый мир"): the initial creatures are dealt round-robin into three camps placed far apart on land (farthest of 60 random candidates),
+  settled in ~10-unit clusters with home at the camp; each camp gets a **stockpile with 12 logs whose `owner` is the tribe**; relations between tribes (`World::relation/setRelation`, symmetric, -1 enmity..1 friendship) start random in [-0.6, 0.4] and slowly fade towards 0
+  (0.03%/s). Children inherit the **mother's tribe**; god-spawned creatures stay tribe 0. Saved (**v12**: creature byte + `STRB` relation matrix; stockpile owner rides in `STR3`).
+- **Cohesion**: same-tribe creatures count as *familiar* in crowding/alarm senses (so company soothes, strangers stay wary). A stockpile only serves its own tribe (tribe 0 uses unowned piles); a built pile gets its builder's tribe. Measured: tribes cluster naturally and the mean population rose
+  (≈ 42 vs ≈ 37 without; noisy).
+- **Raiding** (`Behavior::Raid`, "Грабит чужой склад"): a bold (> 0.45) creature that is armed or a Hunter, healthy, calm, not starving, with room to carry, and a **hostile** tribe's stockpile (relation < -0.15, stock ≥ 1) within **110** units walks there and takes up to 2 logs;
+  that costs 0.15 relation (`raids`, `logsStolen`). **Defence** (`Behavior::Defend`, "Гонит чужака"): near their own stockpile (< 25) a creature chases a foreign-tribe creature within 12 whose tribe is not friendly (relation ≤ -0.1) and strikes within 1.8 (cooldown 1 s): 0.12 damage
+  (×2 with a spear, ×0.4 vs a shield that loses 0.2), the victim's fear 0.75, relation -0.04 per blow; death in conflict is `deathCause 7` (`deathsConflict`). Both sides are tested (including "friendly tribe = no strikes").
+  Measured (10 seeds × 20 sim-min): **raids are rare (0-5 per run), skirmishes common on hostile pairs (up to ~100 blows, ≤ 14 deaths)** — the starter stock is usually consumed by its own tribe before anyone marches 60-110 units.
+- **Visible/audible**: coloured banner (red, blue, yellow; `StructGen::buildBanner`) on every tribe member's back and on a tall pole at each tribe's stockpile; inspector shows "<colour> племя · <role>"; debug window shows tribe sizes, relations, raids/strikes/conflict deaths; raid = whoosh, blow = thud (`EventType::Raid/Strike`).
+  `WSIM_CAM_TRIBE=1..3` frames a camp.
+- `ecology_tests` now run with `formTribes` (as in the game).
+- Not done: **trade and alliances** (relations never rise through contact except the slow fade), migration/founding of new camps, tribe-specific culture/knowledge boundaries (skills spread across tribes through proximity), leaders, war parties, tribe extinction handling (a tribe with 0 members just stays on the map),
+  banners in the menu colony, tribe colours on the creature body.
+
 ## Temporal upscaler and frame generation (`VulkanTemporal.cpp`, `taau.comp`, `framegen.comp`)
 
 Own implementation (not AMD's FSR 2/3): the official FidelityFX SDK builds with MSVC/`.bat` scripts, has HLSL shaders that
@@ -1325,7 +1343,8 @@ source of truth for the hex constants at the top of `MainMenu.cpp`.
 - [x] Stage 6: ecology rebalance, night/fire ambience (see "Stage 6")
 - [x] Stage 7: seasons, weather, night predators, ecology regression test (see "Stage 7")
 - [x] Stage 8: seasonal ground (autumn colour, snow), work and animal sounds (see "Stage 8")
-- [ ] Next: tribes (trade, rivalry), tree seasons, nocturnal species, migration/hibernation
+- [x] Stage 9: tribes, banners, raids and defence (see "Stage 9")
+- [ ] Next: trade/alliances, camp founding, tree seasons, nocturnal species, migration/hibernation
 - [ ] More powers (fire, rain, disasters, food, smite individuals), undo
 - [x] Sound: procedural synth + miniaudio (see "Sound")
 - [x] Day/night cycle (see "Stage 4"; night ambience sound still missing)

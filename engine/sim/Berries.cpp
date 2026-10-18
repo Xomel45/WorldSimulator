@@ -99,7 +99,7 @@ float cellUnit(std::uint32_t seed, std::int32_t cx, std::int32_t cz, std::uint64
 }  // namespace
 
 std::vector<BushSpec> proceduralBushes(const Terrain& terrain, std::int32_t cx, std::int32_t cz) {
-    constexpr float kPatchRadius = 3.5f, kBaseChance = 0.26f;
+    constexpr float kPatchRadius = 3.5f, kBaseChance = 0.36f;
     const std::uint32_t seed = terrain.seed();
     std::vector<BushSpec> out;
 

@@ -113,6 +113,16 @@ MeshData buildCampfire() {
     return m;
 }
 
+MeshData buildBanner(int tribe) {
+    static const glm::vec3 kColors[] = {{0.55f, 0.55f, 0.55f}, {0.86f, 0.18f, 0.16f}, {0.16f, 0.40f, 0.92f}, {0.96f, 0.80f, 0.16f}};
+    const glm::vec3 col = kColors[std::clamp(tribe, 0, 3)];
+    MeshData m;
+    addBox(m, {-0.03f, 0.0f, -0.03f}, {0.03f, 1.25f, 0.03f}, kDarkWood);
+    addBox(m, {0.03f, 0.78f, -0.012f}, {0.5f, 1.2f, 0.012f}, col);               // полотнище
+    addBox(m, {0.03f, 0.78f, -0.014f}, {0.5f, 0.84f, 0.014f}, tint(col, 0.6f));  // кайма
+    return m;
+}
+
 MeshData buildBucket() {
     MeshData m;
     addBox(m, {-0.13f, 0.0f, -0.13f}, {0.13f, 0.28f, 0.13f}, kWood);

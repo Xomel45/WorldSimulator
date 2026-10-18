@@ -19,7 +19,7 @@ inline constexpr float kNoTarget       = 1.0e9f; // "цели нет" в пол�
 
 // Чем занято существо. Выбирается слоем поведения (Behavior.cpp) из потребностей, ощущений, черт
 // и выходов мозга; видно в инспекторе и нужно для озвучки/отладки.
-enum class Behavior : std::uint8_t { Wander, SeekFood, Eat, Rest, Flee, SeekMate, Socialize, GoHome, Sick, Sabotage, Chop, Craft, Build, Drink, Haul, Hunt, Sleep, Count };
+enum class Behavior : std::uint8_t { Wander, SeekFood, Eat, Rest, Flee, SeekMate, Socialize, GoHome, Sick, Sabotage, Chop, Craft, Build, Drink, Haul, Hunt, Sleep, Raid, Defend, Count };
 
 // Умения (маска Creature::skills). Рубить деревья умеют все (врождённо); изготовление орудий -- знание: открывается в опасности или
 // от случая и передаётся соседям и потомству по наблюдению (World::tick), как вкус ягод -- но у знания нет "забывания".
@@ -110,6 +110,9 @@ struct SenseInputs {
     float     cold = 0.0f;                                   // 0..1 зимний холод здесь (у костра/хижины ослаблен); только в мире с рельефом
     float     rain = 0.0f;                                   // 0..1 сила дождя (пьёт на ходу)
     float     night = 0.0f;                                  // 0 день .. 1 ночь (только в мире с рельефом: тесты без рельефа не спят)
+    // Племена: чужой склад во враждебном племени (куда идти грабить) и чужак рядом со своим лагерем (кого гнать).
+    float     rivalStockDist = kNoTarget;  glm::vec3 rivalStockPos{};
+    float     intruderDist = kNoTarget;    glm::vec3 intruderPos{};  std::uint64_t intruderId = 0;
     float     hutDist = kNoTarget;    glm::vec3 hutPos{};   // подходящая хижина (своя/семьи ближе чужих)
     float     fireDist = kNoTarget;   glm::vec3 firePos{};  // ближайший горящий костёр
 };
@@ -177,7 +180,9 @@ public:
     // huntRequest/stockRequest (1 сдать, 2 взять) исполняет мир; waterKnown/waterX/Z/waterSearch -- кэш поиска берега.
     float        thirst = 0.2f, water = 0.0f, huntTimer = 0.0f, waterX = 0.0f, waterZ = 0.0f, waterSearch = 0.0f;
     bool         hasBucket = false, waterKnown = false;
-    bool         hutNear = false;   // видит хижину (решает слой поведения каждый тик; нужно woodGoal)
+    bool         hutNear = false;
+    std::uint8_t tribe = 0;         // племя 1..3 (0 -- ничьё): наследуется от матери; свои-по-племени считаются знакомыми
+    std::uint8_t raidRequest = 0, strikeRequest = 0;   // 1 -- у чужого склада: взять брёвна / рядом с чужаком: ударить (исполняет мир)   // видит хижину (решает слой поведения каждый тик; нужно woodGoal)
     std::uint8_t huntRequest = 0, stockRequest = 0;
     // Стройка (мост/баррикада/ловушка): buildRequest -- 1 мост, 2 баррикада, 3 ловушка, ставится на ТОТ тик, когда работа закончена
     // (мир исполняет); buildProgress -- работа идёт; buildTimer -- пауза до следующей.

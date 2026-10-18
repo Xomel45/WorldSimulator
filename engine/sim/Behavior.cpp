@@ -153,6 +153,11 @@ Decision decide(Creature& c, const SenseInputs& s, const BrainOutputs& raw, floa
     const bool wasSleeping = c.behavior == Behavior::Sleep;
     if (s.night > 0.5f && n.fear < 0.3f && n.hunger < (wasSleeping ? 0.85f : 0.65f))
         S(Behavior::Sleep) = s.night * (1.3f + 1.4f * (1.0f - n.energy));
+    // Племена. Защита: чужак у своего лагеря -- гонят его (смелые охотнее); грабёж: смелый вооружённый идёт к складу враждебного племени.
+    if (c.tribe != 0 && s.intruderDist < kNoTarget && c.health > 0.5f && n.fear < 0.5f)
+        S(Behavior::Defend) = 2.4f * (0.5f + c.boldness());
+    if (c.tribe != 0 && s.rivalStockDist < kNoTarget && (c.hasSpear() || c.role() == Role::Hunter) && c.boldness() > 0.45f && c.health > 0.7f && n.fear < 0.3f && n.hunger < 0.8f && c.wood < kMaxWood)
+        S(Behavior::Raid) = 1.2f + 0.8f * c.boldness() + (c.wantsWood() ? 0.6f : 0.0f);
     // Жажда: идёт к берегу, пока не напьётся (и набирает ведро); не знает, где вода, -- ищет её.
     const bool waterSeen = s.waterDist < kNoTarget;
     if (s.terrain && waterSeen && (c.thirst > 0.65f || (wasDrinking && (c.thirst > 0.08f || (c.hasBucket && c.water < 2.9f))) || (c.hasBucket && c.water < 1.5f && c.thirst > 0.25f)))
@@ -301,6 +306,16 @@ Decision decide(Creature& c, const SenseInputs& s, const BrainOutputs& raw, floa
                 else { speed = 0.0f; d.rest = true; d.sleep = true; }
             } else if (s.fireDist < kNoTarget && s.fireDist > 3.5f) { dir = dirTo(c.position, s.firePos); speed = 0.6f * std::clamp(s.fireDist / 6.0f, 0.4f, 1.0f); }
             else { speed = 0.0f; d.rest = true; d.sleep = true; }
+            break;
+        case Behavior::Raid:
+            dir = dirTo(c.position, s.rivalStockPos);
+            if (s.rivalStockDist <= 2.4f) { speed = 0.0f; d.raid = true; }
+            else speed = 0.8f * std::clamp(s.rivalStockDist / 5.0f, 0.4f, 1.0f);
+            break;
+        case Behavior::Defend:
+            dir = dirTo(c.position, s.intruderPos);
+            if (s.intruderDist <= 1.8f) { speed = 0.3f; d.strike = true; }
+            else speed = 1.0f;
             break;
         case Behavior::Drink:
             dir = dirTo(c.position, s.waterPos);

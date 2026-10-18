@@ -123,6 +123,8 @@ const char* behaviorName(Behavior b) noexcept {
         case Behavior::Haul:      return "Носит брёвна";
         case Behavior::Hunt:      return "Охотится";
         case Behavior::Sleep:     return "Спит";
+        case Behavior::Raid:      return "Грабит чужой склад";
+        case Behavior::Defend:    return "Гонит чужака";
         case Behavior::Count:     break;
     }
     return "?";
@@ -215,7 +217,7 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
             dec.eat   = dec.pick = dec.serve = dec.chop = false;
             dec.craft = 0;
             dec.build = 0;
-            dec.drink = dec.hunt = dec.sleep = false;
+            dec.drink = dec.hunt = dec.sleep = dec.raid = dec.strike = false;
             dec.stock = 0;
             dec.alarm = std::max(dec.alarm, 0.8f);
             behavior  = Behavior::Flee;
@@ -241,6 +243,8 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
         buildProgress = 0.0f;
     }
     huntRequest  = dec.hunt ? 1 : 0;
+    raidRequest  = dec.raid ? 1 : 0;
+    strikeRequest = dec.strike ? 1 : 0;
     stockRequest = static_cast<std::uint8_t>(dec.stock);
     huntTimer    = std::max(0.0f, huntTimer - dt);
     if (dec.sleep) {                   // сон: обмен веществ втрое медленнее

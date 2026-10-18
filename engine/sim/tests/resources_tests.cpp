@@ -687,6 +687,101 @@ int main() {
         WSIM_CHECK(wolfHunger(1.0f) > wolfHunger(0.0f) + 0.02f);
     }
 
+    // ── Этап 9: племена ──
+    {
+        Terrain t(World::kWorldHalfSize, 11);
+        World w(11);
+        w.settleOnLand(t);
+        w.formTribes(t);
+        for (int tr = 1; tr <= 3; ++tr) WSIM_CHECK(w.tribeCount(tr) == World::kInitialPopulation / 3);
+        int piles = 0;
+        for (const Structure& st : w.structures())
+            if (st.kind == StructureKind::Stockpile) { ++piles; WSIM_CHECK(st.owner >= 1 && st.owner <= 3 && st.stock == 12.0f); }
+        WSIM_CHECK(piles == 3);
+        for (int a = 1; a <= 3; ++a)
+            for (int b = 1; b <= 3; ++b) { WSIM_CHECK(w.relation(a, b) == w.relation(b, a)); WSIM_CHECK(w.relation(a, b) >= -1.0f && w.relation(a, b) <= 1.0f); }
+        // Лагеря порознь: средний разброс внутри племени заметно меньше расстояния между центрами.
+        glm::vec2 centre[4]{};
+        int cnt[4]{};
+        for (const Inhabitant& in : w.population()) { centre[in.creature.tribe] += glm::vec2{in.creature.position.x, in.creature.position.z}; ++cnt[in.creature.tribe]; }
+        for (int tr = 1; tr <= 3; ++tr) centre[tr] /= static_cast<float>(cnt[tr]);
+        float spread = 0.0f;
+        for (const Inhabitant& in : w.population()) spread += glm::length(glm::vec2{in.creature.position.x, in.creature.position.z} - centre[in.creature.tribe]);
+        spread /= static_cast<float>(w.populationCount());
+        WSIM_CHECK(spread < 11.0f && glm::length(centre[1] - centre[2]) > spread * 2.0f);
+
+        // Потомки наследуют племя (минуты жизни: рождаются дети, ни у кого племя не пропадает).
+        for (int i = 0; i < 60 * 60 * 5; ++i) {
+            const glm::vec2 f{0.0f, 0.0f};
+            w.setFocus(std::span<const glm::vec2>(&f, 1));
+            w.tick(kDt, &t);
+            (void)w.takeDirty();
+        }
+        WSIM_CHECK(w.stats().births > 0);
+        for (const Inhabitant& in : w.population()) WSIM_CHECK(in.creature.tribe >= 1 && in.creature.tribe <= 3);
+
+        // Грабёж: смелый вооружённый чужак идёт к складу враждебного племени, берёт брёвна, отношения портятся.
+        {
+            glm::vec2 at{0, 0};
+            bool ok = false;
+            for (float z = -80; z <= 80 && !ok; z += 4)
+                for (float x = -80; x <= 40 && !ok; x += 4)
+                    if (t.heightAt(x, z) > 1.5f && t.heightAt(x + 20, z) > 1.5f && t.heightAt(x + 10, z) > 1.5f) { at = {x, z}; ok = true; }
+            WSIM_CHECK(ok);
+            World r = lone(61, {at.x, at.y}, kSkillSpear);
+            WorldState st = r.exportState();
+            Creature& c = st.population[0].creature;
+            c.genome.setTrait(Genome::kBoldness, 1.0f);
+            c.tribe = 1;
+            c.spearDur = 1.0f;
+            c.homePosition = c.position;
+            st.structures = {Structure{StructureKind::Stockpile, at.x + 20.0f, at.y, 0.0f, 1.0f, 5.0f, 2}};
+            st.relations[1 * 4 + 2] = st.relations[2 * 4 + 1] = -0.8f;
+            WSIM_CHECK(r.importState(st));
+            for (int i = 0; i < 60 * 40 && r.stats().raids == 0; ++i) { r.tick(kDt, &t); if (i % 300 == 299) feedAll(r); }
+            WSIM_CHECK(r.stats().raids >= 1 && r.stats().logsStolen >= 1);
+            WSIM_CHECK(r.relation(1, 2) < -0.8f && r.structures()[0].stock < 5.0f);
+
+            // Защита: свой у склада бьёт враждебного чужака рядом (щит смягчает); к своим племенам дружелюбным -- не трогает.
+            auto strikes = [&](float rel) {
+                World d = lone(62, {at.x, at.y}, kSkillSpear);
+                WorldState s2 = d.exportState();
+                Inhabitant guard = s2.population[0];
+                guard.creature.tribe = 2;
+                guard.creature.spearDur = 1.0f;
+                guard.creature.genome.setTrait(Genome::kBoldness, 1.0f);
+                guard.creature.position = {at.x, 0.0f, at.y};
+                guard.creature.homePosition = guard.creature.position;
+                Inhabitant outsider = guard;
+                outsider.creature.id = guard.creature.id + 500;
+                outsider.creature.tribe = 1;
+                outsider.creature.spearDur = 0.0f;
+                outsider.creature.position = {at.x + 4.0f, 0.0f, at.y};
+                s2.population = {guard, outsider};
+                s2.nextId = outsider.creature.id + 10;
+                s2.structures = {Structure{StructureKind::Stockpile, at.x + 1.0f, at.y, 0.0f, 1.0f, 3.0f, 2}};
+                s2.relations[1 * 4 + 2] = s2.relations[2 * 4 + 1] = rel;
+                WSIM_CHECK(d.importState(s2));
+                for (int i = 0; i < 60 * 15; ++i) { d.tick(kDt, &t); if (i % 300 == 299) feedAll(d); }
+                return d.stats().strikes;
+            };
+            WSIM_CHECK(strikes(-0.8f) >= 1);
+            WSIM_CHECK(strikes(0.8f) == 0);
+        }
+
+        // Сохранение: племя существа, отношения, хозяин склада.
+        PhysicsWorld physics;
+        SaveGame back;
+        std::string err;
+        WSIM_CHECK(parseSave(serializeSave(captureSave("t", 0, 0.0f, t, w, physics, CameraState{})), back, err));
+        WSIM_CHECK(back.world.population.size() == w.populationCount());
+        for (std::size_t i = 0; i < w.populationCount(); ++i) WSIM_CHECK(back.world.population[i].creature.tribe == w.population()[i].creature.tribe);
+        WSIM_CHECK(std::fabs(back.world.relations[1 * 4 + 2] - w.relation(1, 2)) < 1.0e-6f);
+        int owned = 0;
+        for (const Structure& st : back.world.structures) owned += st.kind == StructureKind::Stockpile && st.owner >= 1;
+        WSIM_CHECK(owned >= 3);
+    }
+
     std::puts("resources_tests: OK");
     return 0;
 }

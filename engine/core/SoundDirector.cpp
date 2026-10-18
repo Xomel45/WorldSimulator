@@ -139,6 +139,8 @@ void SoundDirector::worldEvents(const std::vector<WorldEvent>& events) {
             case EventType::Plank:      effect(SoundId::Knock, e.pos, 0.35f, 1.3f); break;
             case EventType::Stab:       effect(SoundId::Zap, e.pos, 0.25f, 1.6f); break;
             case EventType::Bitten:     effect(SoundId::Thud, e.pos, 0.5f, 1.4f); break;
+            case EventType::Raid:       effect(SoundId::Whoosh, e.pos, 0.5f, 1.1f); break;
+            case EventType::Strike:     effect(SoundId::Thud, e.pos, 0.4f, 1.8f); break;
         }
         ++played;
     }

@@ -175,6 +175,62 @@ float World::nightness(double time) noexcept {
     return t * t * (3.0f - 2.0f * t);
 }
 
+void World::setRelation(int a, int b, float v) noexcept {
+    if (a <= 0 || b <= 0 || a >= kMaxTribes || b >= kMaxTribes || a == b) return;
+    m_relations[a][b] = m_relations[b][a] = std::clamp(v, -1.0f, 1.0f);
+}
+
+std::size_t World::tribeCount(int tribe) const noexcept {
+    std::size_t n = 0;
+    for (const Inhabitant& in : m_population) n += in.creature.alive && in.creature.tribe == tribe;
+    return n;
+}
+
+void World::formTribes(const Terrain& terrain, int count) {
+    std::uniform_real_distribution<float> unit(0.0f, 1.0f);
+    count = std::clamp(count, 1, kMaxTribes - 1);
+    // Центры лагерей: сушa, как можно дальше друг от друга (лучший из 60 случайных кандидатов по расстоянию до уже выбранных).
+    const float reach = (m_streaming ? 90.0f : kWorldHalfSize - 20.0f);
+    std::vector<glm::vec2> centres;
+    for (int t = 0; t < count; ++t) {
+        glm::vec2 best{0.0f};
+        float bestScore = -1.0f;
+        for (int k = 0; k < 60; ++k) {
+            const glm::vec2 p{(unit(m_rng) * 2.0f - 1.0f) * reach, (unit(m_rng) * 2.0f - 1.0f) * reach};
+            if (terrain.heightAt(p.x, p.y) < 1.0f || terrain.heightAt(p.x + 8.0f, p.y) < 0.8f || terrain.heightAt(p.x - 8.0f, p.y) < 0.8f) continue;
+            float score = 1.0e6f;
+            for (const glm::vec2& c : centres) score = std::min(score, glm::length(p - c));
+            if (score > bestScore) { bestScore = score; best = p; }
+        }
+        centres.push_back(best);
+    }
+    m_structures.erase(std::remove_if(m_structures.begin(), m_structures.end(), [](const Structure& s) { return s.kind == StructureKind::Stockpile; }), m_structures.end());
+    for (std::size_t i = 0; i < m_population.size(); ++i) {
+        Creature& c = m_population[i].creature;
+        const int tribe = 1 + static_cast<int>(i % static_cast<std::size_t>(count));
+        const glm::vec2 centre = centres[static_cast<std::size_t>(tribe - 1)];
+        glm::vec2 p = centre;
+        for (int attempt = 0; attempt < 12; ++attempt) {
+            const float ang = 6.2831853f * unit(m_rng), r = 2.0f + 8.0f * std::sqrt(unit(m_rng));
+            const glm::vec2 q = centre + glm::vec2{std::cos(ang), std::sin(ang)} * r;
+            if (!terrain.isUnderwater(q.x, q.y)) { p = q; break; }
+        }
+        c.tribe = static_cast<std::uint8_t>(tribe);
+        c.position = {p.x, terrain.heightAt(p.x, p.y), p.y};
+        c.homePosition = c.position;
+        m_population[i].lastOutputs = {};
+    }
+    for (int t = 1; t <= count; ++t) {
+        const glm::vec2 c = centres[static_cast<std::size_t>(t - 1)];
+        if (placeStructure(&terrain, StructureKind::Stockpile, c.x + 1.5f, c.y + 1.5f, 0.0f)) {
+            m_structures.back().owner = static_cast<std::uint64_t>(t);
+            m_structures.back().stock = 12.0f;
+        }
+    }
+    for (int a = 1; a <= count; ++a)
+        for (int b = a + 1; b <= count; ++b) setRelation(a, b, -0.6f + 1.0f * unit(m_rng));   // от вражды до тёплых отношений
+}
+
 bool World::placeStructure(const Terrain* terrain, StructureKind kind, float x, float z, float yaw) {
     if (m_structures.size() >= kMaxStructures || !std::isfinite(x) || !std::isfinite(z)) return false;
     if (terrain && terrain->isUnderwater(x, z)) return false;
@@ -422,6 +478,7 @@ WorldState World::exportState() const {
     st.buildings  = m_buildings;
     st.fauna      = m_fauna.exportState();
     st.structures = m_structures;
+    for (int a = 0; a < kMaxTribes; ++a) for (int b = 0; b < kMaxTribes; ++b) st.relations[static_cast<std::size_t>(a * kMaxTribes + b)] = m_relations[a][b];
     st.streaming  = m_streaming;
     st.time       = m_time;
     st.streamTimer = m_streamTimer;
@@ -445,6 +502,7 @@ bool World::importState(const WorldState& st) {
     m_food       = st.food;
     m_buildings  = st.buildings;
     m_structures = st.structures;
+    for (int a = 0; a < kMaxTribes; ++a) for (int b = 0; b < kMaxTribes; ++b) { const float v = st.relations[static_cast<std::size_t>(a * kMaxTribes + b)]; m_relations[a][b] = std::isfinite(v) ? std::clamp(v, -1.0f, 1.0f) : 0.0f; }
     if (!m_fauna.importState(st.fauna)) return false;
     m_streaming = st.streaming;
     m_time      = std::isfinite(st.time) ? st.time : 0.0;
@@ -487,6 +545,8 @@ void World::tick(float dt, Terrain* mutableTerrain) {
     const Terrain* terrain = mutableTerrain;
     m_time += dt;
     if (terrain && m_streaming) streamBushes(*terrain, dt);
+    for (int a = 1; a < kMaxTribes; ++a)
+        for (int b = a + 1; b < kMaxTribes; ++b) setRelation(a, b, m_relations[a][b] * (1.0f - 0.0003f * dt));   // со временем обиды стихают
     // Костры сгорают (hp -- топливо); догоревшие убираем.
     const float coldNow = terrain ? coldness(m_time) : 0.0f, rainNow = terrain ? rain(m_time) : 0.0f;
     for (Structure& st : m_structures)
@@ -638,6 +698,7 @@ void World::tick(float dt, Terrain* mutableTerrain) {
             for (std::size_t k = 0; k < m_structures.size(); ++k) {
                 const Structure& st = m_structures[k];
                 if (st.kind != StructureKind::Stockpile) continue;
+                if (st.owner != 0 && st.owner != self.tribe) continue;   // чужой склад своим не считается
                 const float d = std::hypot(st.x - selfPos.x, st.z - selfPos.z);
                 if (d < best) { best = d; stockIdx = k; }
             }
@@ -645,6 +706,32 @@ void World::tick(float dt, Terrain* mutableTerrain) {
                 senses.stockDist = best;
                 senses.stockPos = {m_structures[stockIdx].x, selfPos.y, m_structures[stockIdx].z};
                 senses.stockAmount = m_structures[stockIdx].stock;
+            }
+        }
+        // Племена: склад враждебного племени (куда идти грабить) и чужак у своего лагеря (кого гнать).
+        std::size_t rivalIdx = m_structures.size();
+        if (self.tribe != 0) {
+            float best = 110.0f;
+            for (std::size_t k = 0; k < m_structures.size(); ++k) {
+                const Structure& st = m_structures[k];
+                if (st.kind != StructureKind::Stockpile || st.owner == 0 || st.owner == self.tribe || st.owner >= kMaxTribes || st.stock < 1.0f) continue;
+                if (m_relations[self.tribe][st.owner] > -0.15f) continue;
+                const float d = std::hypot(st.x - selfPos.x, st.z - selfPos.z);
+                if (d < best) { best = d; rivalIdx = k; }
+            }
+            if (rivalIdx != m_structures.size()) { senses.rivalStockDist = best; senses.rivalStockPos = {m_structures[rivalIdx].x, selfPos.y, m_structures[rivalIdx].z}; }
+            if (stockIdx != m_structures.size() && senses.stockDist < 25.0f) {   // у своего лагеря: чужак из нетёплого племени гонится прочь
+                float bestI = 12.0f;
+                forEachNearby(
+                    creatureGrid, selfPos, 12.0f, [this](std::size_t j) { return m_population[j].creature.position; },
+                    [&](std::size_t j, float dist) {
+                        const Creature& o = m_population[j].creature;
+                        if (j == i || !o.alive || o.tribe == 0 || o.tribe == self.tribe || m_relations[self.tribe][o.tribe] > -0.1f || dist >= bestI) return;
+                        bestI = dist;
+                        senses.intruderDist = dist;
+                        senses.intruderPos = o.position;
+                        senses.intruderId = o.id;
+                    });
             }
         }
         // Ночь и хижина: ближайшая в 40 единицах.
@@ -755,7 +842,7 @@ void World::tick(float dt, Terrain* mutableTerrain) {
             [&](std::size_t j, float dist) {
                 if (j == i) return;
                 const Inhabitant& other = m_population[j];
-                if (isFamiliar(self, other.creature.id)) {
+                if (isFamiliar(self, other.creature.id) || (self.tribe != 0 && other.creature.tribe == self.tribe)) {
                     ++familiarCount;
                     nearbyFamiliarAlarm = std::max(nearbyFamiliarAlarm, other.lastOutputs.alarmCall);
                 } else {
@@ -884,6 +971,35 @@ void World::tick(float dt, Terrain* mutableTerrain) {
                 ++m_stats.firesStoked;
             }
         }
+        // Грабёж: у склада враждебного племени берёт брёвна (до двух), отношения портятся.
+        if (self.raidRequest && rivalIdx != m_structures.size() && senses.rivalStockDist <= 2.8f) {
+            Structure& st = m_structures[rivalIdx];
+            const float take = std::min({2.0f, std::floor(st.stock), kMaxWood - self.wood});
+            if (take >= 1.0f) {
+                st.stock -= take;
+                self.wood += take;
+                ++m_stats.raids;
+                m_stats.logsStolen += static_cast<std::uint64_t>(take);
+                setRelation(self.tribe, static_cast<int>(st.owner), m_relations[self.tribe][st.owner] - 0.15f);
+                pushEvent(EventType::Raid, senses.rivalStockPos);
+            }
+        }
+        // Удар по чужаку (защита лагеря): урон 0.12 (копьё вдвое), щит гасит, раненый пугается; смерть -- deathCause 7.
+        if (self.strikeRequest && senses.intruderId != 0 && senses.intruderDist <= 2.4f && self.huntTimer <= 0.0f) {
+            const auto it = idIndex.find(senses.intruderId);
+            if (it != idIndex.end()) {
+                Creature& victim = m_population[it->second].creature;
+                float dmg = 0.12f * (self.hasSpear() ? 2.0f : 1.0f);
+                if (victim.hasShield()) { dmg *= 0.4f; victim.shieldDur = std::max(0.0f, victim.shieldDur - 0.2f); }
+                victim.health -= dmg;
+                victim.needs.fear = std::max(victim.needs.fear, 0.75f);
+                self.huntTimer = 1.0f;
+                ++m_stats.strikes;
+                setRelation(self.tribe, victim.tribe, m_relations[self.tribe][victim.tribe] - 0.04f);
+                pushEvent(EventType::Strike, victim.position);
+                if (victim.health <= 0.0f && victim.alive) { victim.alive = false; victim.deathCause = 7; }
+            }
+        }
         // Склад: сдать излишки / взять нужное.
         if (self.stockRequest != 0 && stockIdx != m_structures.size() && senses.stockDist <= 2.8f) {
             Structure& st = m_structures[stockIdx];
@@ -925,6 +1041,7 @@ void World::tick(float dt, Terrain* mutableTerrain) {
                 ++m_stats.barricadesBuilt;
             } else if (self.buildRequest == 4 && self.wood >= kStockpileWood && placeStructure(terrain, StructureKind::Stockpile, self.buildAt.x, self.buildAt.y, 0.0f)) {
                 self.wood -= kStockpileWood;
+                m_structures.back().owner = self.tribe;
                 ++m_stats.stockpilesBuilt;
             } else if (self.buildRequest == 5 && self.wood >= kHutWood && placeStructure(terrain, StructureKind::Hut, self.buildAt.x, self.buildAt.y, 0.0f)) {
                 self.wood -= kHutWood;
@@ -1102,6 +1219,7 @@ void World::tick(float dt, Terrain* mutableTerrain) {
         if (m_population.size() + newborns.size() < kMaxPopulation) {
             Creature child = Creature::reproduce(a, b, m_rng);
             child.id       = m_nextId++;
+            child.tribe    = a.tribe;
             const float ang = 6.2831853f * unit(m_rng), r = 0.8f + 1.4f * unit(m_rng);
             child.position = a.position + glm::vec3(std::cos(ang) * r, 0.0f, std::sin(ang) * r);
             if (terrain && terrain->isUnderwater(child.position.x, child.position.z)) child.position = a.position;  // не рождаются в воде
@@ -1125,6 +1243,7 @@ void World::tick(float dt, Terrain* mutableTerrain) {
             case 4: ++m_stats.deathsPoison; break;
             case 5: ++m_stats.deathsPredation; break;
             case 6: ++m_stats.deathsThirst; break;
+            case 7: ++m_stats.deathsConflict; break;
             default: ++m_stats.deathsOther; break;
         }
         auto             ping = [this](std::uint64_t id) {

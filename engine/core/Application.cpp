@@ -213,6 +213,7 @@ Application::Application(AppConfig config)
     m_world.settleOnLand(m_terrain);  // стартовые существа -- на суше, не в воде
     m_world.growBerryBushes(m_terrain);  // кусты по биомам (пятна, виды ягод)
     m_world.growWildlife(m_terrain);     // дикие животные по биомам
+    m_world.formTribes(m_terrain);       // три племени: лагеря порознь, склады со знамёнами, отношения от вражды до дружбы
 
     m_applied.msaa = -1;  // заведомо не равно загруженным -- первый вызов применит всё
     applySettings();
@@ -262,6 +263,7 @@ Application::Application(AppConfig config)
         m_bucketMesh    = make(procgen::buildBucket());
         m_hutMesh       = make(procgen::buildHut());
         m_fireMesh      = make(procgen::buildCampfire());
+        for (int t = 1; t <= 3; ++t) m_bannerMeshes[static_cast<std::size_t>(t - 1)] = make(procgen::buildBanner(t));
         for (int n = 1; n <= 4; ++n) m_logMeshes[static_cast<std::size_t>(n - 1)] = make(procgen::buildLogs(n));
     }
     for (std::uint32_t i = 0; i < kHouseVariants; ++i) {
@@ -355,6 +357,11 @@ Application::Application(AppConfig config)
         else if (p.rfind("settings", 0) == 0) m_menu->debugOpen(0, p.size() > 9 ? std::atoi(p.c_str() + 9) : 0);
     }
 
+    // WSIM_CAM_TRIBE=1..3 -- камера на склад племени (знамя, лагерь вокруг).
+    if (const char* tb = std::getenv("WSIM_CAM_TRIBE")) {
+        for (const Structure& st : m_world.structures())
+            if (st.kind == StructureKind::Stockpile && st.owner == static_cast<std::uint64_t>(std::atoi(tb))) m_camera.restore({st.x, 0.0f, st.z}, -90.0f, -45.0f, 22.0f);
+    }
     // WSIM_CAM_AT=x,z[,расстояние[,pitch]] -- камера на точку мира (обзор биомов: WSIM_CAM_AT=0,0,200,-55).
     if (const char* at = std::getenv("WSIM_CAM_AT")) {
         float x = 0, z = 0, dist = 60, pitch = -45;
@@ -442,6 +449,8 @@ Application::~Application() {
         for (auto* mesh : {&m_plankMesh, &m_barricadeMesh, &m_trapMesh, &m_spearMesh, &m_shieldMesh, &m_stockMesh, &m_bucketMesh, &m_hutMesh, &m_fireMesh})
             if (*mesh) (*mesh)->destroy(m_context->device());
         for (auto& mesh : m_logMeshes)
+            if (mesh) mesh->destroy(m_context->device());
+        for (auto& mesh : m_bannerMeshes)
             if (mesh) mesh->destroy(m_context->device());
     }
 }
@@ -654,6 +663,7 @@ void Application::update(float dt) {
             if (c.hasSpear()) gear(m_spearMesh, {0.55f, 0.5f, 0.0f}, 0.0f);
             if (c.hasShield()) gear(m_shieldMesh, {-0.55f, 0.1f, 0.15f}, 0.0f);
             if (c.hasBucket) gear(m_bucketMesh, {0.4f, 0.0f, 0.55f}, 0.0f);
+            if (c.tribe >= 1 && c.tribe <= 3) gear(m_bannerMeshes[static_cast<std::size_t>(c.tribe - 1)], {0.0f, 0.5f, -0.45f}, 0.0f);   // знамя племени
             if (c.wood >= 1.0f) gear(m_logMeshes[static_cast<std::size_t>(std::clamp(static_cast<int>(c.wood), 1, 4) - 1)], {0.0f, 0.95f, -0.35f}, 0.0f);
         }
     }
@@ -704,6 +714,12 @@ void Application::update(float dt) {
                 t.scale = glm::vec3(1.0f, std::max(0.35f, s.hp) * flick, 1.0f);
             }
             if (s.kind == StructureKind::Stockpile) t.scale = glm::vec3(1.0f, 0.55f + 0.45f * std::min(1.0f, s.stock / 20.0f), 1.0f);   // растёт с запасом
+            if (s.kind == StructureKind::Stockpile && s.owner >= 1 && s.owner <= 3) {   // знамя племени у его склада
+                Transform bt;
+                bt.position = {s.x + 1.6f, m_terrain.heightAt(s.x + 1.6f, s.z), s.z};
+                bt.scale    = glm::vec3(2.2f);
+                m_structObjects.push_back({m_bannerMeshes[static_cast<std::size_t>(s.owner - 1)], bt, /*solid=*/false});
+            }
             m_structObjects.push_back({s.kind == StructureKind::Barricade ? m_barricadeMesh : (s.kind == StructureKind::Stockpile ? m_stockMesh : (s.kind == StructureKind::Hut ? m_hutMesh : (s.kind == StructureKind::Campfire ? m_fireMesh : m_trapMesh))), t, /*solid=*/false});
         }
     }
@@ -790,6 +806,7 @@ void Application::render() {
                 m_world.settleOnLand(m_terrain);
                 m_world.growBerryBushes(m_terrain);
                 m_world.growWildlife(m_terrain);
+                m_world.formTribes(m_terrain);
                 m_physics.clear();
                 m_boulderObjects.clear();
                 m_buildingObjects.clear();
@@ -1442,7 +1459,7 @@ void Application::drawInspector(const CameraData& cam) {
     dl->AddText(font, fs, {x0 + pad, y}, style::rgba(style::kDim), buf);
     y += fs * 1.35f;
     {   // Ресурсы и орудия.
-        std::string kit = std::string(roleName(cr->role())) + " · брёвен " + std::to_string(static_cast<int>(cr->wood)) + " · жажда " + std::to_string(static_cast<int>(cr->thirst * 100.0f)) + "%";
+        std::string kit = std::string(cr->tribe ? (cr->tribe == 1 ? "красное племя · " : (cr->tribe == 2 ? "синее племя · " : "жёлтое племя · ")) : "") + roleName(cr->role()) + " · брёвен " + std::to_string(static_cast<int>(cr->wood)) + " · жажда " + std::to_string(static_cast<int>(cr->thirst * 100.0f)) + "%";
         if (cr->hasBucket) kit += " · ведро " + std::to_string(static_cast<int>(cr->water));
         if (cr->hasSpear()) kit += " · копьё";
         if (cr->hasShield()) kit += " · щит";
@@ -1719,6 +1736,9 @@ void Application::renderDebugUI() {
         std::size_t herb = 0, pred = 0;
         for (const Animal& a : m_world.fauna().animals()) (isPredator(a.species) ? pred : herb)++;
         const FaunaStats& fs = m_world.fauna().stats();
+        ImGui::Text("Tribes %zu/%zu/%zu, relations 1-2 %.2f, 1-3 %.2f, 2-3 %.2f | raids %llu (logs %llu), strikes %llu, killed in conflicts %llu", m_world.tribeCount(1), m_world.tribeCount(2), m_world.tribeCount(3),
+                    m_world.relation(1, 2), m_world.relation(1, 3), m_world.relation(2, 3), static_cast<unsigned long long>(m_world.stats().raids), static_cast<unsigned long long>(m_world.stats().logsStolen),
+                    static_cast<unsigned long long>(m_world.stats().strikes), static_cast<unsigned long long>(m_world.stats().deathsConflict));
         ImGui::Text("Season %s (year %.0f%%), cold %.2f, rain %.2f", World::seasonName(World::season(m_world.time())), 100.0 * World::yearPhase(m_world.time()), m_world.coldness(), m_world.rain());
         ImGui::Text("Time %.0f s, sun %.2f, night %.2f, huts built %llu, bites softened by walls %llu", m_world.time(), m_world.sunElevation(), m_world.nightness(),
                     static_cast<unsigned long long>(m_world.stats().hutsBuilt), static_cast<unsigned long long>(m_world.stats().bitesBlockedByWalls));

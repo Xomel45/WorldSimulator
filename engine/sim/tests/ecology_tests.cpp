@@ -17,6 +17,7 @@ int main() {
         w.settleOnLand(t);
         w.growBerryBushes(t);
         w.growWildlife(t);
+        w.formTribes(t);   // как в игре: три племени
         double popSum = 0.0;
         long   samples = 0;
         std::size_t peak = 0;
