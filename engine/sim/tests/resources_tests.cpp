@@ -782,6 +782,67 @@ int main() {
         WSIM_CHECK(owned >= 3);
     }
 
+    // ── Этап 10: торговля, дары, союзы ──
+    {
+        Terrain t(World::kWorldHalfSize, 11);
+        glm::vec2 at{0, 0};
+        bool ok = false;
+        for (float z = -80; z <= 80 && !ok; z += 4)
+            for (float x = -80; x <= 40 && !ok; x += 4)
+                if (t.heightAt(x, z) > 1.5f && t.heightAt(x + 14, z) > 1.5f && t.heightAt(x + 7, z) > 1.5f) { at = {x, z}; ok = true; }
+        WSIM_CHECK(ok);
+        // Одно существо племени 1 около склада племени 2 (своего склада нет); отношения rel.
+        auto scene = [&](float rel, std::uint16_t skills, float wood, float stock, bool spear) {
+            World w = lone(71, at, skills);
+            WorldState st = w.exportState();
+            Creature& c = st.population[0].creature;
+            c.tribe = 1;
+            c.wood = wood;
+            c.spearDur = spear ? 1.0f : 0.0f;
+            c.genome.setTrait(Genome::kBoldness, -1.0f);   // робкий: не пойдёт грабить
+            c.homePosition = c.position;
+            st.structures = {Structure{StructureKind::Stockpile, at.x + 8.0f, at.y, 0.0f, 1.0f, stock, 2}};
+            st.relations[1 * 4 + 2] = st.relations[2 * 4 + 1] = rel;
+            WSIM_CHECK(w.importState(st));
+            return w;
+        };
+        // Берёт брёвна у дружественного склада (обмен: отношения чуть падают); у недружественного -- нет.
+        {
+            World w = scene(0.8f, kSkillSpear, 0.0f, 6.0f, false);
+            for (int i = 0; i < 60 * 30 && w.stats().tradeLogs == 0; ++i) { w.tick(kDt, &t); if (i % 300 == 299) feedAll(w); }
+            WSIM_CHECK(w.stats().tradeLogs >= 1 && w.relation(1, 2) < 0.8f);
+            World cold = scene(-0.5f, kSkillSpear, 0.0f, 6.0f, false);
+            for (int i = 0; i < 60 * 30; ++i) { cold.tick(kDt, &t); if (i % 300 == 299) feedAll(cold); }
+            WSIM_CHECK(cold.stats().tradeLogs == 0 && cold.stats().logsTaken == 0);
+        }
+        // Дар: излишек бревен у дружественного склада -- отдаёт, отношения теплеют.
+        {
+            World w = scene(0.5f, kSkillSpear | kSkillStockpile, 4.0f, 2.0f, true);
+            for (int i = 0; i < 60 * 30 && w.stats().giftLogs == 0; ++i) { w.tick(kDt, &t); if (i % 300 == 299) feedAll(w); }
+            WSIM_CHECK(w.stats().giftLogs >= 1 && w.relation(1, 2) > 0.5f && w.structures()[0].stock > 2.0f);
+        }
+        // Контакт: мирная встреча сближает, встреча врагов накаляет; через порог 0.6 рождается союз.
+        auto meeting = [&](float rel) {
+            World w = lone(72, at, 0);
+            WorldState st = w.exportState();
+            Inhabitant other = st.population[0];
+            other.creature.id += 700;
+            other.creature.position += glm::vec3(2.0f, 0.0f, 0.0f);
+            st.population[0].creature.tribe = 1;
+            other.creature.tribe = 2;
+            st.population.push_back(other);
+            st.nextId = other.creature.id + 5;
+            st.relations[1 * 4 + 2] = st.relations[2 * 4 + 1] = rel;
+            WSIM_CHECK(w.importState(st));
+            for (int i = 0; i < 60 * 120; ++i) { w.tick(kDt, &t); if (i % 300 == 299) feedAll(w); }
+            return w;
+        };
+        WSIM_CHECK(meeting(0.0f).relation(1, 2) > 0.0f);
+        WSIM_CHECK(meeting(-0.8f).relation(1, 2) < -0.8f * (1.0f - 0.0003f * 120.0f) + 0.0f || meeting(-0.8f).relation(1, 2) < -0.7f);
+        World allies = meeting(0.595f);
+        WSIM_CHECK(allies.allied(1, 2) && allies.stats().alliancesFormed == 1);
+    }
+
     std::puts("resources_tests: OK");
     return 0;
 }

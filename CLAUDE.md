@@ -926,6 +926,17 @@ Creatures now cut trees down, carry logs, craft tools and fight predators with t
 - Not done: **trade and alliances** (relations never rise through contact except the slow fade), migration/founding of new camps, tribe-specific culture/knowledge boundaries (skills spread across tribes through proximity), leaders, war parties, tribe extinction handling (a tribe with 0 members just stays on the map),
   banners in the menu colony, tribe colours on the creature body.
 
+### Stage 10: trade, gifts, alliances
+
+- **Open piles** (`World::pileOpenTo`): a tribe may use an unowned, its own, or a **friendly** foreign stockpile (relation > 0.3). The existing deposit/withdraw behaviours (`Haul`) therefore turn into trade with no new behaviour:
+  *depositing* surplus logs into a friendly pile is a **gift** (`+0.06` relation per log, `giftLogs`, `EventType::Gift` → chime); *withdrawing* from it is **trade** (`-0.03` per log, `tradeLogs`) — friends supply you, but not for free.
+  Hostile piles stay closed (they are raid targets). Allies also **defend** each other's piles (the "near a permitted pile" test of `Behavior::Defend`).
+- **Contact diplomacy**: for every foreign-tribe creature within 6 units a creature nudges the relation by `+0.0004/s` (if > -0.3, i.e. not open enemies) or `-0.0002/s` (if enemies), ×min(contacts, 3). Peaceful neighbours drift together, enemies stay hostile.
+- **Alliances** (`World::allied`, hysteresis: formed above 0.6, broken below 0.3; statistics only — `alliancesFormed/Broken`, shown in the debug window): relations are not state-dependent on this flag, so saves need nothing extra.
+- **Camp founding is emergent**: a creature that knows the stockpile skill and sees no *permitted* pile within 60 units builds one for its own tribe (2 of 10 probe seeds ended with a fourth pile).
+- Measured (10 seeds × 20 sim-min): alliances formed on 4 seeds, 3-4 logs traded on 2, no gifts in the probe (surplus carriers rarely coincide with a friendly pile in range), mean population ≈ 35. Tests cover trade with friends vs none with the cold, gifts, contact drift both ways and alliance formation.
+- Not done: barter of other goods (only logs exist), treaties/war declarations as events, tribe leaders, joint tribe projects, skill sharing speed-ups between allies, relation effects on mating across tribes, UI for diplomacy beyond the debug window.
+
 ## Temporal upscaler and frame generation (`VulkanTemporal.cpp`, `taau.comp`, `framegen.comp`)
 
 Own implementation (not AMD's FSR 2/3): the official FidelityFX SDK builds with MSVC/`.bat` scripts, has HLSL shaders that
@@ -1344,7 +1355,8 @@ source of truth for the hex constants at the top of `MainMenu.cpp`.
 - [x] Stage 7: seasons, weather, night predators, ecology regression test (see "Stage 7")
 - [x] Stage 8: seasonal ground (autumn colour, snow), work and animal sounds (see "Stage 8")
 - [x] Stage 9: tribes, banners, raids and defence (see "Stage 9")
-- [ ] Next: trade/alliances, camp founding, tree seasons, nocturnal species, migration/hibernation
+- [x] Stage 10: trade, gifts, alliances (see "Stage 10")
+- [ ] Next: tree seasons, nocturnal species, migration/hibernation, cross-tribe mating, tribe leaders
 - [ ] More powers (fire, rain, disasters, food, smite individuals), undo
 - [x] Sound: procedural synth + miniaudio (see "Sound")
 - [x] Day/night cycle (see "Stage 4"; night ambience sound still missing)

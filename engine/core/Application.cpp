@@ -1739,6 +1739,9 @@ void Application::renderDebugUI() {
         ImGui::Text("Tribes %zu/%zu/%zu, relations 1-2 %.2f, 1-3 %.2f, 2-3 %.2f | raids %llu (logs %llu), strikes %llu, killed in conflicts %llu", m_world.tribeCount(1), m_world.tribeCount(2), m_world.tribeCount(3),
                     m_world.relation(1, 2), m_world.relation(1, 3), m_world.relation(2, 3), static_cast<unsigned long long>(m_world.stats().raids), static_cast<unsigned long long>(m_world.stats().logsStolen),
                     static_cast<unsigned long long>(m_world.stats().strikes), static_cast<unsigned long long>(m_world.stats().deathsConflict));
+        ImGui::Text("Diplomacy: allies 1-2 %d, 1-3 %d, 2-3 %d | gifts %llu logs, traded %llu logs, alliances formed %llu / broken %llu", m_world.allied(1, 2) ? 1 : 0, m_world.allied(1, 3) ? 1 : 0, m_world.allied(2, 3) ? 1 : 0,
+                    static_cast<unsigned long long>(m_world.stats().giftLogs), static_cast<unsigned long long>(m_world.stats().tradeLogs),
+                    static_cast<unsigned long long>(m_world.stats().alliancesFormed), static_cast<unsigned long long>(m_world.stats().alliancesBroken));
         ImGui::Text("Season %s (year %.0f%%), cold %.2f, rain %.2f", World::seasonName(World::season(m_world.time())), 100.0 * World::yearPhase(m_world.time()), m_world.coldness(), m_world.rain());
         ImGui::Text("Time %.0f s, sun %.2f, night %.2f, huts built %llu, bites softened by walls %llu", m_world.time(), m_world.sunElevation(), m_world.nightness(),
                     static_cast<unsigned long long>(m_world.stats().hutsBuilt), static_cast<unsigned long long>(m_world.stats().bitesBlockedByWalls));

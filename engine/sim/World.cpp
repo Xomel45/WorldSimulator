@@ -547,6 +547,12 @@ void World::tick(float dt, Terrain* mutableTerrain) {
     if (terrain && m_streaming) streamBushes(*terrain, dt);
     for (int a = 1; a < kMaxTribes; ++a)
         for (int b = a + 1; b < kMaxTribes; ++b) setRelation(a, b, m_relations[a][b] * (1.0f - 0.0003f * dt));   // со временем обиды стихают
+    for (int a = 1; a < kMaxTribes; ++a)
+        for (int b = a + 1; b < kMaxTribes; ++b) {
+            const bool was = m_allied[a][b];
+            const bool now = was ? m_relations[a][b] > 0.3f : m_relations[a][b] > 0.6f;
+            if (now != was) { m_allied[a][b] = m_allied[b][a] = now; ++(now ? m_stats.alliancesFormed : m_stats.alliancesBroken); }
+        }
     // Костры сгорают (hp -- топливо); догоревшие убираем.
     const float coldNow = terrain ? coldness(m_time) : 0.0f, rainNow = terrain ? rain(m_time) : 0.0f;
     for (Structure& st : m_structures)
@@ -698,7 +704,7 @@ void World::tick(float dt, Terrain* mutableTerrain) {
             for (std::size_t k = 0; k < m_structures.size(); ++k) {
                 const Structure& st = m_structures[k];
                 if (st.kind != StructureKind::Stockpile) continue;
-                if (st.owner != 0 && st.owner != self.tribe) continue;   // чужой склад своим не считается
+                if (!pileOpenTo(st, self.tribe)) continue;   // чужой (недружественный) склад своим не считается
                 const float d = std::hypot(st.x - selfPos.x, st.z - selfPos.z);
                 if (d < best) { best = d; stockIdx = k; }
             }
@@ -826,6 +832,7 @@ void World::tick(float dt, Terrain* mutableTerrain) {
 
         // Соседи: толпа своих/чужих, агрегированные сигналы (прошлый тик), ближайший ГОТОВЫЙ
         // партнёр, паникующие соседи, центр группы, расталкивание.
+        int         contact[kMaxTribes]{};
         int         familiarCount = 0, strangerCount = 0;
         float       nearbyFamiliarAlarm = 0.0f, nearbyStrangerAlarm = 0.0f;
         float       nearbyMatingCall = 0.0f, nearbyDominance = 0.0f;
@@ -842,6 +849,7 @@ void World::tick(float dt, Terrain* mutableTerrain) {
             [&](std::size_t j, float dist) {
                 if (j == i) return;
                 const Inhabitant& other = m_population[j];
+                if (self.tribe != 0 && other.creature.tribe != 0 && other.creature.tribe != self.tribe && dist < 6.0f) ++contact[other.creature.tribe];
                 if (isFamiliar(self, other.creature.id) || (self.tribe != 0 && other.creature.tribe == self.tribe)) {
                     ++familiarCount;
                     nearbyFamiliarAlarm = std::max(nearbyFamiliarAlarm, other.lastOutputs.alarmCall);
@@ -870,6 +878,13 @@ void World::tick(float dt, Terrain* mutableTerrain) {
                     separation += (glm::vec2{selfPos.x - other.creature.position.x, selfPos.z - other.creature.position.z} / dist) * w;
                 }
             });
+        // Контакт племён: мирная встреча рядом сближает (если нет открытой вражды), встреча врагов лишь накаляет.
+        if (self.tribe != 0)
+            for (int tb = 1; tb < kMaxTribes; ++tb)
+                if (contact[tb] > 0 && tb != self.tribe) {
+                    const float rel = m_relations[self.tribe][tb];
+                    setRelation(self.tribe, tb, rel + (rel > -0.3f ? 0.0004f : -0.0002f) * static_cast<float>(std::min(contact[tb], 3)) * dt);
+                }
         senses.familiarCrowding = static_cast<float>(familiarCount) / (static_cast<float>(familiarCount) + 2.0f);
         senses.strangerCrowding = static_cast<float>(strangerCount) / (static_cast<float>(strangerCount) + 2.0f);
         senses.nearbyFamiliarAlarmLevel = nearbyFamiliarAlarm;
@@ -1005,10 +1020,23 @@ void World::tick(float dt, Terrain* mutableTerrain) {
             Structure& st = m_structures[stockIdx];
             if (self.stockRequest == 1) {
                 const float give = std::min(std::floor(self.wood - self.woodGoal()), kStockpileCapacity - st.stock);
-                if (give >= 1.0f) { self.wood -= give; st.stock += give; m_stats.logsStored += static_cast<std::uint64_t>(give); }
+                if (give >= 1.0f) {
+                    self.wood -= give; st.stock += give; m_stats.logsStored += static_cast<std::uint64_t>(give);
+                    if (st.owner != 0 && st.owner != self.tribe && self.tribe != 0) {   // дар чужому (дружественному) складу
+                        setRelation(self.tribe, static_cast<int>(st.owner), m_relations[self.tribe][st.owner] + 0.06f * give);
+                        m_stats.giftLogs += static_cast<std::uint64_t>(give);
+                        pushEvent(EventType::Gift, senses.stockPos);
+                    }
+                }
             } else {
                 const float take = std::min({std::floor(st.stock), std::ceil(self.woodGoal() - self.wood), kMaxWood - self.wood});
-                if (take >= 1.0f) { self.wood += take; st.stock -= take; m_stats.logsTaken += static_cast<std::uint64_t>(take); }
+                if (take >= 1.0f) {
+                    self.wood += take; st.stock -= take; m_stats.logsTaken += static_cast<std::uint64_t>(take);
+                    if (st.owner != 0 && st.owner != self.tribe && self.tribe != 0) {   // обмен: берёт у друзей, им это не бесплатно
+                        setRelation(self.tribe, static_cast<int>(st.owner), m_relations[self.tribe][st.owner] - 0.03f * take);
+                        m_stats.tradeLogs += static_cast<std::uint64_t>(take);
+                    }
+                }
             }
         }
 

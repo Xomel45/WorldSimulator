@@ -77,11 +77,11 @@ struct WorldStats {
     std::uint64_t deathsPredation = 0;  // существа, растерзанные хищниками
     std::uint64_t treesFelled = 0, spearsMade = 0, shieldsMade = 0, spearHits = 0, shieldBlocks = 0, skillsLearned = 0;
     std::uint64_t planksLaid = 0, barricadesBuilt = 0, trapsSet = 0;
-    std::uint64_t meatKills = 0, bucketsMade = 0, bushesWatered = 0, stockpilesBuilt = 0, hutsBuilt = 0, raids = 0, logsStolen = 0, strikes = 0, deathsConflict = 0, firesBuilt = 0, firesStoked = 0, bitesBlockedByWalls = 0, coldTicks = 0, logsStored = 0, logsTaken = 0, deathsThirst = 0;
+    std::uint64_t meatKills = 0, bucketsMade = 0, bushesWatered = 0, stockpilesBuilt = 0, hutsBuilt = 0, raids = 0, logsStolen = 0, strikes = 0, deathsConflict = 0, giftLogs = 0, tradeLogs = 0, alliancesFormed = 0, alliancesBroken = 0, firesBuilt = 0, firesStoked = 0, bitesBlockedByWalls = 0, coldTicks = 0, logsStored = 0, logsTaken = 0, deathsThirst = 0;
 };
 
 // События мира для звука и эффектов (не состояние: очищаются takeEvents(), в сохранения не входят).
-enum class EventType : std::uint8_t { TreeFelled, Built, Stab, Bitten, Plank, Raid, Strike };
+enum class EventType : std::uint8_t { TreeFelled, Built, Stab, Bitten, Plank, Raid, Strike, Gift };
 struct WorldEvent {
     EventType type = EventType::Built;
     glm::vec3 pos{};
@@ -199,6 +199,12 @@ public:
     [[nodiscard]] float relation(int a, int b) const noexcept { return (a > 0 && b > 0 && a < kMaxTribes && b < kMaxTribes) ? m_relations[a][b] : 0.0f; }
     void setRelation(int a, int b, float v) noexcept;
     [[nodiscard]] std::size_t tribeCount(int tribe) const noexcept;
+    // Союз двух племён (отношения выше 0.6, расходятся ниже 0.3 -- с гистерезисом); только для статистики и показа.
+    [[nodiscard]] bool allied(int a, int b) const noexcept { return a > 0 && b > 0 && a < kMaxTribes && b < kMaxTribes && m_allied[a][b]; }
+    // Можно ли племени tribe пользоваться чужим складом: ничей, свой или дружественный (отношения > 0.3).
+    [[nodiscard]] bool pileOpenTo(const Structure& st, int tribe) const noexcept {
+        return st.owner == 0 || st.owner == static_cast<std::uint64_t>(tribe) || (tribe > 0 && st.owner < static_cast<std::uint64_t>(kMaxTribes) && m_relations[tribe][st.owner] > 0.3f);
+    }
 
     // ── Дикие животные (sim/Fauna): травоядные и хищники по биомам ──
     // Заселяет игровую область заново (при создании мира и в "Новом мире"); ГСЧ мировой.
@@ -233,6 +239,7 @@ private:
     void pushEvent(EventType t, glm::vec3 pos) { if (m_events.size() < 64) m_events.push_back({t, pos}); }
     std::vector<Structure>     m_structures;
     float                      m_relations[kMaxTribes][kMaxTribes]{};
+    bool                       m_allied[kMaxTribes][kMaxTribes]{};
 
     // Потоковая подгрузка кустов (см. growBerryBushes/streamBushes в World.cpp).
     bool                          m_streaming = false;
