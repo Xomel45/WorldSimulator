@@ -19,12 +19,13 @@ inline constexpr float kNoTarget       = 1.0e9f; // "цели нет" в пол�
 
 // Чем занято существо. Выбирается слоем поведения (Behavior.cpp) из потребностей, ощущений, черт
 // и выходов мозга; видно в инспекторе и нужно для озвучки/отладки.
-enum class Behavior : std::uint8_t { Wander, SeekFood, Eat, Rest, Flee, SeekMate, Socialize, GoHome, Sick, Sabotage, Chop, Craft, Build, Drink, Haul, Hunt, Count };
+enum class Behavior : std::uint8_t { Wander, SeekFood, Eat, Rest, Flee, SeekMate, Socialize, GoHome, Sick, Sabotage, Chop, Craft, Build, Drink, Haul, Hunt, Sleep, Count };
 
 // Умения (маска Creature::skills). Рубить деревья умеют все (врождённо); изготовление орудий -- знание: открывается в опасности или
 // от случая и передаётся соседям и потомству по наблюдению (World::tick), как вкус ягод -- но у знания нет "забывания".
-enum Skill : std::uint8_t { kSkillSpear = 1, kSkillShield = 2, kSkillBridge = 4, kSkillBarricade = 8, kSkillTrap = 16, kSkillBucket = 32, kSkillStockpile = 64 };
-inline constexpr std::uint8_t kAllSkills = 127;
+enum Skill : std::uint8_t { kSkillSpear = 1, kSkillShield = 2, kSkillBridge = 4, kSkillBarricade = 8, kSkillTrap = 16, kSkillBucket = 32, kSkillStockpile = 64, kSkillHut = 128 };
+inline constexpr std::uint8_t kAllSkills = 255;
+inline constexpr float kHutWood = 4.0f;   // брёвен на хижину
 inline constexpr float kBucketWood = 2.0f, kStockpileWood = 3.0f, kBucketCapacity = 3.0f;   // ведро: цена, глотков воды
 inline constexpr float kBridgeWood = 1.0f, kBarricadeWood = 3.0f, kTrapWood = 2.0f;   // досок на настил / баррикаду / ловушку
 inline constexpr float kSpearWood = 2.0f, kShieldWood = 3.0f, kMaxWood = 4.0f;   // цена орудий и сколько можно нести
@@ -100,6 +101,8 @@ struct SenseInputs {
     float     waterDist = kNoTarget;  glm::vec3 waterPos{};
     float     preyDist = kNoTarget;   glm::vec3 preyPos{};  std::uint64_t preyId = 0;
     float     stockDist = kNoTarget;  glm::vec3 stockPos{};  float stockAmount = 0.0f;
+    float     night = 0.0f;                                  // 0 день .. 1 ночь (только в мире с рельефом: тесты без рельефа не спят)
+    float     hutDist = kNoTarget;    glm::vec3 hutPos{};   // ближайшая хижина
 };
 
 class Creature {
@@ -165,6 +168,7 @@ public:
     // huntRequest/stockRequest (1 сдать, 2 взять) исполняет мир; waterKnown/waterX/Z/waterSearch -- кэш поиска берега.
     float        thirst = 0.2f, water = 0.0f, huntTimer = 0.0f, waterX = 0.0f, waterZ = 0.0f, waterSearch = 0.0f;
     bool         hasBucket = false, waterKnown = false;
+    bool         hutNear = false;   // видит хижину (решает слой поведения каждый тик; нужно woodGoal)
     std::uint8_t huntRequest = 0, stockRequest = 0;
     // Стройка (мост/баррикада/ловушка): buildRequest -- 1 мост, 2 баррикада, 3 ловушка, ставится на ТОТ тик, когда работа закончена
     // (мир исполняет); buildProgress -- работа идёт; buildTimer -- пауза до следующей.
@@ -188,6 +192,7 @@ public:
     [[nodiscard]] float woodGoal() const noexcept {
         float goal = woodNeeded();
         if (knows(kSkillBridge)) goal = std::max(goal, 2.0f);
+        if (knows(kSkillHut) && !hutNear) goal = std::max(goal, kHutWood);
         if (dangerMemory > 0.0f && knows(kSkillBarricade)) goal = std::max(goal, kBarricadeWood);
         if (dangerMemory > 0.0f && knows(kSkillTrap)) goal = std::max(goal, kTrapWood);
         return goal;

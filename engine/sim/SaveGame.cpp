@@ -122,6 +122,8 @@ void writeCreature(ByteWriter& w, const Inhabitant& in, std::uint32_t version) {
     for (float v : {c.thirst, c.water, c.huntTimer, c.waterX, c.waterZ, c.waterSearch}) w.f32(v);   // v9
     w.boolean(c.hasBucket);
     w.boolean(c.waterKnown);
+    if (version < 10) return;
+    w.boolean(c.hutNear);   // v10
 }
 
 bool readCreature(ByteReader& r, Inhabitant& in, std::uint32_t version) {
@@ -227,6 +229,7 @@ bool readCreature(ByteReader& r, Inhabitant& in, std::uint32_t version) {
         c.hasBucket   = r.boolean();
         c.waterKnown  = r.boolean();
     }
+    if (version >= 10) c.hutNear = r.boolean();
     return r.ok();
 }
 
@@ -529,7 +532,7 @@ bool parseSave(std::span<const std::uint8_t> bytes, SaveGame& out, std::string& 
                 const std::uint8_t kind = sr.u8();
                 st.x = sr.f32(); st.z = sr.f32(); st.yaw = sr.f32(); st.hp = sr.f32();
                 if (v2) { const float stock = sr.f32(); st.stock = std::isfinite(stock) ? std::clamp(stock, 0.0f, kStockpileCapacity) : 0.0f; }
-                if (kind < 1 || kind > 3) { error = "файл повреждён (постройка)"; return false; }
+                if (kind < 1 || kind > 4) { error = "файл повреждён (постройка)"; return false; }
                 if (!std::isfinite(st.x) || !std::isfinite(st.z) || !std::isfinite(st.yaw) || !std::isfinite(st.hp)) { error = "файл повреждён (постройка)"; return false; }
                 st.kind = static_cast<StructureKind>(kind);
                 g.world.structures.push_back(st);

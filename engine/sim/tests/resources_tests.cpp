@@ -425,6 +425,84 @@ int main() {
         WSIM_CHECK(c.hasBucket && std::fabs(c.water - 2.0f) < 1.0e-6f && std::fabs(c.thirst - 0.7f) < 1.0e-6f);
     }
 
+    // ── Этап 4: день и ночь, сон, хижины ──
+    {
+        // Цикл: начало мира -- утро, ночью темно (~40% суток), период kDayLength.
+        WSIM_CHECK(World::nightness(0.0) == 0.0f && World::sunElevation(0.0) > 0.3f);
+        WSIM_CHECK(World::nightness(201.0) > 0.99f && World::sunElevation(201.0) < -0.9f);
+        WSIM_CHECK(std::fabs(World::sunElevation(40.0) - World::sunElevation(40.0 + World::kDayLength)) < 1.0e-4f);
+        int nights = 0, total = 3000;
+        for (int i = 0; i < total; ++i) nights += World::nightness(static_cast<double>(i) * 0.1) > 0.5f;
+        WSIM_CHECK(nights > total * 25 / 100 && nights < total * 55 / 100);
+
+        Terrain t(World::kWorldHalfSize, 29);
+        glm::vec2 at;
+        WSIM_CHECK(findForest(t, at));
+        // Ночью в мире с рельефом сыто-спокойный засыпает (и тратит голод втрое медленнее); днём и в плоском мире -- нет.
+        auto sleepsAt = [&](double time, Terrain* terr) {
+            World w = lone(31, at, 0);
+            WorldState st = w.exportState();
+            st.time = time;
+            st.population[0].creature.needs.hunger = 0.2f;
+            WSIM_CHECK(w.importState(st));
+            bool slept = false;
+            for (int i = 0; i < 60 * 15 && !slept; ++i) { w.tick(kDt, terr); slept = w.population()[0].creature.behavior == Behavior::Sleep; }
+            return slept;
+        };
+        WSIM_CHECK(sleepsAt(201.0, &t));
+        WSIM_CHECK(!sleepsAt(60.0, &t));
+        WSIM_CHECK(!sleepsAt(201.0, nullptr));
+
+        // Хижина: знающий строит её из 4 брёвен, вторая рядом не ставится; к хижине идут спать.
+        World w = lone(32, at, kSkillSpear | kSkillHut);
+        WorldState st = w.exportState();
+        st.population[0].creature.wood = 4.0f;
+        st.population[0].creature.spearDur = 1.0f;
+        WSIM_CHECK(w.importState(st));
+        for (int i = 0; i < 60 * 40 && w.stats().hutsBuilt == 0; ++i) { w.tick(kDt, &t); if (i % 300 == 299) feedAll(w); }
+        WSIM_CHECK(w.stats().hutsBuilt == 1 && w.structures().size() == 1 && w.structures()[0].kind == StructureKind::Hut);
+        WSIM_CHECK(!w.placeStructure(&t, StructureKind::Hut, w.structures()[0].x + 3.0f, w.structures()[0].z, 0.0f));
+        WorldState s2 = w.exportState();
+        s2.time = 201.0;
+        s2.population[0].creature.position = {s2.structures[0].x + 12.0f, 0.0f, s2.structures[0].z};
+        s2.population[0].creature.needs.hunger = 0.2f;
+        WSIM_CHECK(w.importState(s2));
+        float minD = 1e9f;
+        for (int i = 0; i < 60 * 40; ++i) {
+            w.tick(kDt, &t);
+            minD = std::min(minD, std::hypot(w.population()[0].creature.position.x - w.structures()[0].x, w.population()[0].creature.position.z - w.structures()[0].z));
+        }
+        WSIM_CHECK(minD < 3.0f);   // дошёл до хижины
+
+        // Сохранение: хижина и признак hutNear.
+        PhysicsWorld physics;
+        SaveGame back;
+        std::string err;
+        WSIM_CHECK(parseSave(serializeSave(captureSave("h", 0, 0.0f, t, w, physics, CameraState{})), back, err));
+        WSIM_CHECK(back.world.structures.size() == 1 && back.world.structures[0].kind == StructureKind::Hut);
+    }
+
+    // Хижина не пускает зверей (круг радиусом kHutRadius), как баррикада.
+    {
+        Fauna fauna;
+        Rng rng(8);
+        std::vector<Structure> built = {{StructureKind::Hut, 0.0f, 0.0f, 0.0f, 1.0f}};
+        Fauna::State st;
+        st.nextId = 100;
+        Animal wolf;
+        wolf.id = 1; wolf.species = Species::Wolf; wolf.position = {-5.0f, 0.0f, 0.0f}; wolf.hunger = 0.95f; wolf.age = speciesDef(Species::Wolf).maturity * 1.5f;
+        st.animals = {wolf};
+        WSIM_CHECK(fauna.importState(st));
+        std::vector<CreatureView> creatures = {{7, {0.0f, 0.0f, 0.0f}}};   // добыча "внутри" хижины
+        std::vector<Bite> bites;
+        float closest = 1e9f;
+        for (int i = 0; i < 60 * 20; ++i) {
+            fauna.tick(kDt, nullptr, creatures, rng, 100.0f, bites, {}, &built);
+            for (const Animal& a : fauna.animals()) closest = std::min(closest, std::hypot(a.position.x, a.position.z));
+        }
+        WSIM_CHECK(closest > kHutRadius - 0.2f);
+    }
+
     std::puts("resources_tests: OK");
     return 0;
 }

@@ -76,7 +76,7 @@ struct WorldStats {
     std::uint64_t deathsPredation = 0;  // существа, растерзанные хищниками
     std::uint64_t treesFelled = 0, spearsMade = 0, shieldsMade = 0, spearHits = 0, shieldBlocks = 0, skillsLearned = 0;
     std::uint64_t planksLaid = 0, barricadesBuilt = 0, trapsSet = 0;
-    std::uint64_t meatKills = 0, bucketsMade = 0, bushesWatered = 0, stockpilesBuilt = 0, logsStored = 0, logsTaken = 0, deathsThirst = 0;
+    std::uint64_t meatKills = 0, bucketsMade = 0, bushesWatered = 0, stockpilesBuilt = 0, hutsBuilt = 0, bitesBlockedByWalls = 0, logsStored = 0, logsTaken = 0, deathsThirst = 0;
 };
 
 // Полное состояние мира для сохранения/загрузки (всё, что нужно, чтобы продолжить симуляцию
@@ -135,6 +135,13 @@ public:
     [[nodiscard]] bool bushNear(const Terrain& terrain, float x, float z, float radius) const;
     [[nodiscard]] std::size_t loadedBushCells() const noexcept { return m_loadedCells.size(); }
     [[nodiscard]] double      time() const noexcept { return m_time; }
+    // Смена дня и ночи по мировому времени: высота солнца -1..1 (начало мира -- утро), "ночность" 0..1 (плавно, ~40% суток тёмные).
+    // Существа спят ночью только в мире с рельефом (тесты без рельефа живут по-старому).
+    static constexpr float kDayLength = 300.0f;
+    [[nodiscard]] static float sunElevation(double time) noexcept;
+    [[nodiscard]] static float nightness(double time) noexcept;
+    [[nodiscard]] float        sunElevation() const noexcept { return sunElevation(m_time); }
+    [[nodiscard]] float        nightness() const noexcept { return nightness(m_time); }
 
     [[nodiscard]] std::span<const Inhabitant>  population() const noexcept { return m_population; }
     [[nodiscard]] std::span<const FoodSource>  food() const noexcept { return m_food; }

@@ -260,6 +260,7 @@ Application::Application(AppConfig config)
         m_shieldMesh    = make(procgen::buildShield());
         m_stockMesh     = make(procgen::buildStockpile());
         m_bucketMesh    = make(procgen::buildBucket());
+        m_hutMesh       = make(procgen::buildHut());
         for (int n = 1; n <= 4; ++n) m_logMeshes[static_cast<std::size_t>(n - 1)] = make(procgen::buildLogs(n));
     }
     for (std::uint32_t i = 0; i < kHouseVariants; ++i) {
@@ -277,6 +278,7 @@ Application::Application(AppConfig config)
     m_lights.sunDir            = glm::normalize(glm::vec4(0.6f, 0.7f, 0.4f, 0.0f));  // ~44 градуса над горизонтом: тени читаются
     m_lights.sunColorIntensity = {1.0f, 0.98f, 0.92f, 0.9f};
 
+    if (const char* tv = std::getenv("WSIM_TIME")) m_timeOverride = static_cast<float>(std::atof(tv));
     // WSIM_NIGHT=1 -- без солнца и с тусклым ambient (проверка фонаря до появления смены дня и ночи).
     if (std::getenv("WSIM_NIGHT")) { m_lights.sunColorIntensity.w = 0.0f; m_lights.ambient.w = 0.12f; }
     if (std::getenv("WSIM_FLASHLIGHT")) m_flashlight = true;
@@ -327,6 +329,10 @@ Application::Application(AppConfig config)
             (void)m_world.placeStructure(&m_terrain, StructureKind::Trap, x, -3.0f, 0.0f);
         }
         (void)m_world.placeStructure(&m_terrain, StructureKind::Stockpile, 9.0f, 5.0f, 0.0f);
+        for (int placed = 0, k = 0; placed < 2 && k < 200; ++k) {   // две хижины на ближайшей суше
+            const float ang = 0.7f * static_cast<float>(k), r = 6.0f + 0.2f * static_cast<float>(k);
+            if (m_terrain.heightAt(std::cos(ang) * r, std::sin(ang) * r) > 1.0f && m_world.placeStructure(&m_terrain, StructureKind::Hut, std::cos(ang) * r, std::sin(ang) * r, 0.0f)) ++placed;
+        }
         for (float z = -90; z <= 90; z += 2)
             for (float x = -90; x <= 90; x += 2)
                 if (m_terrain.isUnderwater(x, z) && m_terrain.isUnderwater(x + 6, z) && m_terrain.isUnderwater(x, z + 6)) {
@@ -428,7 +434,7 @@ Application::~Application() {
         for (auto& mesh : m_animalMeshes)
             if (mesh) mesh->destroy(m_context->device());
         for (auto& mesh : m_houseMeshes) mesh->destroy(m_context->device());
-        for (auto* mesh : {&m_plankMesh, &m_barricadeMesh, &m_trapMesh, &m_spearMesh, &m_shieldMesh, &m_stockMesh, &m_bucketMesh})
+        for (auto* mesh : {&m_plankMesh, &m_barricadeMesh, &m_trapMesh, &m_spearMesh, &m_shieldMesh, &m_stockMesh, &m_bucketMesh, &m_hutMesh})
             if (*mesh) (*mesh)->destroy(m_context->device());
         for (auto& mesh : m_logMeshes)
             if (mesh) mesh->destroy(m_context->device());
@@ -688,7 +694,7 @@ void Application::update(float dt) {
             t.position = {s.x, m_terrain.heightAt(s.x, s.z), s.z};
             if (s.kind == StructureKind::Barricade) t.rotation.y = -glm::degrees(s.yaw);
             if (s.kind == StructureKind::Stockpile) t.scale = glm::vec3(1.0f, 0.55f + 0.45f * std::min(1.0f, s.stock / 20.0f), 1.0f);   // растёт с запасом
-            m_structObjects.push_back({s.kind == StructureKind::Barricade ? m_barricadeMesh : (s.kind == StructureKind::Stockpile ? m_stockMesh : m_trapMesh), t, /*solid=*/false});
+            m_structObjects.push_back({s.kind == StructureKind::Barricade ? m_barricadeMesh : (s.kind == StructureKind::Stockpile ? m_stockMesh : (s.kind == StructureKind::Hut ? m_hutMesh : m_trapMesh)), t, /*solid=*/false});
         }
     }
 
@@ -848,7 +854,28 @@ void Application::render() {
         }
 
         // Освещение кадра: время для воды, туман (он же горизонт), каскадные тени от солнца.
-        m_lights.fogColorDensity = {kSkyColor, 0.0009f};
+        // День и ночь: высота солнца по мировому времени (WSIM_TIME -- по заданному). Днём солнце, ночью слабая "луна" с другой стороны,
+        // небо и туман темнеют, на закате и рассвете тёплый оттенок. В меню -- всегда день.
+        glm::vec3 sky = kSkyColor;
+        {
+            const double  tm   = !playing ? 0.0 : (m_timeOverride ? static_cast<double>(*m_timeOverride) : m_world.time());
+            const float   e    = World::sunElevation(tm);
+            const float   a    = 6.28318531f * static_cast<float>(std::fmod(tm / World::kDayLength + 0.08, 1.0));
+            const float   dayK = std::clamp((e + 0.12f) / 0.37f, 0.0f, 1.0f);
+            const float   dusk = std::clamp(1.0f - std::fabs(e) / 0.35f, 0.0f, 1.0f);
+            const glm::vec3 dir = glm::normalize(glm::vec3((e >= 0.0f ? 0.85f : -0.85f) * std::cos(a), std::max(std::fabs(e), 0.3f) * 1.3f, 0.5f));
+            m_lights.sunDir = glm::vec4(dir, 0.0f);
+            const glm::vec3 sunCol = glm::mix(glm::vec3(1.0f, 0.98f, 0.92f), glm::vec3(1.0f, 0.62f, 0.38f), dusk);
+            const glm::vec3 col    = glm::mix(glm::vec3(0.55f, 0.65f, 1.0f), sunCol, dayK);
+            m_lights.sunColorIntensity = {col, std::getenv("WSIM_NIGHT") ? 0.0f : glm::mix(0.16f, 0.9f, dayK)};
+            m_lights.ambient = {glm::mix(glm::vec3(0.7f, 0.8f, 1.2f), glm::vec3(1.0f), dayK), std::getenv("WSIM_NIGHT") ? 0.12f : glm::mix(0.16f, 0.6f, dayK)};
+            sky = glm::mix(glm::vec3(0.02f, 0.03f, 0.075f), kSkyColor, dayK) + glm::vec3(0.95f, 0.5f, 0.3f) * (0.28f * dusk);
+        }
+        {
+            const glm::vec3 c = sky / (sky + glm::vec3(1.0f));
+            m_context->setClearColor({std::pow(c.r, 1.0f / 2.2f), std::pow(c.g, 1.0f / 2.2f), std::pow(c.b, 1.0f / 2.2f), 1.0f});
+        }
+        m_lights.fogColorDensity = {sky, 0.0009f};
         m_lights.fogParams.x     = 0.015f;
         m_lights.fogParams.y     = static_cast<float>(ImGui::GetTime());
         CascadeSet cascades;
@@ -1377,7 +1404,7 @@ void Application::drawInspector(const CameraData& cam) {
         if (cr->hasShield()) kit += " · щит";
         {
             std::string know;
-            for (auto [sk, nm] : {std::pair{kSkillSpear, "копьё"}, {kSkillShield, "щит"}, {kSkillBridge, "мост"}, {kSkillBarricade, "баррикада"}, {kSkillTrap, "ловушка"}, {kSkillBucket, "ведро"}, {kSkillStockpile, "склад"}})
+            for (auto [sk, nm] : {std::pair{kSkillSpear, "копьё"}, {kSkillShield, "щит"}, {kSkillBridge, "мост"}, {kSkillBarricade, "баррикада"}, {kSkillTrap, "ловушка"}, {kSkillBucket, "ведро"}, {kSkillStockpile, "склад"}, {kSkillHut, "хижина"}})
                 if (cr->knows(sk)) { know += know.empty() ? "" : ", "; know += nm; }
             if (!know.empty()) kit += " · умеет: " + know;
         }
@@ -1627,6 +1654,8 @@ void Application::renderDebugUI() {
         std::size_t herb = 0, pred = 0;
         for (const Animal& a : m_world.fauna().animals()) (isPredator(a.species) ? pred : herb)++;
         const FaunaStats& fs = m_world.fauna().stats();
+        ImGui::Text("Time %.0f s, sun %.2f, night %.2f, huts built %llu, bites softened by walls %llu", m_world.time(), m_world.sunElevation(), m_world.nightness(),
+                    static_cast<unsigned long long>(m_world.stats().hutsBuilt), static_cast<unsigned long long>(m_world.stats().bitesBlockedByWalls));
         ImGui::Text("Meat kills %llu, buckets %llu, bushes watered %llu, stockpiles %llu (stored %llu, taken %llu), thirst deaths %llu", static_cast<unsigned long long>(m_world.stats().meatKills),
                     static_cast<unsigned long long>(m_world.stats().bucketsMade), static_cast<unsigned long long>(m_world.stats().bushesWatered), static_cast<unsigned long long>(m_world.stats().stockpilesBuilt),
                     static_cast<unsigned long long>(m_world.stats().logsStored), static_cast<unsigned long long>(m_world.stats().logsTaken), static_cast<unsigned long long>(m_world.stats().deathsThirst));

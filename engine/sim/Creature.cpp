@@ -104,6 +104,7 @@ const char* behaviorName(Behavior b) noexcept {
         case Behavior::Drink:     return "Пьёт";
         case Behavior::Haul:      return "Носит брёвна";
         case Behavior::Hunt:      return "Охотится";
+        case Behavior::Sleep:     return "Спит";
         case Behavior::Count:     break;
     }
     return "?";
@@ -196,7 +197,7 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
             dec.eat   = dec.pick = dec.serve = dec.chop = false;
             dec.craft = 0;
             dec.build = 0;
-            dec.drink = dec.hunt = false;
+            dec.drink = dec.hunt = dec.sleep = false;
             dec.stock = 0;
             dec.alarm = std::max(dec.alarm, 0.8f);
             behavior  = Behavior::Flee;
@@ -210,13 +211,13 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
     serveRequest = dec.serve ? 1 : 0;
     buildRequest = 0;
     if (dec.build != 0) {
-        buildProgress += dt / (dec.build == 1 ? 1.2f : (dec.build == 2 ? 3.0f : (dec.build == 4 ? 3.0f : 2.0f)));
+        buildProgress += dt / (dec.build == 1 ? 1.2f : (dec.build == 2 ? 3.0f : (dec.build == 4 ? 3.0f : (dec.build == 5 ? 5.0f : 2.0f))));
         if (buildProgress >= 1.0f) {
             buildProgress = 0.0f;
             buildRequest  = static_cast<std::uint8_t>(dec.build);
             buildAt       = dec.buildAt;
             buildYaw      = dec.buildYaw;
-            buildTimer    = dec.build == 1 ? 0.3f : (dec.build == 2 ? 25.0f : (dec.build == 4 ? 60.0f : 40.0f));
+            buildTimer    = dec.build == 1 ? 0.3f : (dec.build == 2 ? 25.0f : (dec.build == 4 ? 60.0f : (dec.build == 5 ? 90.0f : 40.0f)));
         }
     } else {
         buildProgress = 0.0f;
@@ -224,6 +225,10 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
     huntRequest  = dec.hunt ? 1 : 0;
     stockRequest = static_cast<std::uint8_t>(dec.stock);
     huntTimer    = std::max(0.0f, huntTimer - dt);
+    if (dec.sleep) {                   // сон: обмен веществ втрое медленнее
+        needs.hunger = std::max(0.0f, needs.hunger - 0.0067f * metab * dt);
+        thirst       = std::max(0.0f, thirst - 0.0015f * dt);
+    }
     if (dec.drink) {                   // пьёт у воды и набирает ведро
         thirst = std::max(0.0f, thirst - 0.3f * dt);
         if (hasBucket) water = std::min(kBucketCapacity, water + 1.2f * dt);

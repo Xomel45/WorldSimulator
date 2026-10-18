@@ -136,9 +136,10 @@ Decision decide(Creature& c, const SenseInputs& s, const BrainOutputs& raw, floa
     const bool  canCraft = tool != 0 && c.wood >= c.woodNeeded();
     if (canCraft && n.fear < 0.4f && n.hunger < 0.7f) S(Behavior::Craft) = 1.2f + 1.2f * danger01;
     const bool stockSeen = s.stockDist < kNoTarget;
+    const bool forHut    = c.knows(kSkillHut) && s.hutDist >= kNoTarget && c.wood < kHutWood;   // нет хижины рядом -- рубит на неё
     const bool forStock  = c.knows(kSkillStockpile) && stockSeen && s.stockAmount < 24.0f && c.wood < kMaxWood;   // рубит про запас общине
-    if (!canCraft && (c.wantsWood() || forStock) && treeSeen && n.fear < 0.4f && n.hunger < 0.6f && tired < 0.65f)
-        S(Behavior::Chop) = c.wantsWood() ? 0.55f + 1.3f * danger01 : 0.45f;
+    if (!canCraft && (c.wantsWood() || forStock || forHut) && treeSeen && n.fear < 0.4f && n.hunger < 0.6f && tired < 0.65f)
+        S(Behavior::Chop) = c.wantsWood() ? 0.55f + 1.3f * danger01 : (forHut ? 1.3f : 0.45f);
     // Склад: берёт нужные брёвна оттуда (вместо рубки) и сдаёт излишки.
     const bool withdrawNow = stockSeen && s.stockAmount >= 1.0f && c.wantsWood() && s.stockDist < 45.0f;
     const bool depositNow  = c.knows(kSkillStockpile) && stockSeen && c.wood > c.woodGoal() + 0.99f;
@@ -146,6 +147,11 @@ Decision decide(Creature& c, const SenseInputs& s, const BrainOutputs& raw, floa
         if (withdrawNow) S(Behavior::Haul) = 1.6f + 1.2f * danger01;
         else if (depositNow) S(Behavior::Haul) = 1.3f;
     }
+    // Сон: ночью не голодный и не напуганный идёт в хижину (если знает, где) и спит; без хижины -- там, где стоит.
+    c.hutNear = s.hutDist < kNoTarget;
+    const bool wasSleeping = c.behavior == Behavior::Sleep;
+    if (s.night > 0.5f && n.fear < 0.3f && n.hunger < (wasSleeping ? 0.85f : 0.65f))
+        S(Behavior::Sleep) = s.night * (1.3f + 1.4f * (1.0f - n.energy));
     // Жажда: идёт к берегу, пока не напьётся (и набирает ведро); не знает, где вода, -- ищет её.
     const bool waterSeen = s.waterDist < kNoTarget;
     if (s.terrain && waterSeen && (c.thirst > 0.65f || (wasDrinking && (c.thirst > 0.08f || (c.hasBucket && c.water < 2.9f))) || (c.hasBucket && c.water < 1.5f && c.thirst > 0.25f)))
@@ -192,7 +198,12 @@ Decision decide(Creature& c, const SenseInputs& s, const BrainOutputs& raw, floa
             buildKind = 4;
             buildAt   = here + glm::vec2{std::cos(c.wanderHeading), std::sin(c.wanderHeading)} * 1.5f;
         }
-        if (buildKind) S(Behavior::Build) = buildKind == 1 ? 2.6f : (buildKind == 4 ? 1.8f : 2.4f);
+        // Хижина: нет другой в 12 единицах, дом рядом, есть брёвна, спокойно.
+        if (!buildKind && c.knows(kSkillHut) && c.wood >= kHutWood && s.hutDist > 12.0f && n.hunger < 0.6f && n.fear < 0.3f) {
+            buildKind = 5;
+            buildAt   = here + glm::vec2{std::cos(c.wanderHeading), std::sin(c.wanderHeading)} * 2.5f;
+        }
+        if (buildKind) S(Behavior::Build) = buildKind == 1 ? 2.6f : (buildKind == 4 ? 1.8f : (buildKind == 5 ? 1.9f : 2.4f));
     }
 
     // Базовая линия: бродит, любопытные -- охотнее; идущий искать новые места не бросает это на полпути.
@@ -277,6 +288,10 @@ Decision decide(Creature& c, const SenseInputs& s, const BrainOutputs& raw, floa
             break;
         case Behavior::Craft:     speed = 0.0f; d.craft = tool; break;
         case Behavior::Build:     speed = 0.0f; d.build = buildKind; d.buildAt = buildAt; d.buildYaw = buildYaw; break;
+        case Behavior::Sleep:
+            if (s.hutDist < kNoTarget && s.hutDist > 2.4f) { dir = dirTo(c.position, s.hutPos); speed = 0.6f * std::clamp(s.hutDist / 6.0f, 0.4f, 1.0f); }
+            else { speed = 0.0f; d.rest = true; d.sleep = true; }
+            break;
         case Behavior::Drink:
             dir = dirTo(c.position, s.waterPos);
             if (s.waterDist <= 2.2f) { speed = 0.0f; d.drink = true; }

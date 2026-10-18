@@ -77,6 +77,27 @@ MeshData buildStockpile() {
     return m;
 }
 
+MeshData buildHut() {
+    MeshData m;
+    constexpr float kW = 1.1f, kD = 1.1f, kH = 1.15f;
+    // Стены: ярусы брёвен (по 4 слоя), у передней стены (+Z) проём посередине.
+    for (int layer = 0; layer < 4; ++layer) {
+        const float y0 = 0.29f * static_cast<float>(layer), y1 = y0 + 0.27f;
+        const glm::vec3 c = tint(kWood, 0.88f + 0.05f * static_cast<float>(layer % 2));
+        addBox(m, {-kW, y0, -kD}, {kW, y1, -kD + 0.18f}, c);                      // задняя
+        addBox(m, {-kW, y0, -kD + 0.18f}, {-kW + 0.18f, y1, kD - 0.18f}, c);       // боковые
+        addBox(m, {kW - 0.18f, y0, -kD + 0.18f}, {kW, y1, kD - 0.18f}, c);
+        if (layer >= 3) addBox(m, {-kW, y0, kD - 0.18f}, {kW, y1, kD}, c);       // передняя целиком над дверью
+        else {
+            addBox(m, {-kW, y0, kD - 0.18f}, {-0.3f, y1, kD}, c);
+            addBox(m, {0.3f, y0, kD - 0.18f}, {kW, y1, kD}, c);
+        }
+    }
+    addGabledRoof(m, {-kW, kH, -kD}, {kW, kH + 0.85f, kD}, 0.25f, /*ridgeAlongZ=*/true, tint(kDarkWood, 1.1f), kWood);
+    addBox(m, {-0.3f, 0.0f, kD - 0.05f}, {0.3f, 0.04f, kD + 0.5f}, kLightWood);   // порог-настил
+    return m;
+}
+
 MeshData buildBucket() {
     MeshData m;
     addBox(m, {-0.13f, 0.0f, -0.13f}, {0.13f, 0.28f, 0.13f}, kWood);

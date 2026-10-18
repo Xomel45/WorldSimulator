@@ -844,6 +844,21 @@ Creatures now cut trees down, carry logs, craft tools and fight predators with t
 - Not done: houses/shelters (the stockpile is the only community building; creatures do not live in it), sharing meat, bucket-watering by plan (only while eating), thirst of animals, wells/irrigation, droughts, animals carrying
   off stock, a second stockpile for a far-away group beyond the 25/60-unit rule being tuned, trade.
 
+### Stage 4: day and night, sleep, huts
+
+- **Day/night** (`World::sunElevation(time)`, `nightness(time)`, `kDayLength = 300 s`; the world starts in the morning, `sin(2π(t/300+0.08))`; "night" = smoothstep of elevation -0.1..-0.4, ~40% of the cycle). `Application` lights each frame from it:
+  sun (warm at dusk/dawn) by day, a weak bluish "moon" from the mirrored side by night (never below horizon, so cascaded shadows keep working), ambient 0.6 → 0.16 and tinted, sky/fog/clear colour fade to a dark blue
+  with an orange dusk term; the menu is always day. `WSIM_TIME=seconds` renders a given moment (frame dumps), `WSIM_NIGHT=1` still kills the sun. Debug window shows time/sun/night.
+- **Sleep** (`Behavior::Sleep` "Спит", `SenseInputs::night`, set **only in a world with terrain**, so flat test worlds never sleep): score `night·(1.3 + 1.4·(1-energy))` when night > 0.5, fear < 0.3, hunger < 0.65 (kept until 0.85);
+  walks to the nearest hut within 40 units (stops within 2.4) or sleeps where it stands; sleeping is `Rest` (restDesire → energy) with a 3x slower hunger/thirst (`Decision::sleep`). Measured: 80-94% of creatures asleep at night, populations
+  and starvation unchanged within noise, nobody dies of thirst.
+- **Hut** (`StructureKind::Hut`, `kSkillHut`, 4 logs, 5 s, cooldown 90 s; `kAllSkills = 255`): built where it stands when no hut is within 12 units, ≥6 apart (`placeStructure`); invented mostly at night (rate `0.0008 + 0.008·night`, needs the spear).
+  Creatures that know it want 4 logs while no hut is near (`woodGoal` via `Creature::hutNear`, saved in **v10**, so a save is still bit-exact) and chop for it (score 1.3). A hut blocks animals within `kHutRadius = 1.5` (same hard block + look-ahead as the barricade)
+  and **softens bites to 25%** for creatures within 3.2 units of its centre (`bitesBlockedByWalls`). Measured: 0-6 huts per 20 sim-min across the probe seeds (slow: it needs 4 logs and the skill chain).
+- Model `procgen/StructGen::buildHut` (log walls with a doorway, gabled roof); the demo (`WSIM_DEMO_CIV=1`) places two huts on the nearest land.
+- Not done: **division of labour** (no roles — everyone builds/chops/hunts by the same rules), creatures do not live in or "own" huts (no family homes, no sleeping inside the model, no door), night makes no difference to predators or
+  animals (no nocturnal species, no sleeping animals), windows do not glow, no seasons/weather, no light sources (campfire) for creatures at night, sleep does not wake on noise except by fear > 0.3.
+
 ## Temporal upscaler and frame generation (`VulkanTemporal.cpp`, `taau.comp`, `framegen.comp`)
 
 Own implementation (not AMD's FSR 2/3): the official FidelityFX SDK builds with MSVC/`.bat` scripts, has HLSL shaders that
@@ -1256,10 +1271,11 @@ source of truth for the hex constants at the top of `MainMenu.cpp`.
 - [x] Resources/tools stage 1: logging, spear, shield (see "Resources and tools")
 - [x] Civilization stage 2: bridges, barricades, traps, visible gear (see "Stage 2")
 - [x] Civilization stage 3: stockpile, buckets + thirst, meat hunting (see "Stage 3")
-- [ ] Civilization stage 4: houses/shelters for creatures, day/night sleep, division of labour
+- [x] Civilization stage 4: day/night, sleep, huts (see "Stage 4")
+- [ ] Civilization stage 5: division of labour, fire/campfire, family homes, nocturnal animals, seasons
 - [ ] More powers (fire, rain, disasters, food, smite individuals), undo
 - [x] Sound: procedural synth + miniaudio (see "Sound")
-- [ ] Day/night cycle (lantern and `WSIM_NIGHT` are the hooks; sound ambience has a hook too)
+- [x] Day/night cycle (see "Stage 4"; night ambience sound still missing)
 - [ ] Civilization-scale systems (out of scope until the above lands)
 
 ## Key conventions

@@ -108,10 +108,11 @@ private:
     std::unordered_map<std::uint64_t, glm::vec3>       m_prevAnimalPos;
     std::vector<SceneObject>           m_foodObjects;
     // Постройки существ и снаряжение: настил мостов (кэш по сиду и числу настилов), баррикады/ловушки, копья/щиты/брёвна на существах.
-    std::shared_ptr<Mesh>                m_plankMesh, m_barricadeMesh, m_trapMesh, m_spearMesh, m_shieldMesh, m_stockMesh, m_bucketMesh;
+    std::shared_ptr<Mesh>                m_plankMesh, m_barricadeMesh, m_trapMesh, m_spearMesh, m_shieldMesh, m_stockMesh, m_bucketMesh, m_hutMesh;
     std::array<std::shared_ptr<Mesh>, 4> m_logMeshes;
     std::vector<SceneObject>             m_bridgeObjects, m_structObjects, m_gearObjects;
     std::uint64_t                        m_bridgeSig = ~0ull;
+    std::optional<float>                 m_timeOverride;   // WSIM_TIME=сек: свет по этому времени, а не мировому (проверка кадров)
 
     // Рельеф — независим от World в этом раунде (чисто визуальный/
     // географический слой, никакого геймплейного сопряжения, см. CLAUDE.md).
