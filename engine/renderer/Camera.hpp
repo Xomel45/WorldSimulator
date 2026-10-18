@@ -42,10 +42,22 @@ public:
         m_distance = glm::clamp(m_distance + dDistance, kMinDistance, kMaxDistance);
     }
 
+    // Рельеф меняется (силы бога), так что высоту точки обзора ведёт Application.
+    void setTargetY(float y) noexcept { m_target.y = y; }
+
+    // Загрузка сохранения: положение камеры целиком (значения подгоняются под допустимые пределы).
+    void restore(const glm::vec3& target, float yaw, float pitch, float distance) noexcept {
+        m_target   = target;
+        m_yaw      = yaw;
+        m_pitch    = glm::clamp(pitch, kMinPitch, kMaxPitch);
+        m_distance = glm::clamp(distance, kMinDistance, kMaxDistance);
+    }
+
     [[nodiscard]] glm::vec3 target() const noexcept { return m_target; }
     [[nodiscard]] float     yaw() const noexcept { return m_yaw; }
     [[nodiscard]] float     pitch() const noexcept { return m_pitch; }
     [[nodiscard]] float     distance() const noexcept { return m_distance; }
+    [[nodiscard]] float     nearPlane() const noexcept { return m_near; }
 
     // Направление от камеры к target (нормализованный вектор).
     [[nodiscard]] glm::vec3 front() const noexcept {
@@ -84,8 +96,8 @@ private:
     float     m_pitch    = -45.0f;
     float     m_distance = 25.0f;
     float     m_fov      = 50.0f;
-    float     m_near     = 0.1f;
-    float     m_far      = 1000.0f;
+    float     m_near     = 0.5f;
+    float     m_far      = 4000.0f;  // дальние чанки (LOD) видны до ~2000 юнитов
     float     m_aspect   = 1920.0f / 1080.0f;
 };
 

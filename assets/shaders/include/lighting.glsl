@@ -2,9 +2,13 @@
 // Подключающий шейдер обязан:
 //   1. объявить CameraUBO (set=0, binding=0) ДО include
 //   2. определить float shadowFactor(vec3 origin, vec3 dir, float maxDist)
-//      (1.0 = полностью освещено, 0.0 = полная тень)
+//      (1.0 = полностью освещено, 0.0 = полная тень) -- для точечных/фонарика
+//   3. тени от солнца: растровый шейдер сцены делает #define WSIM_RASTER_SHADOWS до
+//      include и получает каскадную карту теней (sunShadow ниже, binding 4); остальные
+//      (RT-варианты, path tracer) -- солнечный луч через их же shadowFactor
 
 #define WSIM_MAX_POINT_LIGHTS 8
+#define WSIM_SHADOW_CASCADES 4
 
 layout(set = 0, binding = 1) uniform LightsUBO {
     vec4  ambient;                                // rgb, w = интенсивность
@@ -18,9 +22,18 @@ layout(set = 0, binding = 1) uniform LightsUBO {
     ivec4 counts;                                 // x = число точечных источников
     vec4  fogColorDensity;                        // rgb = цвет тумана, w = базовая плотность
     vec4  fogParams;                              // x = height falloff, y = время (с), zw резерв
+    mat4  cascadeVP[WSIM_SHADOW_CASCADES];         // мир -> клип света по каскадам
+    vec4  cascadeSplit;                            // дальние границы каскадов по глубине вида
+    vec4  cascadeTexel;                            // размер текселя каскада в юнитах мира
+    vec4  shadowParams;                            // x = тени включены, y = 1/размер карты, z = смещение глубины
 } lights;
 
+#ifdef WSIM_RASTER_SHADOWS
+layout(set = 0, binding = 4) uniform sampler2DArrayShadow shadowMap;
+#endif
+
 float shadowFactor(vec3 origin, vec3 dir, float maxDist);
+float sunShadow(vec3 P, vec3 N);
 
 // Физически-правдоподобное затухание с жёсткой границей радиуса (UE-style)
 float distAtten(float d, float radius) {
@@ -45,7 +58,7 @@ vec3 shade(vec3 P, vec3 N, vec3 V, vec3 albedo, float ao) {
     if (lights.sunColorIntensity.w > 0.0) {
         vec3 L = normalize(lights.sunDir.xyz);
         if (dot(N, L) > 0.0) {
-            float sh = shadowFactor(P + N * 0.02, L, 1000.0);
+            float sh = sunShadow(P, N);
             if (sh > 0.0) {
                 vec3 c = lights.sunColorIntensity.rgb * lights.sunColorIntensity.w;
                 lit += blinnPhong(albedo, N, V, L, 16.0, 0.05) * c * sh;
@@ -104,42 +117,51 @@ float wsimVNoise(vec3 p) {
                    mix(wsimHash13(i + vec3(0,1,1)), wsimHash13(i + vec3(1,1,1)), f.x), f.y), f.z);
 }
 
-// ─── Процедурный бетон (3D value-noise в world space, без UV) ────────────────
-// 3D-шум бесшовен на любой ориентации грани → не нужен triplanar/развёртка.
-// concreteH — поле «высоты» поверхности (2 октавы fbm).
-float concreteH(vec3 p) {
-    return wsimVNoise(p * 3.5) * 0.65 + wsimVNoise(p * 9.45) * 0.30;
+// ─── Тени от солнца: каскадная карта ─────────────────────────────────────────
+#ifdef WSIM_RASTER_SHADOWS
+float wsimIgn(vec2 p) {  // interleaved gradient noise: дешёвый шум на пиксель, чтобы PCF не давал полос
+    return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
 }
-// Пятнистое потемнение albedo + бамп нормали из градиента высоты (surface
-// gradient: убираем компоненту вдоль N, сдвигаем нормаль по тангенциальной).
-// Применять только к бетону (маска — fragColor.a у вызывающего).
-vec3 concreteSurface(vec3 P, inout vec3 N) {
-    const float e = 0.06;
-    float h  = concreteH(P);
-    vec3  grad = (vec3(concreteH(P + vec3(e, 0, 0)),
-                       concreteH(P + vec3(0, e, 0)),
-                       concreteH(P + vec3(0, 0, e))) - h) / e;
-    N = normalize(N - 0.05 * (grad - N * dot(grad, N)));
 
-    // Вертикальные потёки грязи (шум растянут по Y) + каверна: в углублениях
-    // (низкий h) темнее, подчёркивая микрорельеф под скользящим фонариком.
-    float grime  = wsimVNoise(vec3(P.x * 7.0, P.y * 0.6, P.z * 7.0));
-    float cavity = mix(0.72, 1.0, smoothstep(0.05, 0.35, h));
+float sunShadow(vec3 P, vec3 N) {
+    if (lights.shadowParams.x < 0.5) return 1.0;
+    float depth = -(view * vec4(P, 1.0)).z;
+    if (depth >= lights.cascadeSplit.w) return 1.0;
+    int c = depth < lights.cascadeSplit.x ? 0 : depth < lights.cascadeSplit.y ? 1 : depth < lights.cascadeSplit.z ? 2 : 3;
 
-    // Детерминированная вариация по этажу: floorIndex = worldY/H, хэш с сидом
-    // (fogParams.z = высота этажа, .w = сид). Функция от (этаж, сид) → одинакова
-    // на всех клиентах (кооп-детерминизм), но этажи не клоны.
-    vec3  tint = vec3(1.0);
-    float fvar = 1.0;
-    float H = lights.fogParams.z;
-    if (H > 0.0) {
-        float fi = floor(P.y / H + 0.001);
-        float fh = fract(sin(fi * 12.9898 + lights.fogParams.w * 7.13) * 43758.5453);
-        fvar = 0.85 + 0.30 * fh;                                  // светлее/темнее
-        tint = mix(vec3(1.0), vec3(1.05, 0.98, 0.92), fh);       // тёплый↔холодный разброс
+    // Нормальное смещение: сдвигаем точку вдоль нормали на пару текселей, сильнее на скользящем свету.
+    vec3  L   = normalize(lights.sunDir.xyz);
+    float ndl = clamp(dot(N, L), 0.0, 1.0);
+    vec3  Pn  = P + N * lights.cascadeTexel[c] * (1.0 + 2.5 * (1.0 - ndl));
+    vec4  sc  = lights.cascadeVP[c] * vec4(Pn, 1.0);
+    vec3  p   = sc.xyz / sc.w;
+    vec2  uv  = p.xy * 0.5 + 0.5;
+    // Смещение глубины в единицах карты: глубина каскада D = 1/|ряд z матрицы|; берём
+    // ~1.5 текселя плюс добавка на скользящем свету (наклон поверхности к солнцу).
+    float invD = length(vec3(lights.cascadeVP[c][0][2], lights.cascadeVP[c][1][2], lights.cascadeVP[c][2][2]));
+    float tanT = sqrt(max(1.0 - ndl * ndl, 0.0)) / max(ndl, 0.15);
+    float ref  = p.z - invD * lights.cascadeTexel[c] * lights.shadowParams.z * (1.5 + 0.5 * min(tanT, 4.0));
+
+    // PCF по диску Вогеля с поворотом на пиксель (12 точек, каждая -- ещё и аппаратное 2x2).
+    const int   kTaps   = 12;
+    float       rot     = 6.2831853 * wsimIgn(gl_FragCoord.xy);
+    float       radius  = (1.5 + 0.35 * float(c)) * lights.shadowParams.y;  // дальние каскады мягче
+    float       lit     = 0.0;
+    for (int i = 0; i < kTaps; ++i) {
+        float r = sqrt((float(i) + 0.5) / float(kTaps));
+        float a = float(i) * 2.39996323 + rot;
+        lit += texture(shadowMap, vec4(uv + vec2(cos(a), sin(a)) * r * radius, float(c), ref));
     }
-    return vec3((0.80 + 0.35 * h) * cavity * (0.86 + 0.14 * grime) * fvar) * tint;
+    lit /= float(kTaps);
+
+    float fade = smoothstep(lights.cascadeSplit.w * 0.8, lights.cascadeSplit.w, depth);
+    return mix(lit, 1.0, fade);
 }
+#else
+float sunShadow(vec3 P, vec3 N) {
+    return shadowFactor(P + N * 0.02, normalize(lights.sunDir.xyz), 1000.0);
+}
+#endif
 
 // Экспоненциальный туман: высотный спад (гуще у пола) + дрейф плотности во времени.
 vec3 applyFog(vec3 color, vec3 P, vec3 camPos) {

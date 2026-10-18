@@ -1,0 +1,5 @@
+add_executable(shadows_tests shadows_tests.cpp)
+target_link_libraries(shadows_tests PRIVATE glm::glm)
+target_include_directories(shadows_tests PRIVATE ${CMAKE_SOURCE_DIR}/engine ${CMAKE_SOURCE_DIR}/engine/sim/tests)
+target_compile_definitions(shadows_tests PRIVATE GLM_FORCE_DEPTH_ZERO_TO_ONE)
+add_test(NAME shadows_tests COMMAND shadows_tests)

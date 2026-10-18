@@ -5,6 +5,7 @@
 #include "renderer/Lights.hpp"
 #include "renderer/PathTracer.hpp"
 #include "renderer/RtSystem.hpp"
+#include "renderer/Shadows.hpp"
 
 #include <vulkan/vulkan.h>
 #include <glm/glm.hpp>
@@ -39,6 +40,8 @@ struct SwapchainSupport {
 };
 
 // ─── VulkanContext ─────────────────────────────────────────────────────────────
+inline constexpr int kShadowCascadesCount = kShadowCascades;
+
 class VulkanContext {
 public:
     VulkanContext(Window& window, bool vsync, std::string shaderDir);
@@ -135,6 +138,28 @@ public:
 
     [[nodiscard]] bool isFrameValid() const noexcept { return m_frameValid; }
 
+    // ── Тени от солнца (каскадные карты, см. Shadows.hpp) ─────────────────────
+    // Порядок кадра: beginFrame -> updateCamera/updateLights -> для каждого каскада
+    // beginShadowCascade/drawShadowMesh.../endShadowCascade -> beginScenePass ->
+    // drawMesh... -> beginUIPass -> endFrame. Если теней в кадре нет, каскады
+    // можно пропустить целиком (в UBO shadowParams.x = 0).
+    static constexpr int kShadowMapSize = 2048;
+    void beginShadowCascade(int cascade, const glm::mat4& lightViewProj);
+    void drawShadowMesh(VkBuffer vbo, VkBuffer ibo, uint32_t indexCount, const glm::mat4& model);
+    void endShadowCascade(int cascade);
+
+    // Открывает основной проход сцены (раньше это делал beginFrame).
+    void beginScenePass();
+
+    // Отладка: сохранить сцену следующего кадра (до UI) в PPM. Для самопроверки визуала без захвата экрана.
+    void requestSceneDump(std::string path) { m_dumpPath = std::move(path); }
+
+    // Отладка: сохранить готовый кадр (с интерфейсом: меню, панели) в PPM -- единственный способ увидеть UI без захвата экрана.
+    void requestFrameDump(std::string path) { m_dumpFinalPath = std::move(path); }
+
+    // Цвет фона/неба (линейный перцептивный, как у offscreen: см. tonemapEncode).
+    void setClearColor(const glm::vec4& color) noexcept { m_clearColor = color; }
+
     // ── Accessors ─────────────────────────────────────────────────────────────
     [[nodiscard]] VkInstance       instance() const noexcept { return m_instance; }
     [[nodiscard]] VkDevice         device() const noexcept { return m_device; }
@@ -169,6 +194,8 @@ private:
     void createCameraUBOs();
     void createDescriptors();
     void createScenePipeline();
+    void createShadowResources();     // карта теней (массив глубины), sampler
+    void createShadowPipeline();      // depth-only проход
     void createOffscreenResources();
     void createBlurPipeline();
     void createVisionPipeline();      // defocus-проход (симуляция зрения)
@@ -362,6 +389,23 @@ private:
     VkDescriptorSetLayout        m_descSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool             m_descPool      = VK_NULL_HANDLE;
     std::vector<VkDescriptorSet> m_descSets;     // kMaxFrames sets
+
+    // ── Тени ──────────────────────────────────────────────────────────────────
+    VkImage          m_shadowImage   = VK_NULL_HANDLE;   // D32, kShadowCascades слоёв
+    VkDeviceMemory   m_shadowMemory  = VK_NULL_HANDLE;
+    VkImageView      m_shadowArrayView = VK_NULL_HANDLE; // для сэмплирования
+    VkImageView      m_shadowLayerViews[kShadowCascadesCount] = {};  // для рендера по слоям
+    VkSampler        m_shadowSampler = VK_NULL_HANDLE;   // сравнивающий (PCF железом)
+    VkPipelineLayout m_shadowPipelineLayout = VK_NULL_HANDLE;
+    VkPipeline       m_shadowPipeline = VK_NULL_HANDLE;
+    glm::mat4        m_shadowLightVP{1.0f};              // матрица текущего каскада (push constant)
+    glm::vec4        m_clearColor{0.012f, 0.006f, 0.006f, 1.0f};
+    std::string      m_dumpPath;       // непусто -- снимок запрошен
+    GpuBuffer        m_dumpBuffer;
+    bool             m_dumpPending = false;
+    std::string      m_dumpFinalPath;  // снимок готового кадра
+    GpuBuffer        m_dumpFinalBuffer;
+    bool             m_dumpFinalPending = false;
 
     // ── Scene pipeline (обычный + вариант с RT-тенями) ────────────────────────
     VkPipelineLayout m_scenePipelineLayout = VK_NULL_HANDLE;

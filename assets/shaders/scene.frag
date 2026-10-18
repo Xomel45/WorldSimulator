@@ -11,21 +11,42 @@ layout(set = 0, binding = 0) uniform CameraUBO {
     vec4 camPos;
 };
 
+#define WSIM_RASTER_SHADOWS
 #include "lighting.glsl"
+#include "materials.glsl"
 
 layout(location = 0) out vec4  outColor;
 layout(location = 1) out float outDist;   // расстояние камера→фрагмент (для defocus)
 
-// Растеризационный вариант: теней нет, всё освещено
+// Точечные и фонарик в растеризации без теней; тень солнца -- карта теней (sunShadow в lighting.glsl)
 float shadowFactor(vec3 origin, vec3 dir, float maxDist) { return 1.0; }
 
 void main() {
-    vec3 N   = normalize(fragNormal);
-    vec3 V   = normalize(camPos.xyz - fragPos);
-    vec3 albedo = fragColor.rgb;
-    if (fragColor.a > 0.5) albedo *= concreteSurface(fragPos, N);  // бетон: деталь + бамп
+    vec3  N      = normalize(fragNormal);
+    vec3  V      = normalize(camPos.xyz - fragPos);
+    float dist   = length(camPos.xyz - fragPos);
+    vec3  albedo = fragColor.rgb;
+    float fresnel = 0.0;
+    bool  water   = matIs(fragColor.a, MAT_WATER);
+
+    if (matIs(fragColor.a, MAT_TERRAIN))        albedo = terrainMaterial(fragPos, N, dist);
+    else if (water)                              albedo = waterMaterial(fragPos, N, V, dist, fresnel);
+    else if (matIs(fragColor.a, MAT_CREATURE))   albedo = creatureMaterial(albedo, fragPos);
+
     vec3 lit = shade(fragPos, N, V, albedo, 1.0);
+
+    if (water) {
+        // Вода отражает небо (цвет тумана = цвет горизонта) и солнечный блик.
+        vec3 sky = lights.fogColorDensity.w > 0.0 ? lights.fogColorDensity.rgb : vec3(0.5, 0.65, 0.85);
+        lit = mix(lit, sky, clamp(fresnel * 0.75 + 0.05, 0.0, 1.0));
+        if (lights.sunColorIntensity.w > 0.0) {
+            vec3  L    = normalize(lights.sunDir.xyz);
+            float glint = pow(max(dot(reflect(-L, N), V), 0.0), 220.0);
+            lit += lights.sunColorIntensity.rgb * lights.sunColorIntensity.w * glint * 1.4 * sunShadow(fragPos, vec3(0.0, 1.0, 0.0));
+        }
+    }
+
     lit = applyFog(lit, fragPos, camPos.xyz);
     outColor = vec4(tonemapEncode(lit), 1.0);
-    outDist  = length(camPos.xyz - fragPos);
+    outDist  = dist;
 }

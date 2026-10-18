@@ -27,3 +27,7 @@ target_link_libraries(engine_renderer PUBLIC
 target_compile_definitions(engine_renderer PUBLIC
     GLM_FORCE_DEPTH_ZERO_TO_ONE
 )
+
+if(BUILD_TESTING)
+    add_subdirectory(tests)
+endif()

@@ -14,6 +14,7 @@ layout(set = 0, binding = 0) uniform CameraUBO {
 };
 
 #include "lighting.glsl"
+#include "materials.glsl"
 
 layout(set = 0, binding = 2) uniform accelerationStructureEXT topLevelAS;
 
@@ -193,7 +194,8 @@ void main() {
     vec3  V  = normalize(camPos.xyz - fragPos);
 
     vec3 albedo = fragColor.rgb;
-    if (fragColor.a > 0.5) albedo *= concreteSurface(fragPos, N);  // бетон: деталь + бамп
+    if (matIs(fragColor.a, MAT_TERRAIN)) albedo = terrainMaterial(fragPos, N, length(camPos.xyz - fragPos));
+    else if (matIs(fragColor.a, MAT_CREATURE)) albedo = creatureMaterial(albedo, fragPos);
 
     gShadowSamples = 4;                           // первичные тени — мягкие
     float ao  = computeAO(fragPos, N);

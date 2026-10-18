@@ -111,8 +111,10 @@ VulkanContext::VulkanContext(Window& window, bool vsync, std::string shaderDir)
     createCommandPool();
     createCommandBuffers();
     createCameraUBOs();
+    createShadowResources();
     createDescriptors();
     createScenePipeline();
+    createShadowPipeline();
     createUpscalePipelines();
     createUpscaleTargets();
     if (m_rtPipeline)
@@ -150,6 +152,15 @@ VulkanContext::~VulkanContext() {
     // Ray tracing (AS, geo-table, fps — всё внутри RtSystem)
     m_pt.destroy();
     m_rt.destroy();
+
+    // Shadow map + pipeline
+    vkDestroyPipeline(m_device, m_shadowPipeline, nullptr);
+    vkDestroyPipelineLayout(m_device, m_shadowPipelineLayout, nullptr);
+    vkDestroySampler(m_device, m_shadowSampler, nullptr);
+    for (auto v : m_shadowLayerViews) vkDestroyImageView(m_device, v, nullptr);
+    vkDestroyImageView(m_device, m_shadowArrayView, nullptr);
+    vkFreeMemory(m_device, m_shadowMemory, nullptr);
+    vkDestroyImage(m_device, m_shadowImage, nullptr);
 
     // Scene pipelines
     vkDestroyPipeline(m_device, m_scenePipelineRT, nullptr);
@@ -273,12 +284,18 @@ void VulkanContext::beginFrame() {
     if (m_rt.ready() && (m_rtShadows || m_pathTraced) && !m_dynamicTransforms.empty())
         m_rt.updateInstances(cmd, m_currentFrame, m_dynamicTransforms);
 
+    // Дальше кадр продолжает Application: тени (по желанию) и beginScenePass().
+    m_frameValid = true;
+}
+
+// ─── beginScenePass ───────────────────────────────────────────────────────────
+void VulkanContext::beginScenePass() {
+    if (!m_frameValid) return;
+    auto cmd = m_cmdBuffers[m_currentFrame];
+
     // Path-traced режим: растровый scene pass не открываем — сцену трассируем
     // целиком в beginUIPass (после updateCamera). drawMesh становится no-op.
-    if (m_pathTraced && m_pt.ready()) {
-        m_frameValid = true;
-        return;
-    }
+    if (m_pathTraced && m_pt.ready()) return;
 
     // 5. Offscreen уже в COLOR_ATTACHMENT_OPTIMAL (endFrame возвращает его туда).
     //    Первый кадр: m_offscreenLayout == UNDEFINED — переходим один раз.
@@ -317,7 +334,7 @@ void VulkanContext::beginFrame() {
                     VK_IMAGE_ASPECT_DEPTH_BIT);
 
     // 6. Начинаем dynamic rendering (VK_KHR_dynamic_rendering, core 1.3)
-    VkClearValue colorClear{{{ 0.012f, 0.006f, 0.006f, 1.0f }}};  // мрак, почти чёрный
+    VkClearValue colorClear{{{ m_clearColor.r, m_clearColor.g, m_clearColor.b, m_clearColor.a }}};
     VkClearValue depthClear{ .depthStencil = {1.0f, 0} };
 
     // MSAA: рендер в мультисэмпловый таргет, resolve → offscreen тем же пассом
@@ -384,8 +401,6 @@ void VulkanContext::beginFrame() {
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, scenePipe);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
         m_scenePipelineLayout, 0, 1, &m_descSets[m_currentFrame], 0, nullptr);
-
-    m_frameValid = true;
 }
 
 // ─── updateCamera / updateLights ──────────────────────────────────────────────
@@ -435,6 +450,40 @@ void VulkanContext::endFrame() {
                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     m_offscreenLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
+    // Снимок готового кадра (с интерфейсом): копируем swapchain-образ в host-буфер.
+    if (!m_dumpFinalPath.empty() && !m_dumpFinalPending) {
+        const VkDeviceSize bytes = static_cast<VkDeviceSize>(m_scExtent.width) * m_scExtent.height * 4;
+        m_dumpFinalBuffer = GpuBuffer::createHostVisible(m_physDevice, m_device, bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        VkImageMemoryBarrier2 toSrc{
+            .sType         = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+            .srcStageMask  = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            .srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+            .dstStageMask  = VK_PIPELINE_STAGE_2_COPY_BIT,
+            .dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT,
+            .oldLayout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            .newLayout     = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            .image         = m_scImages[m_currentImageIdx],
+            .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+        };
+        VkDependencyInfo dep{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &toSrc};
+        vkCmdPipelineBarrier2(cmd, &dep);
+        VkBufferImageCopy region{
+            .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+            .imageExtent      = {m_scExtent.width, m_scExtent.height, 1},
+        };
+        vkCmdCopyImageToBuffer(cmd, m_scImages[m_currentImageIdx], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, m_dumpFinalBuffer.handle, 1, &region);
+        VkImageMemoryBarrier2 back = toSrc;
+        back.srcStageMask  = VK_PIPELINE_STAGE_2_COPY_BIT;
+        back.srcAccessMask = VK_ACCESS_2_NONE;
+        back.dstStageMask  = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+        back.dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+        back.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        back.newLayout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        dep.pImageMemoryBarriers = &back;
+        vkCmdPipelineBarrier2(cmd, &dep);
+        m_dumpFinalPending = true;
+    }
+
     // 3. Swapchain: COLOR_ATTACHMENT_OPTIMAL → PRESENT_SRC_KHR
     transitionImage(cmd, m_scImages[m_currentImageIdx],
                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
@@ -456,6 +505,37 @@ void VulkanContext::endFrame() {
     };
     if (vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, m_inFlightFences[m_currentFrame]) != VK_SUCCESS)
         throw std::runtime_error("vkQueueSubmit failed");
+
+    // Отладочный снимок: дожидаемся GPU и пишем PPM (сцена в перцептивном виде, как в offscreen).
+    if (m_dumpPending) {
+        vkWaitForFences(m_device, 1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX);
+        const auto* px = static_cast<const uint8_t*>(m_dumpBuffer.map(m_device));
+        std::ofstream out(m_dumpPath, std::ios::binary);
+        out << "P6\n" << m_renderExtent.width << " " << m_renderExtent.height << "\n255\n";
+        for (size_t i = 0; i < static_cast<size_t>(m_renderExtent.width) * m_renderExtent.height; ++i) out.write(reinterpret_cast<const char*>(px + i * 4), 3);
+        m_dumpBuffer.unmap(m_device);
+        m_dumpBuffer.destroy(m_device);
+        Logger::info("Снимок сцены: {}", m_dumpPath);
+        m_dumpPath.clear();
+        m_dumpPending = false;
+    }
+
+    if (m_dumpFinalPending) {
+        vkWaitForFences(m_device, 1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX);
+        const auto* px = static_cast<const uint8_t*>(m_dumpFinalBuffer.map(m_device));
+        std::ofstream out(m_dumpFinalPath, std::ios::binary);
+        out << "P6\n" << m_scExtent.width << " " << m_scExtent.height << "\n255\n";
+        const bool bgr = m_scFormat == VK_FORMAT_B8G8R8A8_SRGB || m_scFormat == VK_FORMAT_B8G8R8A8_UNORM;
+        for (size_t i = 0; i < static_cast<size_t>(m_scExtent.width) * m_scExtent.height; ++i) {
+            const char rgb[3] = {static_cast<char>(px[i * 4 + (bgr ? 2 : 0)]), static_cast<char>(px[i * 4 + 1]), static_cast<char>(px[i * 4 + (bgr ? 0 : 2)])};
+            out.write(rgb, 3);
+        }
+        m_dumpFinalBuffer.unmap(m_device);
+        m_dumpFinalBuffer.destroy(m_device);
+        Logger::info("Снимок кадра с интерфейсом: {}", m_dumpFinalPath);
+        m_dumpFinalPath.clear();
+        m_dumpFinalPending = false;
+    }
 
     // 4. Present
     VkPresentInfoKHR presentInfo{
@@ -588,8 +668,18 @@ void VulkanContext::pickPhysicalDevice() {
     std::vector<VkPhysicalDevice> devices(count);
     vkEnumeratePhysicalDevices(m_instance, &count, devices.data());
 
-    for (auto dev : devices)
-        if (isDeviceSuitable(dev)) { m_physDevice = dev; break; }
+    // Дискретная видеокарта в приоритете: порядок перечисления не гарантирует, что она первая
+    // (на ноутбуках/ПК со встройкой игра иначе могла бы запуститься на iGPU).
+    int bestRank = -1;
+    for (auto dev : devices) {
+        if (!isDeviceSuitable(dev)) continue;
+        VkPhysicalDeviceProperties p{};
+        vkGetPhysicalDeviceProperties(dev, &p);
+        const int rank = p.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU     ? 3
+                         : p.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? 2
+                                                                                  : 1;
+        if (rank > bestRank) { bestRank = rank; m_physDevice = dev; }
+    }
 
     if (m_physDevice == VK_NULL_HANDLE)
         throw std::runtime_error("Подходящий GPU не найден (требуется Vulkan 1.4)");
@@ -812,7 +902,7 @@ void VulkanContext::createSwapchain(uint32_t width, uint32_t height) {
         .imageColorSpace  = format.colorSpace,
         .imageExtent      = extent,
         .imageArrayLayers = 1,
-        .imageUsage       = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        .imageUsage       = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,  // TRANSFER_SRC -- для снимка готового кадра (отладка)
         .imageSharingMode      = sharedQueue ? VK_SHARING_MODE_EXCLUSIVE : VK_SHARING_MODE_CONCURRENT,
         .queueFamilyIndexCount = sharedQueue ? 0u : 2u,
         .pQueueFamilyIndices   = sharedQueue ? nullptr : queueIdx,
@@ -1100,61 +1190,45 @@ void VulkanContext::createCameraUBOs() {
 // ─── Descriptor sets ──────────────────────────────────────────────────────────
 void VulkanContext::createDescriptors() {
     // Layout: binding 0 = Camera UBO (vert+frag), binding 1 = Lights UBO (frag),
-    //         binding 2 = TLAS (frag; только при поддержке ray query)
-    VkDescriptorSetLayoutBinding bindings[] = {
-        {
-            .binding         = 0,
-            .descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-            .descriptorCount = 1,
-            .stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-        },
-        {
-            .binding         = 1,
-            .descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-            .descriptorCount = 1,
-            .stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT,
-        },
-        {
-            .binding         = 2,
-            .descriptorType  = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR,
-            .descriptorCount = 1,
-            .stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT,
-        },
-        {
-            .binding         = 3,  // geometry table (vboAddr/iboAddr per instance) для GI/отражений
-            .descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            .descriptorCount = 1,
-            .stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT,
-        },
+    //         binding 2/3 = TLAS и geo-table (frag; только при поддержке ray query),
+    //         binding 4 = карта теней (массив глубины, сравнивающий sampler)
+    std::vector<VkDescriptorSetLayoutBinding> bindings = {
+        {.binding = 0, .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = 1,
+         .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT},
+        {.binding = 1, .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = 1,
+         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
     };
+    if (m_rt.supported()) {
+        bindings.push_back({.binding = 2, .descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR,
+                            .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT});
+        bindings.push_back({.binding = 3,  // geometry table (vboAddr/iboAddr per instance) для GI/отражений
+                            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 1,
+                            .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT});
+    }
+    bindings.push_back({.binding = 4, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                        .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT});
     VkDescriptorSetLayoutCreateInfo layoutCI{
         .sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-        .bindingCount = m_rt.supported() ? 4u : 2u,
-        .pBindings    = bindings,
+        .bindingCount = static_cast<uint32_t>(bindings.size()),
+        .pBindings    = bindings.data(),
     };
     if (vkCreateDescriptorSetLayout(m_device, &layoutCI, nullptr, &m_descSetLayout) != VK_SUCCESS)
         throw std::runtime_error("vkCreateDescriptorSetLayout failed");
 
     // Pool
-    VkDescriptorPoolSize poolSizes[] = {
-        {
-            .type            = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-            .descriptorCount = kMaxFrames * 2,  // camera + lights на кадр
-        },
-        {
-            .type            = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR,
-            .descriptorCount = kMaxFrames,
-        },
-        {
-            .type            = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,  // geometry table
-            .descriptorCount = kMaxFrames,
-        },
+    std::vector<VkDescriptorPoolSize> poolSizes = {
+        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kMaxFrames * 2},        // camera + lights на кадр
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxFrames},    // карта теней
     };
+    if (m_rt.supported()) {
+        poolSizes.push_back({VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, kMaxFrames});
+        poolSizes.push_back({VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, kMaxFrames});  // geometry table
+    }
     VkDescriptorPoolCreateInfo poolCI{
         .sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
         .maxSets       = kMaxFrames,
-        .poolSizeCount = m_rt.supported() ? 3u : 1u,
-        .pPoolSizes    = poolSizes,
+        .poolSizeCount = static_cast<uint32_t>(poolSizes.size()),
+        .pPoolSizes    = poolSizes.data(),
     };
     if (vkCreateDescriptorPool(m_device, &poolCI, nullptr, &m_descPool) != VK_SUCCESS)
         throw std::runtime_error("vkCreateDescriptorPool failed");
@@ -1201,7 +1275,21 @@ void VulkanContext::createDescriptors() {
                 .pBufferInfo     = &lightsInfo,
             },
         };
-        vkUpdateDescriptorSets(m_device, 2, writes, 0, nullptr);
+        VkDescriptorImageInfo shadowInfo{
+            .sampler     = m_shadowSampler,
+            .imageView   = m_shadowArrayView,
+            .imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+        };
+        VkWriteDescriptorSet shadowWrite{
+            .sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstSet          = m_descSets[i],
+            .dstBinding      = 4,
+            .descriptorCount = 1,
+            .descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .pImageInfo      = &shadowInfo,
+        };
+        VkWriteDescriptorSet allWrites[] = {writes[0], writes[1], shadowWrite};
+        vkUpdateDescriptorSets(m_device, 3, allWrites, 0, nullptr);
     }
     Logger::info("Descriptor sets ready ({} frames)", kMaxFrames);
 }
@@ -1367,6 +1455,280 @@ void VulkanContext::createScenePipeline() {
     m_pipelineSamples = m_msaa;
     Logger::info("Scene pipeline ready ({}x MSAA{})", (int)m_msaa,
                  m_rt.supported() ? ", RT variant" : "");
+}
+
+
+// ─── Тени: ресурсы ────────────────────────────────────────────────────────────
+void VulkanContext::createShadowResources() {
+    VkImageCreateInfo imgCI{
+        .sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .imageType     = VK_IMAGE_TYPE_2D,
+        .format        = kDepthFormat,
+        .extent        = {static_cast<uint32_t>(kShadowMapSize), static_cast<uint32_t>(kShadowMapSize), 1},
+        .mipLevels     = 1,
+        .arrayLayers   = kShadowCascades,
+        .samples       = VK_SAMPLE_COUNT_1_BIT,
+        .tiling        = VK_IMAGE_TILING_OPTIMAL,
+        .usage         = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+        .sharingMode   = VK_SHARING_MODE_EXCLUSIVE,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    };
+    if (vkCreateImage(m_device, &imgCI, nullptr, &m_shadowImage) != VK_SUCCESS)
+        throw std::runtime_error("vkCreateImage (shadow) failed");
+
+    VkMemoryRequirements req{};
+    vkGetImageMemoryRequirements(m_device, m_shadowImage, &req);
+    VkPhysicalDeviceMemoryProperties memProps{};
+    vkGetPhysicalDeviceMemoryProperties(m_physDevice, &memProps);
+    uint32_t memType = UINT32_MAX;
+    for (uint32_t i = 0; i < memProps.memoryTypeCount; ++i)
+        if ((req.memoryTypeBits & (1u << i)) && (memProps.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {
+            memType = i;
+            break;
+        }
+    if (memType == UINT32_MAX) throw std::runtime_error("Нет подходящей памяти для карты теней");
+    VkMemoryAllocateInfo alloc{
+        .sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .allocationSize  = req.size,
+        .memoryTypeIndex = memType,
+    };
+    if (vkAllocateMemory(m_device, &alloc, nullptr, &m_shadowMemory) != VK_SUCCESS)
+        throw std::runtime_error("vkAllocateMemory (shadow) failed");
+    vkBindImageMemory(m_device, m_shadowImage, m_shadowMemory, 0);
+
+    VkImageViewCreateInfo arrayCI{
+        .sType    = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .image    = m_shadowImage,
+        .viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY,
+        .format   = kDepthFormat,
+        .subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, kShadowCascades},
+    };
+    if (vkCreateImageView(m_device, &arrayCI, nullptr, &m_shadowArrayView) != VK_SUCCESS)
+        throw std::runtime_error("vkCreateImageView (shadow array) failed");
+    for (uint32_t i = 0; i < kShadowCascades; ++i) {
+        VkImageViewCreateInfo layerCI = arrayCI;
+        layerCI.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        layerCI.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, i, 1};
+        if (vkCreateImageView(m_device, &layerCI, nullptr, &m_shadowLayerViews[i]) != VK_SUCCESS)
+            throw std::runtime_error("vkCreateImageView (shadow layer) failed");
+    }
+
+    // Сравнивающий sampler: аппаратный билинейный PCF 2x2; за краем карты -- "освещено" (глубина 1).
+    VkSamplerCreateInfo samplerCI{
+        .sType         = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+        .magFilter     = VK_FILTER_LINEAR,
+        .minFilter     = VK_FILTER_LINEAR,
+        .mipmapMode    = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+        .addressModeU  = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+        .addressModeV  = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+        .addressModeW  = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+        .compareEnable = VK_TRUE,
+        .compareOp     = VK_COMPARE_OP_LESS_OR_EQUAL,
+        .maxLod        = 0.0f,
+        .borderColor   = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE,
+    };
+    if (vkCreateSampler(m_device, &samplerCI, nullptr, &m_shadowSampler) != VK_SUCCESS)
+        throw std::runtime_error("vkCreateSampler (shadow) failed");
+
+    // Один раз переводим в READ_ONLY: дескриптор всегда говорит про этот layout, даже если тени выключены.
+    VkCommandBufferAllocateInfo cbAI{
+        .sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool        = m_cmdPool,
+        .level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = 1,
+    };
+    VkCommandBuffer cmd;
+    vkAllocateCommandBuffers(m_device, &cbAI, &cmd);
+    VkCommandBufferBeginInfo bi{.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+                                .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
+    vkBeginCommandBuffer(cmd, &bi);
+    VkImageMemoryBarrier2 b{
+        .sType         = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+        .srcStageMask  = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+        .dstStageMask  = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+        .dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+        .oldLayout     = VK_IMAGE_LAYOUT_UNDEFINED,
+        .newLayout     = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+        .image         = m_shadowImage,
+        .subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, kShadowCascades},
+    };
+    VkDependencyInfo dep{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &b};
+    vkCmdPipelineBarrier2(cmd, &dep);
+    vkEndCommandBuffer(cmd);
+    VkSubmitInfo si{.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .commandBufferCount = 1, .pCommandBuffers = &cmd};
+    vkQueueSubmit(m_graphicsQueue, 1, &si, VK_NULL_HANDLE);
+    vkQueueWaitIdle(m_graphicsQueue);
+    vkFreeCommandBuffers(m_device, m_cmdPool, 1, &cmd);
+
+    Logger::info("Shadow map ready ({} cascades, {}x{})", kShadowCascades, kShadowMapSize, kShadowMapSize);
+}
+
+// ─── Тени: depth-only пайплайн ────────────────────────────────────────────────
+void VulkanContext::createShadowPipeline() {
+    auto vert = loadShader(m_shaderDir + "shadow.vert.spv");
+    VkPipelineShaderStageCreateInfo stage{
+        .sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .stage  = VK_SHADER_STAGE_VERTEX_BIT,
+        .module = vert,
+        .pName  = "main",
+    };
+    // Из вершины нужна только позиция (location 0), но stride общий с остальными мешами.
+    auto binding = Vertex::bindingDescription();
+    auto attribs = Vertex::attributeDescriptions();
+    VkPipelineVertexInputStateCreateInfo vertexInput{
+        .sType                           = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+        .vertexBindingDescriptionCount   = 1,
+        .pVertexBindingDescriptions      = &binding,
+        .vertexAttributeDescriptionCount = 1,
+        .pVertexAttributeDescriptions    = attribs.data(),
+    };
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly{
+        .sType    = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+        .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+    };
+    VkPipelineViewportStateCreateInfo viewportState{
+        .sType         = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+        .viewportCount = 1,
+        .scissorCount  = 1,
+    };
+    // Без отсечения граней: рельеф -- односторонняя поверхность; от самозатенения защищает смещение глубины.
+    VkPipelineRasterizationStateCreateInfo raster{
+        .sType            = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+        .depthClampEnable = VK_FALSE,
+        .polygonMode      = VK_POLYGON_MODE_FILL,
+        .cullMode         = VK_CULL_MODE_NONE,
+        .frontFace        = VK_FRONT_FACE_COUNTER_CLOCKWISE,
+        .depthBiasEnable  = VK_TRUE,
+        .lineWidth        = 1.0f,
+    };
+    VkPipelineMultisampleStateCreateInfo msaa{
+        .sType                = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+        .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
+    };
+    VkPipelineDepthStencilStateCreateInfo depth{
+        .sType            = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+        .depthTestEnable  = VK_TRUE,
+        .depthWriteEnable = VK_TRUE,
+        .depthCompareOp   = VK_COMPARE_OP_LESS,
+    };
+    VkPipelineColorBlendStateCreateInfo blend{.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+    VkDynamicState dyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS};
+    VkPipelineDynamicStateCreateInfo dynamic{
+        .sType             = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+        .dynamicStateCount = 3,
+        .pDynamicStates    = dyn,
+    };
+    VkPushConstantRange pc{.stageFlags = VK_SHADER_STAGE_VERTEX_BIT, .offset = 0, .size = 2 * sizeof(glm::mat4)};  // lightVP + model
+    VkPipelineLayoutCreateInfo layoutCI{
+        .sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .pushConstantRangeCount = 1,
+        .pPushConstantRanges    = &pc,
+    };
+    if (vkCreatePipelineLayout(m_device, &layoutCI, nullptr, &m_shadowPipelineLayout) != VK_SUCCESS)
+        throw std::runtime_error("vkCreatePipelineLayout (shadow) failed");
+
+    VkPipelineRenderingCreateInfo renderingCI{
+        .sType                 = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+        .depthAttachmentFormat = kDepthFormat,
+    };
+    VkGraphicsPipelineCreateInfo ci{
+        .sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+        .pNext               = &renderingCI,
+        .stageCount          = 1,
+        .pStages             = &stage,
+        .pVertexInputState   = &vertexInput,
+        .pInputAssemblyState = &inputAssembly,
+        .pViewportState      = &viewportState,
+        .pRasterizationState = &raster,
+        .pMultisampleState   = &msaa,
+        .pDepthStencilState  = &depth,
+        .pColorBlendState    = &blend,
+        .pDynamicState       = &dynamic,
+        .layout              = m_shadowPipelineLayout,
+    };
+    if (vkCreateGraphicsPipelines(m_device, m_pipelineCache, 1, &ci, nullptr, &m_shadowPipeline) != VK_SUCCESS)
+        throw std::runtime_error("vkCreateGraphicsPipelines (shadow) failed");
+    vkDestroyShaderModule(m_device, vert, nullptr);
+}
+
+// ─── Тени: проходы по каскадам ────────────────────────────────────────────────
+void VulkanContext::beginShadowCascade(int cascade, const glm::mat4& lightViewProj) {
+    if (!m_frameValid || (m_pathTraced && m_pt.ready())) return;
+    auto cmd = m_cmdBuffers[m_currentFrame];
+
+    if (cascade == 0) {
+        // Вся карта: ждём, пока прошлый кадр дочитает её в шейдере, и отдаём под запись (старое не нужно).
+        VkImageMemoryBarrier2 b{
+            .sType         = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+            .srcStageMask  = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+            .srcAccessMask = VK_ACCESS_2_NONE,
+            .dstStageMask  = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+            .dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+            .oldLayout     = VK_IMAGE_LAYOUT_UNDEFINED,
+            .newLayout     = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+            .image         = m_shadowImage,
+            .subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, kShadowCascades},
+        };
+        VkDependencyInfo dep{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &b};
+        vkCmdPipelineBarrier2(cmd, &dep);
+    }
+
+    VkRenderingAttachmentInfo depthAttach{
+        .sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+        .imageView   = m_shadowLayerViews[cascade],
+        .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+        .loadOp      = VK_ATTACHMENT_LOAD_OP_CLEAR,
+        .storeOp     = VK_ATTACHMENT_STORE_OP_STORE,
+        .clearValue  = {.depthStencil = {1.0f, 0}},
+    };
+    const VkExtent2D ext{static_cast<uint32_t>(kShadowMapSize), static_cast<uint32_t>(kShadowMapSize)};
+    VkRenderingInfo ri{
+        .sType             = VK_STRUCTURE_TYPE_RENDERING_INFO,
+        .renderArea        = {{0, 0}, ext},
+        .layerCount        = 1,
+        .pDepthAttachment  = &depthAttach,
+    };
+    vkCmdBeginRendering(cmd, &ri);
+    VkViewport vp{0.f, 0.f, static_cast<float>(ext.width), static_cast<float>(ext.height), 0.f, 1.f};
+    VkRect2D   sc{{0, 0}, ext};
+    vkCmdSetViewport(cmd, 0, 1, &vp);
+    vkCmdSetScissor(cmd, 0, 1, &sc);
+    vkCmdSetDepthBias(cmd, 1.25f, 0.0f, 1.75f);  // константа + наклон: против "прыщей" на склонах
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowPipeline);
+    m_shadowLightVP = lightViewProj;
+}
+
+void VulkanContext::drawShadowMesh(VkBuffer vbo, VkBuffer ibo, uint32_t indexCount, const glm::mat4& model) {
+    if (!m_frameValid || (m_pathTraced && m_pt.ready())) return;
+    auto cmd = m_cmdBuffers[m_currentFrame];
+    VkDeviceSize offset = 0;
+    vkCmdBindVertexBuffers(cmd, 0, 1, &vbo, &offset);
+    vkCmdBindIndexBuffer(cmd, ibo, 0, VK_INDEX_TYPE_UINT32);
+    const glm::mat4 pcData[2] = {m_shadowLightVP, model};
+    vkCmdPushConstants(cmd, m_shadowPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pcData), pcData);
+    vkCmdDrawIndexed(cmd, indexCount, 1, 0, 0, 0);
+}
+
+void VulkanContext::endShadowCascade(int cascade) {
+    if (!m_frameValid || (m_pathTraced && m_pt.ready())) return;
+    auto cmd = m_cmdBuffers[m_currentFrame];
+    vkCmdEndRendering(cmd);
+    if (cascade == kShadowCascades - 1) {
+        // Все каскады готовы: отдаём карту на чтение в фрагментном шейдере сцены.
+        VkImageMemoryBarrier2 b{
+            .sType         = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+            .srcStageMask  = VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+            .srcAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+            .dstStageMask  = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+            .dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+            .oldLayout     = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+            .newLayout     = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+            .image         = m_shadowImage,
+            .subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, kShadowCascades},
+        };
+        VkDependencyInfo dep{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &b};
+        vkCmdPipelineBarrier2(cmd, &dep);
+    }
 }
 
 // ─── Image layout transition (synchronization2, core 1.3) ────────────────────
@@ -1537,7 +1899,7 @@ void VulkanContext::createOffscreenResources() {
         VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     // Path-traced режим пишет в offscreen как в storage image (imageStore из rgen)
     const VkImageUsageFlags offscreenUsage =
-        kSampledTarget | (m_rtPipeline ? VK_IMAGE_USAGE_STORAGE_BIT : 0u);
+        kSampledTarget | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | (m_rtPipeline ? VK_IMAGE_USAGE_STORAGE_BIT : 0u);
     createColorImage(m_offscreenImage, m_offscreenMemory, m_offscreenView,
                      VK_SAMPLE_COUNT_1_BIT, offscreenUsage);
     createColorImage(m_blurTempImage,  m_blurTempMemory,  m_blurTempView,
@@ -2557,6 +2919,40 @@ void VulkanContext::beginUIPass(float blurStrength) {
         transitionImage(cmd, m_offscreenImage, m_offscreenLayout,
                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         m_offscreenLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    }
+
+    // Отладочный снимок сцены (до UI/composite): копируем offscreen в host-буфер, файл пишет endFrame.
+    if (!m_dumpPath.empty() && !m_dumpPending) {
+        const VkDeviceSize bytes = static_cast<VkDeviceSize>(m_renderExtent.width) * m_renderExtent.height * 4;
+        m_dumpBuffer = GpuBuffer::createHostVisible(m_physDevice, m_device, bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        VkImageMemoryBarrier2 toSrc{
+            .sType         = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+            .srcStageMask  = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+            .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
+            .dstStageMask  = VK_PIPELINE_STAGE_2_COPY_BIT,
+            .dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT,
+            .oldLayout     = m_offscreenLayout,
+            .newLayout     = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            .image         = m_offscreenImage,
+            .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+        };
+        VkDependencyInfo dep{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &toSrc};
+        vkCmdPipelineBarrier2(cmd, &dep);
+        VkBufferImageCopy region{
+            .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+            .imageExtent      = {m_renderExtent.width, m_renderExtent.height, 1},
+        };
+        vkCmdCopyImageToBuffer(cmd, m_offscreenImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, m_dumpBuffer.handle, 1, &region);
+        VkImageMemoryBarrier2 back = toSrc;
+        back.srcStageMask  = VK_PIPELINE_STAGE_2_COPY_BIT;
+        back.srcAccessMask = VK_ACCESS_2_NONE;
+        back.dstStageMask  = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        back.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT;
+        back.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        back.newLayout     = m_offscreenLayout;
+        dep.pImageMemoryBarriers = &back;
+        vkCmdPipelineBarrier2(cmd, &dep);
+        m_dumpPending = true;
     }
 
     // ── Симуляция зрения: depth-based defocus (только раст-режим, viewDist есть) ─
