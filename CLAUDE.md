@@ -873,6 +873,16 @@ Creatures now cut trees down, carry logs, craft tools and fight predators with t
 - Measured (20 sim-min, 9 seeds): fires 3-18 per run, huts 0-15; populations are small (3-45 alive at 20 min — lower than before stages 3-4; the extra chopping/sleeping time costs foraging; nobody went extinct, but seed 7 ended at 3, so expect to tune food/sleep next).
 - Not done: real division of labour (no assignment by need, no teaching of roles), shared meals, fire as cooking/warmth need (no cold), fire spread/danger, fire-fearing creatures, animals that use fire-lit areas, torches, night ambience, seasons.
 
+### Stage 6: ecology rebalance and night sounds
+
+- **Why**: after stages 3-5 populations had sunk (10 seeds x 20 sim-min: mean 19 alive, 17 at the end, 3 seeds ending at ≤ 3). Measured causes of death over those runs: old age 177, **starvation 201**, predators 10, thirst 1, poison 0 — i.e. the world was not
+  "dangerous", the **food economy was razor-thin** (a creature eats ~3% of the time at 0.35/s, which exactly balances hunger 0.01/s; mean hunger 0.41; 33% of the time asleep, 16% resting, 6% chopping, 6% drinking), so any extra chore tipped it.
+- **Changes**: bush regrowth `kFoodRegrowRate` 0.055 → **0.075** (an emptied bush is edible after ~5.5 s, full after ~25 s), mating needs hunger ≤ **0.5** (was 0.4). Result (same 10 seeds): **mean 35 alive, 60 at the end, no extinctions, births 935 (was 319)**, starvation 313 deaths (more people, same share);
+  bushes per creature 3.3 (was 6.3). Tests `berries_tests` re-based on the new constants.
+- **Sounds**: two new seamless loops — `LoopCrickets` (6 s, two pulsed voices, periodic by construction; volume `0.4·nightness`, fades with camera height, quiet over water) and `LoopFire` (6 s of hush + crackle; volume by distance to the nearest burning campfire, `30 + 0.4·camDistance`);
+  `AudioEngine` now has 6 loops; `SoundDirector::ambient` takes the `World`.
+- Not done: seasons/weather, nocturnal animals, sounds for building/chopping/animals, a systematic balance harness in CI (the probes live in the session scratchpad only; the numbers above are from them).
+
 ## Temporal upscaler and frame generation (`VulkanTemporal.cpp`, `taau.comp`, `framegen.comp`)
 
 Own implementation (not AMD's FSR 2/3): the official FidelityFX SDK builds with MSVC/`.bat` scripts, has HLSL shaders that
@@ -924,7 +934,7 @@ instantly). Now:
   0.65 + health >= 0.6; success is a per-second roll (`0.9 * mean fertility`), then libido resets,
   cooldown 45–85 s, mother -0.22 energy / father -0.08; the child appears 0.8–2.2 units from the mother
   (never in water), starts at hunger 0.25 / energy 0.8. Initial and god-spawned creatures are adults of
-  random age. Food: 30 bushes, regrow 0.04/s, a bush with < 0.12 left is "empty" (invisible as food), eat
+  random age. Food: 30 bushes, regrow ~0.075/s (see Stage 6), a bush with < 0.12 left is "empty" (invisible as food), eat
   rate 0.35/s, rest rate 0.06/s → measured carrying capacity ~80–150 with boom/bust and starvation as the
   main death cause (headless probe over seeds 5/11/29/77, 20 min).
 - **`behavior::decide`** (utility AI, called from `Creature::tick`): scores Wander / SeekFood / Eat / Rest /
@@ -1287,7 +1297,8 @@ source of truth for the hex constants at the top of `MainMenu.cpp`.
 - [x] Civilization stage 3: stockpile, buckets + thirst, meat hunting (see "Stage 3")
 - [x] Civilization stage 4: day/night, sleep, huts (see "Stage 4")
 - [x] Civilization stage 5: campfire, roles, hut ownership (see "Stage 5")
-- [ ] Civilization stage 6: ecology rebalance (populations are low), seasons/weather, nocturnal animals, sounds (night, building, animals)
+- [x] Stage 6: ecology rebalance, night/fire ambience (see "Stage 6")
+- [ ] Next: seasons/weather, nocturnal animals, building/animal sounds, balance harness
 - [ ] More powers (fire, rain, disasters, food, smite individuals), undo
 - [x] Sound: procedural synth + miniaudio (see "Sound")
 - [x] Day/night cycle (see "Stage 4"; night ambience sound still missing)

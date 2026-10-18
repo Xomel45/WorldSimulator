@@ -44,13 +44,13 @@ struct AudioEngine::Impl {
     long                          played = 0, dropped = 0;  // статистика для лога при выходе
 
     std::vector<std::unique_ptr<Voice>> voices;
-    std::array<Loop, 4>                 loops{};  // LoopWind, LoopWater, LoopMusic, LoopRumble
+    std::array<Loop, 6>                 loops{};  // LoopWind, LoopWater, LoopMusic, LoopRumble, LoopCrickets, LoopFire
 
     static int loopIndex(SoundId id) { return static_cast<int>(id) - static_cast<int>(SoundId::LoopWind); }
     static Group loopGroup(SoundId id) { return id == SoundId::LoopRumble ? Group::Effects : Group::Ambient; }
 
     void initLoops() {
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < 6; ++i) {
             const SoundId id = static_cast<SoundId>(static_cast<int>(SoundId::LoopWind) + i);
             const Pcm&    pcm = bank[static_cast<std::size_t>(id)];
             Loop&         l = loops[static_cast<std::size_t>(i)];
@@ -209,7 +209,7 @@ void AudioEngine::dumpBank(const std::string& dir) const {
     const int   rate = im.ok ? im.rate : 48000;
     static const char* names[] = {"ui_hover", "ui_click", "ui_back", "ui_toggle", "pop", "whoosh", "thud", "knock", "zap", "chime",
                                   "alarm0", "alarm1", "alarm2", "coo0", "coo1", "coo2", "growl0", "growl1", "growl2",
-                                  "chirp0", "chirp1", "chirp2", "chirp3", "loop_wind", "loop_water", "loop_music", "loop_rumble"};
+                                  "chirp0", "chirp1", "chirp2", "chirp3", "loop_wind", "loop_water", "loop_music", "loop_rumble", "loop_crickets", "loop_fire"};
     static_assert(sizeof(names) / sizeof(names[0]) == static_cast<std::size_t>(kSoundCount));
     for (int i = 0; i < kSoundCount; ++i)
         writeWav16(dir + "/" + names[i] + ".wav", synthesize(static_cast<SoundId>(i), rate), rate);

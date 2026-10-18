@@ -58,12 +58,12 @@ void SoundDirector::update(float dt, bool playing, const glm::vec3& focus, const
     fwd = glm::length(fwd) > 1.0e-4f ? glm::normalize(fwd) : glm::vec3(0.0f, 0.0f, -1.0f);
     m_audio.setListener(focus + glm::vec3(0.0f, 1.0f, 0.0f), fwd);
 
-    ambient(dt, playing, focus, camDistance, terrain);
+    ambient(dt, playing, focus, camDistance, world, terrain);
     if (playing) creatureVoices(dt, world);
     m_audio.update(dt);
 }
 
-void SoundDirector::ambient(float dt, bool playing, const glm::vec3& focus, float camDistance, const Terrain& terrain) {
+void SoundDirector::ambient(float dt, bool playing, const glm::vec3& focus, float camDistance, const World& world, const Terrain& terrain) {
     using audio::SoundId;
     // Музыка есть всегда (и в меню); живой мир (ветер, вода, птицы) -- только в игре.
     m_audio.setLoop(SoundId::LoopMusic, 0.55f);
@@ -71,7 +71,20 @@ void SoundDirector::ambient(float dt, bool playing, const glm::vec3& focus, floa
         m_audio.setLoop(SoundId::LoopWind, 0.0f);
         m_audio.setLoop(SoundId::LoopWater, 0.0f);
         m_audio.setLoop(SoundId::LoopRumble, 0.0f);
+        m_audio.setLoop(SoundId::LoopCrickets, 0.0f);
+        m_audio.setLoop(SoundId::LoopFire, 0.0f);
         return;
+    }
+
+    // Ночь: сверчки (на суше, не над водой и не высоко), у костров -- потрескивание по близости к ближайшему.
+    {
+        float fire = 0.0f;
+        for (const Structure& s : world.structures())
+            if (s.kind == StructureKind::Campfire && s.hp > 0.02f)
+                fire = std::max(fire, 1.0f - std::hypot(s.x - focus.x, s.z - focus.z) / (30.0f + 0.4f * camDistance));
+        const float land = terrain.isUnderwater(focus.x, focus.z) ? 0.2f : 1.0f;
+        m_audio.setLoop(SoundId::LoopCrickets, 0.4f * world.nightness() * land * (1.0f - std::clamp((camDistance - 20.0f) / 150.0f, 0.0f, 0.8f)));
+        m_audio.setLoop(SoundId::LoopFire, 0.55f * std::clamp(fire, 0.0f, 1.0f));
     }
 
     // Ветер крепчает с высотой камеры и дышит порывами.

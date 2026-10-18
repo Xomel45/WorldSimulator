@@ -24,7 +24,7 @@ enum class SoundId : int {
     // Птицы (одиночные посвисты)
     Chirp0, Chirp1, Chirp2, Chirp3,
     // Бесшовные петли
-    LoopWind, LoopWater, LoopMusic, LoopRumble,
+    LoopWind, LoopWater, LoopMusic, LoopRumble, LoopCrickets, LoopFire,
     Count
 };
 

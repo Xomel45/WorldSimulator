@@ -37,7 +37,7 @@ public:
 
 private:
     void creatureVoices(float dt, const World& world);
-    void ambient(float dt, bool playing, const glm::vec3& focus, float camDistance, const Terrain& terrain);
+    void ambient(float dt, bool playing, const glm::vec3& focus, float camDistance, const World& world, const Terrain& terrain);
 
     struct VoiceState {
         float cooldown   = 0.0f;

@@ -422,10 +422,44 @@ Pcm loopRumble(int rate) {
     return out;
 }
 
+// Ночные сверчки: два "голоса" с трескучим пульсом, все частоты кратны 1/T -- петля замкнута по построению.
+Pcm loopCrickets(int rate) {
+    const float T = 6.0f;
+    Pcm x = blank(T, rate);
+    for (std::size_t i = 0; i < x.size(); ++i) {
+        const double t = static_cast<double>(i) / rate;
+        const double g1 = std::pow(std::max(0.0, std::sin(6.283185307 * 30.0 * t)), 2.0) * (0.5 + 0.5 * std::sin(6.283185307 * (1.0 / 3.0) * t));
+        const double g2 = std::pow(std::max(0.0, std::sin(6.283185307 * 24.0 * t + 1.0)), 2.0) * (0.5 + 0.5 * std::sin(6.283185307 * (1.0 / 2.0) * t + 2.0));
+        x[i] = static_cast<float>(0.5 * g1 * std::sin(6.283185307 * 4200.0 * t) + 0.4 * g2 * std::sin(6.283185307 * 3900.0 * t));
+    }
+    normalize(x, 0.5f);
+    return x;
+}
+
+// Потрескивание костра: тихий низкий гул и редкие щелчки.
+Pcm loopFire(int rate) {
+    const float T = 6.0f, F = 1.0f;
+    Pcm x = blank(T + F, rate);
+    Noise n(131), c(137);
+    OnePole brown;
+    Svf f;
+    float click = 0.0f;
+    for (std::size_t i = 0; i < x.size(); ++i) {
+        const float base = brown.process(n.next(), 0.07f) * 1.6f;
+        if ((c.next() * 0.5f + 0.5f) < 16.0f / static_cast<float>(rate)) click = 0.5f + 0.5f * (c.next() * 0.5f + 0.5f);
+        click *= std::exp(-1.0f / (0.0035f * static_cast<float>(rate)));
+        const auto o = f.process(n.next(), svfCoef(2400.0f, rate), 0.7f);
+        x[i] = 0.5f * base + click * o.bp * 1.4f;
+    }
+    Pcm out = makeSeamless(x, static_cast<std::size_t>(F * static_cast<float>(rate)));
+    normalize(out, 0.55f);
+    return out;
+}
+
 }  // namespace
 
 bool isLoop(SoundId id) noexcept {
-    return id == SoundId::LoopWind || id == SoundId::LoopWater || id == SoundId::LoopMusic || id == SoundId::LoopRumble;
+    return id == SoundId::LoopWind || id == SoundId::LoopWater || id == SoundId::LoopMusic || id == SoundId::LoopRumble || id == SoundId::LoopCrickets || id == SoundId::LoopFire;
 }
 
 bool soundFromName(std::string_view name, SoundId& out) noexcept {
@@ -460,6 +494,8 @@ Pcm synthesize(SoundId id, int rate) {
         case SoundId::LoopWater:  return loopWater(rate);
         case SoundId::LoopMusic:  return loopMusic(rate);
         case SoundId::LoopRumble: return loopRumble(rate);
+        case SoundId::LoopCrickets: return loopCrickets(rate);
+        case SoundId::LoopFire:   return loopFire(rate);
         case SoundId::Count: break;
     }
     return {};
