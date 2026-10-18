@@ -1,4 +1,7 @@
+add_subdirectory(sim)
+add_subdirectory(mods)
+add_subdirectory(procgen)
+add_subdirectory(audio)
 add_subdirectory(core)
 add_subdirectory(renderer)
 add_subdirectory(ui)
-add_subdirectory(sim)
