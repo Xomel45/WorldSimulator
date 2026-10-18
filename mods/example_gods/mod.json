@@ -1,0 +1,50 @@
+{
+  "id": "example_gods",
+  "name": "Примеры сил",
+  "version": "1.0",
+  "author": "WorldSimulator",
+  "description": "Образец мода: сила из данных и силы на Lua",
+  "api_version": 1,
+  "powers": [
+    {
+      "id": "hill",
+      "name": "Холм",
+      "description": "Быстро поднимает большой холм",
+      "type": "raise",
+      "rate": 24,
+      "radius": 16,
+      "min_radius": 6,
+      "max_radius": 40
+    },
+    {
+      "id": "giant",
+      "name": "Великан",
+      "description": "Крупные, медленные и бесстрашные существа",
+      "type": "spawn",
+      "traits": { "size": 1.0, "speed": -0.6, "boldness": 1.0, "metabolism": -0.5 },
+      "interval": 0.5,
+      "radius": 2
+    },
+    {
+      "id": "lightning",
+      "name": "Молния",
+      "description": "Один удар: выжигает воронку и убивает существ в ней",
+      "type": "script",
+      "script": "scripts/lightning.lua",
+      "interval": -1,
+      "radius": 5,
+      "min_radius": 2,
+      "max_radius": 20
+    },
+    {
+      "id": "volcano",
+      "name": "Вулкан",
+      "description": "Удерживайте: растёт конус с жерлом, существа у кратера гибнут",
+      "type": "script",
+      "script": "scripts/volcano.lua",
+      "radius": 12,
+      "min_radius": 6,
+      "max_radius": 30
+    }
+  ]
+}
