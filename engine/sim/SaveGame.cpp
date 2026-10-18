@@ -104,6 +104,8 @@ void writeCreature(ByteWriter& w, const Inhabitant& in, std::uint32_t version) {
     w.u8(c.carryKind);
     w.f32(c.carryAmount);
     w.f32(c.carryAge);
+    if (version < 6) return;
+    w.f32(c.exploreTimer);  // v6: уход от кормовой точки
 }
 
 bool readCreature(ByteReader& r, Inhabitant& in, std::uint32_t version) {
@@ -170,6 +172,10 @@ bool readCreature(ByteReader& r, Inhabitant& in, std::uint32_t version) {
         c.carryAge    = level(100.0f);
         c.carryKind   = carry < kBerryKindCount ? carry : 255;
         if (c.carryKind == 255) c.carryAmount = 0.0f;
+    }
+    if (version >= 6) {
+        const float e = r.f32();
+        c.exploreTimer = std::isfinite(e) ? std::clamp(e, 0.0f, 60.0f) : 0.0f;
     }
     return r.ok();
 }

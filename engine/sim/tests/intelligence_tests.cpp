@@ -369,6 +369,58 @@ int main() {
         WSIM_CHECK(w3.stats().sabotages == 0);
     }
     {
+        // Толпа у куста отпугивает: восемь голодных рядом с двумя одинаковыми кустами делятся между ними, а не бегут в один.
+        std::vector<Creature> crowd;
+        for (int i = 0; i < 8; ++i) {
+            Creature c = adult(10 + static_cast<std::uint32_t>(i), {0.0f, 0.0f, -7.0f + 2.0f * static_cast<float>(i)});
+            c.needs.hunger = 0.7f;
+            crowd.push_back(c);
+        }
+        World w = scenario(3, crowd, {FoodSource{{12.0f, 0.0f, 0.0f}, 1.0f}, FoodSource{{-12.0f, 0.0f, 0.0f}, 1.0f}});
+        int atRight = 0, atLeft = 0;
+        for (int i = 0; i < static_cast<int>(12.0f / kDt); ++i) {
+            w.tick(kDt, nullptr);
+            if (i % 30 == 29) {
+                int r = 0, l = 0;
+                for (const auto& in : w.population()) {
+                    r += glm::length(glm::vec2(in.creature.position.x - 12.0f, in.creature.position.z)) < 5.0f;
+                    l += glm::length(glm::vec2(in.creature.position.x + 12.0f, in.creature.position.z)) < 5.0f;
+                }
+                atRight = std::max(atRight, r);
+                atLeft  = std::max(atLeft, l);
+            }
+        }
+        WSIM_CHECK(atRight >= 2 && atLeft >= 2);   // оба куста заняты
+    }
+    {
+        // Устал рядом с кустом -- отходит подальше от еды и там ложится, а не засыпает под ним среди толпы.
+        Creature c = adult(3, {1.0f, 0.0f, 0.0f});
+        c.needs.energy = 0.15f;
+        c.needs.hunger = 0.05f;
+        World w = scenario(3, {c}, {FoodSource{{2.0f, 0.0f, 0.0f}, 1.0f}});
+        float restDist = -1.0f;
+        for (int i = 0; i < static_cast<int>(30.0f / kDt); ++i) {
+            w.tick(kDt, nullptr);
+            const Creature& cr = w.population()[0].creature;
+            if (cr.behavior == Behavior::Rest && glm::length(cr.velocity) < 0.05f) restDist = glm::length(glm::vec2(cr.position.x - 2.0f, cr.position.z));
+        }
+        WSIM_CHECK(restDist > 5.0f);               // лёг, отойдя от куста
+    }
+    {
+        // Пустой куст не держит: вынужденный голодный, пришедший к месту, где еда была, а теперь нет, уходит искать дальше.
+        Creature c = adult(3, {0.0f, 0.0f, 0.0f});
+        c.needs.hunger = 0.7f;
+        c.foodMemory = {6.0f, 0.0f, 0.0f};
+        c.foodMemoryAge = 1.0f;
+        World w = scenario(3, {c}, {FoodSource{{6.0f, 0.0f, 0.0f}, 0.0f}});   // куст пуст
+        float maxFromBush = 0.0f;
+        for (int i = 0; i < static_cast<int>(25.0f / kDt); ++i) {
+            w.tick(kDt, nullptr);
+            maxFromBush = std::max(maxFromBush, glm::length(glm::vec2(w.population()[0].creature.position.x - 6.0f, w.population()[0].creature.position.z)));
+        }
+        WSIM_CHECK(maxFromBush > 12.0f);           // ушёл исследовать, а не кружит у пустого места
+    }
+    {
         // Статистика: смерть от яда считается отдельно.
         Creature c = adult(3, {0.0f, 0.0f, 0.0f});
         c.needs.hunger = 0.3f;

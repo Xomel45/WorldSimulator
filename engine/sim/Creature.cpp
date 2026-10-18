@@ -83,7 +83,7 @@ float Creature::boredomLevel() const noexcept {
 bool Creature::isMature() const noexcept { return age >= 0.1f * lifespan(); }
 
 bool Creature::canMate() const noexcept {
-    return isMature() && matingCooldown <= 0.0f && needs.libido >= 0.4f && needs.energy >= 0.45f && needs.hunger <= 0.65f && health >= 0.6f;
+    return isMature() && matingCooldown <= 0.0f && needs.libido >= 0.4f && needs.energy >= 0.45f && needs.hunger <= 0.4f && health >= 0.6f;
 }
 
 const char* behaviorName(Behavior b) noexcept {

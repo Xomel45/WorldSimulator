@@ -101,8 +101,25 @@ int main() {
             return w.food()[0].amount;
         };
         const float blue = build(BerryKind::Blueberry), rasp = build(BerryKind::Raspberry), cloud = build(BerryKind::Cloudberry);
-        WSIM_CHECK(blue > rasp && rasp > cloud);  // 0.2 + 0.04 * 10 * regrow: 0.74 / 0.6 / 0.4
-        WSIM_CHECK(std::fabs(rasp - 0.6f) < 0.02f && std::fabs(cloud - 0.4f) < 0.02f);
+        WSIM_CHECK(blue > rasp && rasp > cloud);
+        // da/dt = 0.055 * regrow * (0.25 + 0.75 a): за 10 с из 0.2 выходит 0.60 / 0.47 / 0.32 (черника / малина / морошка)
+        WSIM_CHECK(std::fabs(blue - 0.597f) < 0.02f && std::fabs(rasp - 0.472f) < 0.02f && std::fabs(cloud - 0.322f) < 0.02f);
+        // Объеденный куст отрастает с задержкой: из нуля еду (0.12) даёт не сразу, а через ~7.5 с.
+        {
+            World w(9);
+            WorldState st = w.exportState();
+            st.population.clear();
+            st.food = {FoodSource{{10.0f, 0.0f, 10.0f}, 0.0f, BerryKind::Raspberry}};
+            WSIM_CHECK(w.importState(st));
+            int edible = -1, full = -1;
+            for (int i = 0; i < 60 * 200 && full < 0; ++i) {
+                w.tick(kDt, &t);
+                if (edible < 0 && w.food()[0].amount >= 0.12f) edible = i;
+                if (w.food()[0].amount >= 0.999f) full = i;
+            }
+            WSIM_CHECK(edible > 60 * 7 && edible < 60 * 12);   // ~7.5 с до первой еды
+            WSIM_CHECK(full > 60 * 28 && full < 60 * 45);      // ~34 с до полного (было ~25 с при равномерном росте, но с мгновенным "съедобно")
+        }
 
         auto hungerAfterMeal = [&](BerryKind kind) {
             World w(9);

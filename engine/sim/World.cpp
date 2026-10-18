@@ -28,7 +28,8 @@ constexpr float kRestRate            = 0.06f;   // единиц энергии/�
 constexpr float kMateChancePerSec    = 0.9f;    // шанс успеха спаривания в секунду у пары рядом (x fertility)
 constexpr float kMotherEnergyCost    = 0.22f;   // роды и вынашивание стоят сил
 constexpr float kFatherEnergyCost    = 0.08f;
-constexpr float kFoodRegrowRate      = 0.04f;   // единиц/сек восстановления источника еды
+constexpr float kFoodRegrowRate      = 0.055f;  // единиц/сек восстановления источника еды при полной скорости (см. ниже: растёт вместе с кустом)
+constexpr float kBushCrowdPenalty    = 0.4f;    // каждый стоящий у куста вдвое-втрое снижает его привлекательность: едоки расходятся по кустам
 constexpr float kFoodCap             = 1.0f;
 constexpr float kObserveRadius       = 12.0f;   // на таком расстоянии замечают, что соседу стало плохо после ягод (и учатся)
 constexpr float kWatchEatRadius      = 8.0f;    // ... и что сосед спокойно ест: незнакомые ягоды перестают пугать
@@ -284,6 +285,14 @@ void World::tick(float dt, const Terrain* terrain) {
     const Grid foodGrid = buildGrid(
         liveFoodIdx.size(), [this, &liveFoodIdx](std::size_t k) { return m_food[liveFoodIdx[k]].position; });
 
+    // Сколько существ стоит у каждого съедобного куста (3.5 юнита): куда уже сбежалась толпа, туда остальные идут неохотно.
+    std::vector<int> occupancy(liveFoodIdx.size(), 0);
+    for (std::size_t k = 0; k < liveFoodIdx.size(); ++k)
+        forEachNearby(
+            creatureGrid, m_food[liveFoodIdx[k]].position, 3.5f,
+            [this](std::size_t j) { return m_population[j].creature.position; },
+            [&](std::size_t, float) { ++occupancy[k]; });
+
     // 3. Pass 1: сенсы -> мозг и поведение -> резолв eat/rest. Всё чтение чужого
     // состояния идёт из сеток/lastOutputs, построенных до этого цикла --
     // порядок обработки i не влияет на корректность (см. World.hpp).
@@ -315,7 +324,9 @@ void World::tick(float dt, const Terrain* terrain) {
                 if (queasy) return;
                 const float appeal = self.berryAppeal(m_food[liveFoodIdx[k]].kind);
                 if (appeal < Creature::kMinAppeal && !(desperate && appeal > kDesperateFloor)) return;
-                const float score = std::max(appeal, 0.05f) / (1.0f + dist / kAppealDistScale);
+                // Толпа у куста отпугивает (сам существо у куста себя не считает).
+                const float crowd = std::max(0.0f, static_cast<float>(occupancy[k]) - (dist < 3.5f ? 1.0f : 0.0f));
+                const float score = std::max(appeal, 0.05f) / (1.0f + dist / kAppealDistScale) / (1.0f + kBushCrowdPenalty * crowd);
                 if (score > bestScore) {
                     bestScore    = score;
                     bestFoodDist = dist;
@@ -619,8 +630,10 @@ void World::tick(float dt, const Terrain* terrain) {
         m_population.push_back(Inhabitant{std::move(child), BrainOutputs{}});
 
     // 7. Еда медленно восстанавливается на месте.
+    // Куст отрастает не равномерно: объеденный до нуля долго "лысый", чем больше ягод -- тем быстрее набирает новые (рост
+    // 25% -> 100% от полной скорости). Раньше крошки отрастали сразу и толпа часами ждала возле пустого куста.
     for (auto& src : m_food)
-        src.amount = std::min(kFoodCap, src.amount + kFoodRegrowRate * berryDef(src.kind).regrow * dt);
+        src.amount = std::min(kFoodCap, src.amount + kFoodRegrowRate * berryDef(src.kind).regrow * (0.25f + 0.75f * src.amount) * dt);
 }
 
 }  // namespace wsim

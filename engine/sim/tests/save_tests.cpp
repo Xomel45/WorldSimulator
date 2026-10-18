@@ -111,11 +111,15 @@ int main() {
         cr.grudgeId = 99; cr.grudge = 0.7f;
         cr.carryKind = static_cast<std::uint8_t>(BerryKind::Henbane);
         cr.carryAmount = 0.12f; cr.carryAge = 3.0f;
+        cr.exploreTimer = 9.5f;
         SaveGame back5;
         WSIM_CHECK(parseSave(serializeSave(withTaste), back5, e3));
         const Creature& r5 = back5.world.population[0].creature;
         WSIM_CHECK(r5.mealLook == static_cast<std::uint8_t>(BerryLook::Dark) && r5.sinceBite == 7.5f && r5.grudgeId == 99 && r5.grudge == 0.7f &&
-                   r5.carryKind == static_cast<std::uint8_t>(BerryKind::Henbane) && r5.carryAmount == 0.12f && r5.carryAge == 3.0f);
+                   r5.carryKind == static_cast<std::uint8_t>(BerryKind::Henbane) && r5.carryAmount == 0.12f && r5.carryAge == 3.0f && r5.exploreTimer == 9.5f);
+        SaveGame v5back;  // v5: всё кроме exploreTimer
+        WSIM_CHECK(parseSave(serializeSave(withTaste, 5), v5back, e3));
+        WSIM_CHECK(v5back.world.population[0].creature.grudgeId == 99 && v5back.world.population[0].creature.exploreTimer == 0.0f);
         SaveGame v4back;  // v4: недомогания и вкус есть, зуба и трапезы нет
         WSIM_CHECK(parseSave(serializeSave(withTaste, 4), v4back, e3));
         const Creature& c4 = v4back.world.population[0].creature;

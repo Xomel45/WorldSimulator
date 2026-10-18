@@ -694,6 +694,26 @@ Food bushes are now biome-aware and come in eleven berry kinds (six safe ones, f
     (v2-v4 files load with them zeroed; tested).
   - Not done: creatures can't learn to tell mimics apart, no deliberate *lethal* planning (the dose is one pick), victims don't retaliate or
     remember who poisoned them, no gossip beyond direct observation, no antidotes/healing herbs, hallucinations have no visual effect, taste is not passed on.
+- **Not clustering around bushes** (foraging dispersal; measured with a headless probe over seeds 5/11/29/1234, 10 simulated minutes). Symptom
+  reported: creatures "just stand around the berries". Measured before: 50-97% of the population within 6 units of a bush, 30-45% of near-bush
+  time in `SeekFood`, **56-71% of near-bush time at an EMPTY bush** (crumbs regrew in 3 s, so everyone queued for the trickle), 26% resting
+  under the bush; the world was food-saturated (every bush fed ~1 creature, population always hungry). Changes:
+  - **Regrowth** is no longer linear: `da/dt = 0.055 · regrow · (0.25 + 0.75·amount)` — an emptied bush stays barren ~7.5 s and needs ~34 s to
+    refill (`kFoodRegrowRate`), so there is nothing to queue for.
+  - **Crowd penalty** in bush choice: every other creature within 3.5 units of a bush divides its score by `1 + 0.4·n` (`occupancy[]`, computed
+    once per tick) — hungry creatures spread over bushes instead of all taking the nearest.
+  - **Dispersal** (`Behavior.cpp: beginExplore`, `Creature::exploreTimer`, saved in v6): when a creature stops eating (full / bush empty) or
+    arrives at a remembered spot that is empty it heads away from it for 14 s on a nearly straight course (Wander gets +0.6 while exploring;
+    SeekFood without a target walks straight, `wander(0.35, 0.65)`, to new places instead of circling).
+  - **Rest away from food**: a tired creature within 7 units of food walks off (speed 0.35) before lying down; **separation** is weakened
+    (×0.3) near the target of SeekFood/SeekMate, so the arrivals aren't pushed back out of the 2-unit eating radius.
+  - **Births need real abundance**: `canMate` hunger ≤ 0.4 (was 0.65). This is what makes the population settle below the food limit.
+  - Measured after: 8-35% within 3 units (was 30-75%), 14-20% of near-bush time at an empty bush (was 56-71%), resting under bushes 7-16%
+    (was 26%); the stationary near-bush time is now mostly legitimate eating. **Side effect:** populations settle at ~20-100 instead of 80-170
+    (starvation deaths roughly halved, mean hunger ≈ 0.35-0.45). Tests: `intelligence_tests` (two-bush crowd split, rest-away, empty-bush
+    exploration), `berries_tests` (regrowth law), `save_tests` (v6/v5 compat).
+  - Not done: creatures keep one remembered bush, not a map; no seasons or day/night rhythm that would move them elsewhere (sleep, shelters, houses
+    are still decor); no territory use besides `GoHome`.
 - Not done: berries aren't tied to season, no bush-planting by creatures (seed dispersal), bushes don't care about moisture
   inside a biome, no bush sounds beyond a pop, trees/houses spacing from bushes is only the existing tree blocker.
 

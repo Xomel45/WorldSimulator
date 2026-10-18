@@ -67,12 +67,22 @@ Decision decide(Creature& c, const SenseInputs& s, const BrainOutputs& raw, floa
     Decision d;
 
     // ── Память о еде: где видели в последний раз; забывается со временем или когда пришли, а там пусто.
+    // Уход от кормовой точки: курс прочь от неё (с разбросом), на несколько секунд -- иначе сытые и разочарованные топчутся
+    // у кустов вечно (раньше около 60% времени у куста проводили у ПУСТОГО).
+    auto beginExplore = [&](const glm::vec3& from) {
+        c.wanderHeading = std::atan2(c.position.z - from.z, c.position.x - from.x) + (noise01(c.id, c.age) - 0.5f) * 1.4f;
+        c.exploreTimer  = 14.0f;
+    };
+    c.exploreTimer = std::max(0.0f, c.exploreTimer - dt);
     const bool foodVisible = s.foodDist < kNoTarget;
     if (foodVisible) { c.foodMemory = s.foodPos; c.foodMemoryAge = 0.0f; }
     else if (c.foodMemoryAge >= 0.0f) {
         c.foodMemoryAge += dt;
-        if (c.foodMemoryAge > 180.0f || glm::length(glm::vec2(c.foodMemory.x - c.position.x, c.foodMemory.z - c.position.z)) < 3.0f)
+        const bool arrived = glm::length(glm::vec2(c.foodMemory.x - c.position.x, c.foodMemory.z - c.position.z)) < 3.0f;
+        if (c.foodMemoryAge > 180.0f || arrived) {
             c.foodMemoryAge = -1.0f;
+            if (arrived) beginExplore(c.foodMemory);  // пришли, а там пусто -- идём дальше, а не кружим
+        }
     }
     const bool haveFoodTarget = foodVisible || c.foodMemoryAge >= 0.0f;
     const glm::vec3 foodTarget = foodVisible ? s.foodPos : c.foodMemory;
@@ -118,8 +128,8 @@ Decision decide(Creature& c, const SenseInputs& s, const BrainOutputs& raw, floa
     if (c.grudge > 0.5f && c.grudgeId != 0 && c.health > 0.5f && n.hunger < 0.6f && (carrying ? targetSeen : badSeen))
         S(Behavior::Sabotage) = 2.4f * (c.grudge - 0.25f) * std::max(0.1f, 1.3f - c.empathy());
 
-    // Базовая линия: бродит, любопытные -- охотнее.
-    S(Behavior::Wander) = 0.3f + c.curiosity() * c.boredomLevel() * 0.8f;
+    // Базовая линия: бродит, любопытные -- охотнее; идущий искать новые места не бросает это на полпути.
+    S(Behavior::Wander) = 0.3f + c.curiosity() * c.boredomLevel() * 0.8f + (c.exploreTimer > 0.0f ? 0.6f : 0.0f);
 
     // ── Выбор с гистерезисом: текущее занятие получает бонус и держится минимум 0.8 с (бегство прерывает сразу).
     c.behaviorTimer += dt;
@@ -132,6 +142,7 @@ Decision decide(Creature& c, const SenseInputs& s, const BrainOutputs& raw, floa
         if (!urgent && c.behaviorTimer < 0.8f && score[static_cast<std::size_t>(c.behavior)] > 0.35f) chosen = c.behavior;  // ещё не наскучило
         else c.behaviorTimer = 0.0f;
     }
+    if (wasEating && chosen != Behavior::Eat) beginExplore(foodTarget);  // наелись или куст опустел -- прочь от него
     c.behavior = chosen;
 
     // ── Куда и с какой скоростью.
@@ -143,18 +154,30 @@ Decision decide(Creature& c, const SenseInputs& s, const BrainOutputs& raw, floa
         speed = spd;
     };
     switch (chosen) {
-        case Behavior::Wander:   wander(2.2f, 0.32f); break;
+        case Behavior::Wander:
+            if (c.exploreTimer > 0.0f) wander(0.35f, hungry ? 0.7f : 0.55f);  // идёт целеустремлённо, курс почти ровный
+            else                       wander(2.2f, 0.32f);
+            break;
         case Behavior::SeekFood:
             if (haveFoodTarget) {
                 dir = dirTo(c.position, foodTarget);
                 const float dist = foodVisible ? s.foodDist : glm::length(glm::vec2(foodTarget.x - c.position.x, foodTarget.z - c.position.z));
                 speed = (0.55f + 0.45f * n.hunger) * std::clamp(dist / 5.0f, 0.3f, 1.0f);  // у цели замедляемся
             } else {
-                wander(0.9f, 0.55f);  // еды не видно и не помним: идём исследовать, курс держим ровнее
+                wander(0.35f, 0.65f);  // еды не видно и не помним: идём исследовать, курс держим ровно -- к новым местам
             }
             break;
         case Behavior::Eat:      dir = dirTo(c.position, foodTarget); speed = 0.0f; d.eat = true; break;
-        case Behavior::Rest:     speed = 0.0f; d.rest = true; break;
+        case Behavior::Rest:
+            // Отдыхать у куста посреди толпы -- плохая идея: сперва отходим подальше от еды (куда указывает foodDist), там ложимся.
+            if (foodVisible && s.foodDist < 7.0f && c.health >= 0.6f && n.energy > 0.2f) {
+                dir = -dirTo(c.position, s.foodPos);
+                speed = 0.35f;
+            } else {
+                speed = 0.0f;
+                d.rest = true;
+            }
+            break;
         case Behavior::Flee: {
             if (s.threatDist < kNoTarget && glm::length(s.threatDir) > 0.0f) dir = -safeNormalize(s.threatDir);
             else if (s.alarmNear > 0.2f && glm::length(s.alarmDir) > 0.0f) dir = -safeNormalize(s.alarmDir);  // паникуют -- убегаем от них
@@ -186,7 +209,9 @@ Decision decide(Creature& c, const SenseInputs& s, const BrainOutputs& raw, floa
     // ── Общие поправки курса: не слипаться, не уходить за край мира, личный уклон мозга.
     if (speed > 0.0f) {
         glm::vec2 v = dir;
-        v += s.separation * 1.2f;
+        // Расталкивание: у цели (куст, партнёр) ослаблено -- иначе подошедших выталкивает обратно, и они кружат вокруг.
+        const bool closingIn = (chosen == Behavior::SeekFood && foodVisible && s.foodDist < 5.0f) || (chosen == Behavior::SeekMate && s.mateDist < 5.0f);
+        v += s.separation * (closingIn ? 0.3f : 1.2f);
         if (s.worldHalfSize > 0.0f) {
             constexpr float margin = 14.0f;
             const float lim = s.worldHalfSize - margin;

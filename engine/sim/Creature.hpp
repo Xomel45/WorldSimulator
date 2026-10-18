@@ -147,6 +147,7 @@ public:
     float     wanderHeading = 0.0f;
     glm::vec3 foodMemory{};
     float     foodMemoryAge = -1.0f;   // < 0 -- памяти нет
+    float     exploreTimer = 0.0f;     // > 0 -- идёт искать новые места (после трапезы или пустого куста), а не толчётся у еды
 
     std::uint64_t               id = 0;
     std::uint64_t               bondedPartnerId = 0;  // последний mate() перезаписывает — не история, моногамия "по последней связи"
