@@ -89,6 +89,22 @@ int main() {
                 WSIM_CHECK(buildTree(species, v).vertices.size() == m.vertices.size());
             }
         }
+        // Остальные виды (биомы): корректные меши, корень под землёй, разумная высота, свой облик, детерминизм.
+        for (int sp = 2; sp < wsim::kTreeSpeciesCount; ++sp) {
+            const auto species = static_cast<wsim::TreeSpecies>(sp);
+            for (int v = 0; v < wsim::kTreeVariants; ++v) {
+                const MeshData m = buildTree(species, v);
+                checkMesh(m);
+                float minY = 1e9f, maxY = -1e9f;
+                for (const auto& vert : m.vertices) { minY = std::min(minY, vert.position.y); maxY = std::max(maxY, vert.position.y); }
+                WSIM_CHECK(minY < -0.2f && minY > -0.8f);
+                WSIM_CHECK(maxY > 2.0f && maxY < 10.0f);
+                WSIM_CHECK(m.vertices.size() < 1400);
+                WSIM_CHECK(buildTree(species, v).vertices.size() == m.vertices.size());
+                WSIM_CHECK(m.vertices.size() != buildTree(wsim::TreeSpecies::Oak, v).vertices.size() ||
+                           m.vertices[0].position != buildTree(wsim::TreeSpecies::Oak, v).vertices[0].position);
+            }
+        }
         WSIM_CHECK(oakWidth > birchWidth * 1.3f);     // дуб раскидистее
         WSIM_CHECK(birchHeight > oakHeight);          // берёза выше
         WSIM_CHECK(maxVerts < 1400);

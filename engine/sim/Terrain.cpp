@@ -99,6 +99,17 @@ float Terrain::baseHeightAt(float x, float z) const noexcept {
     return kHeightBias + continental + detail;
 }
 
+Climate Terrain::climateAt(float x, float z) const noexcept {
+    // Две независимые карты шума (сдвинуты по решётке), октавы 2: крупные пятна и немного изрезанности границ.
+    constexpr float kFreq = 0.0032f;
+    const float t = octaveNoise2D(x * kFreq + 311.7f, z * kFreq + 97.3f, 2, 0.5f);
+    const float m = octaveNoise2D(x * kFreq + 523.1f, z * kFreq + 701.9f, 2, 0.5f);
+    // Перцентили шума (σ ~0.2) растягиваем по 0..1 мягкой S-кривой: края достижимы, но без плато клампа
+    // (иначе целые области были бы ровно 0 -- сплошная арктика).
+    constexpr float kStretch = 4.47f;
+    return {0.5f + 0.5f * std::tanh(kStretch * t), 0.5f + 0.5f * std::tanh(kStretch * m)};
+}
+
 namespace {
 std::int64_t tileKey(int tx, int tz) noexcept {
     return (static_cast<std::int64_t>(tx) << 32) ^ static_cast<std::uint32_t>(tz);

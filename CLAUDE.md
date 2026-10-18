@@ -529,12 +529,11 @@ zero Vulkan/GLFW deps, same rule as `Genome`/`Brain`/`Creature`/`World`.
   lights, no new shadow code needed. `Application`'s constructor sets a
   fixed sun angle/color once alongside `m_lights.ambient` — no day/night
   cycle (out of scope).
-- **Known gaps** (deliberately out of scope this round): **no rivers** —
+- **Known gaps** (deliberately out of scope this round; biomes since added, see "Biomes"): **no rivers** —
   agreed in conversation to be a separate round (needs a flow/erosion pass,
   not just more noise, to look like real connected downhill water); no
   brain-level terrain awareness (see "Creature terrain physics");
-  no day/night cycle (sun angle is a fixed constant); no biome variety
-  beyond the elevation color lerp.
+  no day/night cycle (sun angle is a fixed constant).
 
 ## Rendering: shadows, materials, sky (`VulkanContext`, `assets/shaders/`)
 
@@ -579,6 +578,39 @@ zero Vulkan/GLFW deps, same rule as `Genome`/`Brain`/`Creature`/`World`.
 - Known gaps: no shadow-quality setting (map size is the constant `kShadowMapSize`), no
   real water depth/foam, no sky gradient/sun disc/clouds, shorelines are polygonal (cell 2 mesh
   vs the flat water plane), shadows of creatures are small pyramids' shadows.
+
+## Biomes (`engine/sim/Biomes.hpp`, `Terrain::climateAt`, `Trees.cpp`, `TreeGen.cpp`, `materials.glsl`)
+
+Seven biomes from a two-axis **climate**, all pure functions of the terrain seed (nothing stored or saved, loads and
+new worlds just rebuild chunks; player terrain edits never move a biome border):
+- **`Climate{temperature, moisture}`** in 0..1: `Terrain::climateAt(x,z)` = two independent 2-octave Perlin maps
+  (`kFreq=0.0032`, patches ~300 units, so the 200x200 creature field holds 1-4 biomes), stretched by `0.5+0.5·tanh(4.47·n)`
+  (a plain clamp left ~5% of the map at exactly 0/1 → solid arctic). **Altitude cools**: `withAltitude(c, h)` lowers
+  temperature by `0.035` per unit above `h=3`, so mountains turn taiga → tundra → snow on their own.
+- **`classify`** (Whittaker, simplified): T<0.24 cold (M<0.40 Tundra, else Taiga); T<0.68 temperate (M<0.55 Plains, else
+  Forest); hot (M<0.35 Desert, <0.60 Savanna, else Jungle). Measured shares over 6 seeds: 8-25% each (plains largest, savanna
+  smallest); `terrain_tests` keeps every biome ≥4% and ≤50%. `Terrain::biomeAt(x,z)` includes the altitude term;
+  `biomeName` gives the Russian name (debug window shows "Biome: … (T, M)" at the camera target).
+- **Rendering**: terrain vertex colour now carries the climate (`r`=T with altitude, `g`=M, `a`=0.25 material code) —
+  the old vertex gradient was unused. `terrainMaterial(P,N,dist,climate)` blends a 3×3 palette (`groundPalette`: cold /
+  temperate / hot × dry / mid / wet) so borders are smooth colour ramps, adds desert dune ridges, and snow now comes from
+  temperature (`smoothstep(0.01,0.07, T+noise)`) instead of a fixed height; beach/rock logic unchanged.
+- **Trees by biome** (`Trees.cpp`): per cell the biome is read from the base climate jittered ±0.04 (borders are ragged, not
+  ruler-straight) and sets density and species — Forest 1.0× oak/birch, Taiga 1.3× pine (+15% birch), Jungle 1.15× big oak
+  (scale ×1.25) + 30% palm, Plains 0.35× oak/birch, Tundra 0.35× dwarf pine, Savanna 0.3× acacia, Desert 0.14× cactus (the
+  sparse biomes get a small floor chance so there are lone trees). `suitable()` then applies the altitude climate: below
+  `kMinTemperature=0.07` no trees (ice), cold oak/birch become pine, heat-loving species die out above their zone; pines
+  may climb to height 13 (others 10). New models in `TreeGen.cpp` (`TreeSpecies::{Pine,Acacia,Cactus,Palm}`, 4 variants each,
+  same flat-shaded style; cactus arms are straight prisms + elbow blob because a tube bent 90° twists its quads — the
+  `checkMesh` normal test catches that); `TerrainChunks` bakes all `kTreeSpeciesCount` templates.
+- Birds are rarer in desert (0.2×) and tundra (0.4×). Debug: `WSIM_CAM_AT=x,z[,dist[,pitch]]` (e.g. `0,0,200,-50` for an
+  overview), `WSIM_CAM_TREE=oak|birch|pine|acacia|cactus|palm`.
+- Tests: climate determinism/range/edit-independence/lapse/thresholds/biome shares (`terrain_tests`); per-biome species sets
+  and density order on "interior" points over 6 seeds (`trees_tests`); every new model passes `checkMesh` (`procgen_tests`).
+- Not done: creatures/food do not care about biomes yet (bushes, regrowth, metabolism, speed in snow/sand), no rivers or
+  lakes tied to moisture, no swamp/mountain/beach biomes (beach and rock are still slope/height rules), no biome-specific
+  water colour/ice or fog, no seasons, houses/buildings ignore the biome, biome borders are not shown to the player
+  (no map/overlay).
 
 ## Temporal upscaler and frame generation (`VulkanTemporal.cpp`, `taau.comp`, `framegen.comp`)
 
@@ -672,7 +704,7 @@ instantly). Now:
 
 ## Trees (`engine/sim/Trees.*`, `procgen/TreeGen`, `TerrainChunks::buildTrees`; `trees_tests`, `procgen_tests`)
 
-Two species, **oak** (thick trunk, two side branches, wide dark-green crown of 3 big + 2 small lumpy blobs) and
+(Since the biomes round there are six species — pine, acacia, cactus, palm were added; see "Biomes".) Two original species, **oak** (thick trunk, two side branches, wide dark-green crown of 3 big + 2 small lumpy blobs) and
 **birch** (slender tall white trunk with dark bands, slight lean/bend, narrow light-olive crown of 3 elongated
 blobs, a few thin branches), 4 model variants each. Low-poly flat-shaded like houses/boulders; leaves use the
 "mottled" material (`alpha 0.75`, world-space speckle), bark is plain vertex colour.

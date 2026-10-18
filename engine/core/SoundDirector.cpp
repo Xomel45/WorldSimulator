@@ -101,7 +101,10 @@ void SoundDirector::ambient(float dt, bool playing, const glm::vec3& focus, floa
         m_birdTimer = 3.0f + 8.0f * u(m_rng);
         const float a = 6.2831853f * u(m_rng), r = (10.0f + 0.5f * camDistance) * (0.4f + 0.6f * u(m_rng));
         const float x = focus.x + std::cos(a) * r, z = focus.z + std::sin(a) * r;
-        if (!terrain.isUnderwater(x, z)) {
+        // В пустыне и тундре птиц мало, в остальных биомах -- как обычно.
+        const Biome biome = terrain.biomeAt(x, z);
+        const float birdy = biome == Biome::Desert ? 0.2f : biome == Biome::Tundra ? 0.4f : 1.0f;
+        if (!terrain.isUnderwater(x, z) && u(m_rng) < birdy) {
             const glm::vec3 pos{x, terrain.heightAt(x, z) + 4.0f, z};
             const auto      id = static_cast<SoundId>(static_cast<int>(SoundId::Chirp0) + static_cast<int>(u(m_rng) * 3.99f));
             m_audio.play(id, Group::Ambient, 0.45f, 0.9f + 0.3f * u(m_rng), &pos, 12.0f + 0.2f * camDistance, 110.0f + camDistance);

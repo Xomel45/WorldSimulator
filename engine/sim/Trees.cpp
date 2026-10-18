@@ -39,13 +39,32 @@ struct Candidate {
     TreeInstance tree;
 };
 
-Candidate candidate(std::uint32_t seed, int cx, int cz) {
+Candidate candidate(const Terrain& terrain, int cx, int cz) {
+    const std::uint32_t seed = terrain.seed();
     Candidate c;
     const float jx = 0.12f + 0.76f * unit(cellHash(seed, cx, cz, 1)), jz = 0.12f + 0.76f * unit(cellHash(seed, cx, cz, 2));
     const float x = (static_cast<float>(cx) + jx) * Trees::kCell, z = (static_cast<float>(cz) + jz) * Trees::kCell;
     const float d = Trees::density(seed, x, z);
-    // Шанс дерева в ячейке: нет в чистых полях, до ~0.8 в густом лесу.
-    const float chance = std::clamp((d - 0.30f) * 2.0f, 0.0f, 0.85f);
+
+    // Биом ячейки (без высоты -- её учтёт suitable): границы слегка "дрожат" на ячейку.
+    Climate cl = terrain.climateAt(x, z);
+    cl.temperature += (unit(cellHash(seed, cx, cz, 7)) - 0.5f) * 0.08f;
+    cl.moisture    += (unit(cellHash(seed, cx, cz, 8)) - 0.5f) * 0.08f;
+    const Biome biome = classify(cl);
+
+    // Шанс дерева в ячейке: нет в чистых полях, до ~0.85 в густом лесу; биом масштабирует, а редким биомам
+    // добавляет немного одиночек и там, где шум "лесистости" ничего не даёт.
+    float mult = 1.0f, floor = 0.0f;
+    switch (biome) {
+        case Biome::Forest:  mult = 1.0f;  break;
+        case Biome::Taiga:   mult = 1.3f;  break;  // хвойный лес гуще, чем уцелеет после остывания на высоте
+        case Biome::Jungle:  mult = 1.15f; break;
+        case Biome::Plains:  mult = 0.35f; floor = 0.02f; break;
+        case Biome::Tundra:  mult = 0.35f; floor = 0.03f; break;
+        case Biome::Savanna: mult = 0.30f; floor = 0.04f; break;
+        case Biome::Desert:  mult = 0.14f; floor = 0.025f; break;
+    }
+    const float chance = std::min(0.9f, std::clamp((d - 0.30f) * 2.0f, 0.0f, 0.85f) * mult + floor);
     if (unit(cellHash(seed, cx, cz, 3)) >= chance) return c;
 
     c.exists = true;
@@ -55,22 +74,39 @@ Candidate candidate(std::uint32_t seed, int cx, int cz) {
     t.scale   = 0.8f + 0.5f * unit(cellHash(seed, cx, cz, 4));
     t.yaw     = 360.0f * unit(cellHash(seed, cx, cz, 5));
     t.variant = static_cast<std::uint8_t>(unit(cellHash(seed, cx, cz, 6)) * static_cast<float>(kTreeVariants) * 0.9999f);
-    // Берёзовые рощи: отдельный шум; дубы -- по умолчанию.
+    // Вид по биому. Берёзовые рощи -- отдельный шум; в умеренном поясе остальное дубы.
+    const float pick      = unit(cellHash(seed, cx, cz, 9));
     const float birchness = smoothNoise(seed, x, z, 45.0f, 11);
-    t.species = birchness > 0.55f ? TreeSpecies::Birch : TreeSpecies::Oak;
+    switch (biome) {
+        case Biome::Forest:
+        case Biome::Plains:  t.species = birchness > 0.55f ? TreeSpecies::Birch : TreeSpecies::Oak; break;
+        case Biome::Taiga:   t.species = pick < 0.15f ? TreeSpecies::Birch : TreeSpecies::Pine; break;
+        case Biome::Tundra:  t.species = TreeSpecies::Pine; t.scale *= 0.75f; break;  // карликовые
+        case Biome::Savanna: t.species = TreeSpecies::Acacia; break;
+        case Biome::Desert:  t.species = TreeSpecies::Cactus; break;
+        case Biome::Jungle:
+            if (pick < 0.30f) t.species = TreeSpecies::Palm;
+            else { t.species = TreeSpecies::Oak; t.scale *= 1.25f; }  // крупные
+            break;
+    }
     return c;
 }
 
 // Годится ли место по рельефу (текущая высота -- с правками игрока).
 bool suitable(const Terrain& terrain, TreeInstance& t) {
     const float h = terrain.heightAt(t.x, t.z);
-    if (h < Trees::kMinHeight || h > Trees::kMaxHeight) return false;
+    if (h < Trees::kMinHeight || h > (t.species == TreeSpecies::Pine ? Trees::kMaxHeightPine : Trees::kMaxHeight)) return false;
     const float e = 1.5f;
     const float dx = (terrain.heightAt(t.x + e, t.z) - terrain.heightAt(t.x - e, t.z)) / (2.0f * e);
     const float dz = (terrain.heightAt(t.x, t.z + e) - terrain.heightAt(t.x, t.z - e)) / (2.0f * e);
     if (std::hypot(dx, dz) > Trees::kMaxSlope) return false;
     // Берёзы любят пониже: на высоте дубы.
     if (t.species == TreeSpecies::Birch && h > 7.0f) t.species = TreeSpecies::Oak;
+    // Высота остужает климат: лёд -- без деревьев, прохладные склоны -- хвойные, жаркие виды выше своей зоны гибнут.
+    const float temp = withAltitude(terrain.climateAt(t.x, t.z), h).temperature;
+    if (temp < Trees::kMinTemperature) return false;
+    if ((t.species == TreeSpecies::Oak || t.species == TreeSpecies::Birch) && temp < 0.24f) t.species = TreeSpecies::Pine;
+    if ((t.species == TreeSpecies::Cactus || t.species == TreeSpecies::Acacia || t.species == TreeSpecies::Palm) && temp < 0.5f) return false;
     return true;
 }
 
@@ -83,12 +119,11 @@ float Trees::density(std::uint32_t seed, float x, float z) {
 
 std::vector<TreeInstance> Trees::inRect(const Terrain& terrain, float x0, float z0, float x1, float z1, const Blocker* blocked) {
     std::vector<TreeInstance> out;
-    const std::uint32_t seed = terrain.seed();
     const int cx0 = static_cast<int>(std::floor(x0 / kCell)), cx1 = static_cast<int>(std::floor((x1 - 1.0e-4f) / kCell));
     const int cz0 = static_cast<int>(std::floor(z0 / kCell)), cz1 = static_cast<int>(std::floor((z1 - 1.0e-4f) / kCell));
     for (int cz = cz0; cz <= cz1; ++cz)
         for (int cx = cx0; cx <= cx1; ++cx) {
-            Candidate c = candidate(seed, cx, cz);
+            Candidate c = candidate(terrain, cx, cz);
             if (!c.exists) continue;
             TreeInstance& t = c.tree;
             if (t.x < x0 || t.x >= x1 || t.z < z0 || t.z >= z1) continue;  // корень в соседнем прямоугольнике -- его там и нарисуют
@@ -100,11 +135,10 @@ std::vector<TreeInstance> Trees::inRect(const Terrain& terrain, float x0, float 
 }
 
 bool Trees::blocksPoint(const Terrain& terrain, float x, float z, float radius) {
-    const std::uint32_t seed = terrain.seed();
     const int cx = static_cast<int>(std::floor(x / kCell)), cz = static_cast<int>(std::floor(z / kCell));
     for (int dz = -1; dz <= 1; ++dz)
         for (int dx = -1; dx <= 1; ++dx) {
-            Candidate c = candidate(seed, cx + dx, cz + dz);
+            Candidate c = candidate(terrain, cx + dx, cz + dz);
             if (!c.exists) continue;
             TreeInstance& t = c.tree;
             const float r = radius + kTrunkRadius * t.scale * 0.5f;

@@ -16,11 +16,6 @@ namespace {
 // Сколько кадров держим выгруженный меш до destroy() (кадров в полёте меньше).
 constexpr int kRetireFrames = 6;
 
-// Фиксированный диапазон высот для покраски: чанки строятся независимо,
-// так что нормировать по min/max чанка нельзя -- цвет прыгал бы на швах.
-constexpr float kColorLow  = -3.0f;
-constexpr float kColorHigh = 6.0f;
-
 // Узел уровня L делится на четыре, пока он ближе kSplitFactor * его размер.
 constexpr float kSplitFactor = 4.0f;
 
@@ -29,8 +24,8 @@ constexpr float kSplitFactor = 4.0f;
 TerrainChunks::TerrainChunks(VulkanContext& context, const Terrain& terrain)
     : m_context(context), m_terrain(terrain) {
     // Шаблоны деревьев (по виду и варианту) строим один раз; в чанки они вшиваются с поворотом и масштабом.
-    for (auto species : {TreeSpecies::Oak, TreeSpecies::Birch})
-        for (int v = 0; v < kTreeVariants; ++v) m_treeTemplates.push_back(procgen::buildTree(species, v));
+    for (int sp = 0; sp < kTreeSpeciesCount; ++sp)
+        for (int v = 0; v < kTreeVariants; ++v) m_treeTemplates.push_back(procgen::buildTree(static_cast<TreeSpecies>(sp), v));
 
     // Общая вода: единичный квадрат на уровне моря, каждый чанк только задаёт Transform.
     const glm::vec4 up{0.f, 1.f, 0.f, 0.f};
@@ -103,9 +98,6 @@ TerrainChunks::Chunk TerrainChunks::makeChunk(const Key& key) {
     const float cell = key.size() / static_cast<float>(kCells);  // шаг сетки этого уровня
     const float x0 = key.x0(), z0 = key.z0();
 
-    const glm::vec4 lowColor{0.24f, 0.32f, 0.22f, 1.f};   // низина -- трава
-    const glm::vec4 highColor{0.55f, 0.52f, 0.45f, 1.f};  // высота -- камень/сушь
-
     std::vector<Vertex> verts;
     verts.reserve(static_cast<std::size_t>(res) * res + 4 * kCells * 2);
     float minH = 1e9f;
@@ -121,9 +113,10 @@ TerrainChunks::Chunk TerrainChunks::makeChunk(const Key& key) {
             const float dz = (m_terrain.heightAt(x, z + cell) - m_terrain.heightAt(x, z - cell)) / (2.f * cell);
             const glm::vec3 n = glm::normalize(glm::vec3(-dx, 1.0f, -dz));
 
-            const float t = std::clamp((h - kColorLow) / (kColorHigh - kColorLow), 0.0f, 1.0f);
-            // alpha = код материала для шейдера (0.25 -- рельеф, см. materials.glsl); цвет вершины там не используется.
-            verts.push_back({{x, h, z, 0.f}, {n, 0.f}, glm::vec4(glm::vec3(glm::mix(lowColor, highColor, t)), 0.25f)});
+            // Цвет вершины рельефа несёт климат: r = температура (с поправкой на высоту -- горы холоднее),
+            // g = влажность; шейдер смешивает палитры по ним. alpha = код материала (0.25 -- рельеф, см. materials.glsl).
+            const Climate cl = withAltitude(m_terrain.climateAt(x, z), h);
+            verts.push_back({{x, h, z, 0.f}, {n, 0.f}, glm::vec4(cl.temperature, cl.moisture, 0.0f, 0.25f)});
         }
     }
 

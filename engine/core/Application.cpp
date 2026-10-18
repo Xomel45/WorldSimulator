@@ -286,12 +286,25 @@ Application::Application(AppConfig config)
         else if (p.rfind("settings", 0) == 0) m_menu->debugOpen(0, p.size() > 9 ? std::atoi(p.c_str() + 9) : 0);
     }
 
-    // WSIM_CAM_TREE=oak|birch -- камера на ближайшее к центру дерево этого вида (проверка моделей деревьев).
+    // WSIM_CAM_AT=x,z[,расстояние[,pitch]] -- камера на точку мира (обзор биомов: WSIM_CAM_AT=0,0,200,-55).
+    if (const char* at = std::getenv("WSIM_CAM_AT")) {
+        float x = 0, z = 0, dist = 60, pitch = -45;
+        std::sscanf(at, "%f,%f,%f,%f", &x, &z, &dist, &pitch);
+        m_camera.restore({x, m_terrain.heightAt(x, z), z}, -90.0f, pitch, dist);
+    }
+
+    // WSIM_CAM_TREE=oak|birch|pine|acacia|cactus|palm -- камера на ближайшее к центру дерево этого вида (проверка моделей деревьев).
     if (const char* kind = std::getenv("WSIM_CAM_TREE")) {
-        const TreeSpecies want = std::string(kind) == "birch" ? TreeSpecies::Birch : TreeSpecies::Oak;
+        const std::string name = kind;
+        TreeSpecies want = TreeSpecies::Oak;
+        if (name == "birch") want = TreeSpecies::Birch;
+        else if (name == "pine") want = TreeSpecies::Pine;
+        else if (name == "acacia") want = TreeSpecies::Acacia;
+        else if (name == "cactus") want = TreeSpecies::Cactus;
+        else if (name == "palm") want = TreeSpecies::Palm;
         float best = 1e9f;
         glm::vec3 at{0.0f};
-        for (const TreeInstance& t : Trees::inRect(m_terrain, -200, -200, 200, 200)) {
+        for (const TreeInstance& t : Trees::inRect(m_terrain, -600, -600, 600, 600)) {
             const float d = std::hypot(t.x, t.z);
             if (t.species == want && d < best) { best = d; at = {t.x, m_terrain.heightAt(t.x, t.z) + 2.0f, t.z}; }
         }
@@ -1236,6 +1249,10 @@ void Application::renderDebugUI() {
     ImGui::Separator();
     const glm::vec3 t = m_camera.target();
     ImGui::Text("Target:   %.1f, %.1f, %.1f", t.x, t.y, t.z);
+    {
+        const Climate cl = withAltitude(m_terrain.climateAt(t.x, t.z), t.y);
+        ImGui::Text("Biome:    %s (T %.2f, M %.2f)", biomeName(classify(cl)), cl.temperature, cl.moisture);
+    }
     ImGui::Text("Yaw/Pitch: %.1f / %.1f", m_camera.yaw(), m_camera.pitch());
     ImGui::Text("Distance: %.1f", m_camera.distance());
     ImGui::Separator();

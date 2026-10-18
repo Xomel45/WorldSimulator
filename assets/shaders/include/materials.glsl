@@ -26,9 +26,24 @@ vec3 bumpNormal(vec3 N, vec3 grad, float strength) {
     return normalize(N - strength * (grad - N * dot(grad, N)));
 }
 
-// Рельеф: биомы по высоте и уклону, пятна травы/сухой травы/проплешин, пляж,
-// камень на склонах, снег на вершинах (высокие горы от силы бога белеют сами).
-vec3 terrainMaterial(vec3 P, inout vec3 N, float dist) {
+// Палитра земли по климату (температура T и влажность M в 0..1, с поправкой на высоту -- её считает чанк):
+// три строки влажности (сухо / средне / влажно) по три пояса температуры (холод / умеренно / жарко); оба
+// смешения гладкие, так что границы биомов -- плавные переходы цвета. Постоянная часть цвета; пятна шума
+// (`large`) добавляет вызывающий.
+vec3 groundPalette(float T, float M, vec3 grassMid, float large) {
+    float tv = 0.9 + 0.2 * smoothstep(0.3, 0.7, large);
+    vec3 dry  = mix(mix(vec3(0.38, 0.37, 0.27), vec3(0.46, 0.46, 0.22), smoothstep(0.15, 0.45, T)),
+                    vec3(0.78, 0.60, 0.34), smoothstep(0.55, 0.85, T));
+    vec3 mid  = mix(mix(vec3(0.27, 0.34, 0.24) * tv, grassMid, smoothstep(0.15, 0.45, T)),
+                    vec3(0.55, 0.50, 0.20) * tv, smoothstep(0.55, 0.85, T));
+    vec3 wet  = mix(mix(vec3(0.13, 0.25, 0.16) * tv, vec3(0.12, 0.29, 0.09) * tv, smoothstep(0.15, 0.45, T)),
+                    vec3(0.07, 0.31, 0.07) * tv, smoothstep(0.55, 0.85, T));
+    return mix(mix(dry * tv, mid, smoothstep(0.06, 0.30, M)), wet, smoothstep(0.55, 0.85, M));
+}
+
+// Рельеф: цвет по климату (биомы), пятна травы/сухой травы/проплешин, пляж, камень на склонах, снег там, где
+// холодно (в том числе на высоких горах: чанк остужает климат с высотой, правки игрока белеют сами).
+vec3 terrainMaterial(vec3 P, inout vec3 N, float dist, vec2 climate) {
     float h     = P.y;
     float large = wsimFbm(P * 0.045 + 5.0);
     float mid   = wsimVNoise(P * 0.8 + 11.0);
@@ -37,6 +52,9 @@ vec3 terrainMaterial(vec3 P, inout vec3 N, float dist) {
     float far   = smoothstep(80.0, 320.0, dist);  // вдали мелочь сливается, иначе мерцает
     float slope = 1.0 - clamp(N.y, 0.0, 1.0);
 
+    float T = climate.x, M = climate.y;
+    // Пустыня: сухо и жарко -- песчаные гряды вместо пятен земли.
+    float desert = smoothstep(0.62, 0.80, T) * (1.0 - smoothstep(0.25, 0.40, M));
     vec3 grass = mix(vec3(0.17, 0.31, 0.09), vec3(0.33, 0.45, 0.14), smoothstep(0.3, 0.7, large));
     vec3 dry   = vec3(0.50, 0.44, 0.20);
     vec3 dirt  = vec3(0.33, 0.25, 0.16);
@@ -48,13 +66,15 @@ vec3 terrainMaterial(vec3 P, inout vec3 N, float dist) {
     vec3 sand  = vec3(0.78, 0.69, 0.47);
     vec3 snow  = vec3(0.93, 0.95, 0.98);
 
-    vec3  c     = mix(grass, dry, smoothstep(0.55, 0.85, large) * 0.5);
-    c           = mix(c, dirt, smoothstep(0.7, 0.85, mid + (large - 0.5) * 0.4) * 0.22);
+    vec3  c     = groundPalette(T, M, grass, large);
+    c           = mix(c, dry, smoothstep(0.55, 0.85, large) * 0.5 * (1.0 - desert) * smoothstep(0.2, 0.5, T) * (1.0 - smoothstep(0.55, 0.8, M)));
+    c           = mix(c, dirt, smoothstep(0.7, 0.85, mid + (large - 0.5) * 0.4) * 0.22 * (1.0 - desert));
+    c          *= 1.0 + desert * 0.07 * sin(dot(P.xz, vec2(0.55, 0.35)) + large * 9.0) * (1.0 - far);
     float beach = 1.0 - smoothstep(0.15, 0.9 + mid * 0.5, h);
     c           = mix(c, sand, beach);
     float rockW = smoothstep(0.28, 0.5, slope + (mid - 0.5) * 0.12 + max(h - 6.0, 0.0) * 0.02);
     c           = mix(c, rock, rockW);
-    float snowW = smoothstep(10.0, 13.0, h + (large - 0.5) * 3.0) * (1.0 - rockW * 0.6);
+    float snowW = (1.0 - smoothstep(0.01, 0.07, T + (large - 0.5) * 0.16)) * (1.0 - rockW * 0.6);
     c           = mix(c, snow, snowW);
 
     // Зернистость и микрорельеф: слабее вдали и на снегу.

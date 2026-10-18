@@ -75,6 +75,43 @@ int main() {
         WSIM_CHECK(n.heightAt(-40.0f, -70.0f) - n.baseHeightAt(-40.0f, -70.0f) >= -Terrain::kMaxEdit - 0.01f);
     }
 
+    // Климат: чистая функция сида (детерминирована, в 0..1, не зависит от правок рельефа), высота остужает,
+    // на больших расстояниях встречаются все биомы, имена заданы.
+    {
+        Terrain c1(kHalfSize, 21), c2(kHalfSize, 21);
+        for (float x = -500; x <= 500; x += 70)
+            for (float z = -500; z <= 500; z += 70) {
+                const Climate p = c1.climateAt(x, z), q = c2.climateAt(x, z);
+                WSIM_CHECK(p.temperature == q.temperature && p.moisture == q.moisture);
+                WSIM_CHECK(p.temperature >= 0.0f && p.temperature <= 1.0f && p.moisture >= 0.0f && p.moisture <= 1.0f);
+            }
+        const Climate before = c1.climateAt(30.0f, 30.0f);
+        c1.raise(30.0f, 30.0f, 10.0f, 20.0f);
+        WSIM_CHECK(c1.climateAt(30.0f, 30.0f).temperature == before.temperature);  // правки рельефа климат не трогают
+
+        const Climate warm{0.6f, 0.5f};
+        WSIM_CHECK(withAltitude(warm, 2.0f).temperature == warm.temperature);        // ниже порога -- без поправки
+        WSIM_CHECK(withAltitude(warm, 10.0f).temperature < warm.temperature - 0.2f);
+        WSIM_CHECK(withAltitude(warm, 500.0f).temperature == 0.0f);                  // не уходит в минус
+
+        WSIM_CHECK(classify({0.1f, 0.1f}) == Biome::Tundra && classify({0.1f, 0.8f}) == Biome::Taiga);
+        WSIM_CHECK(classify({0.5f, 0.2f}) == Biome::Plains && classify({0.5f, 0.8f}) == Biome::Forest);
+        WSIM_CHECK(classify({0.9f, 0.1f}) == Biome::Desert && classify({0.9f, 0.5f}) == Biome::Savanna &&
+                   classify({0.9f, 0.9f}) == Biome::Jungle);
+
+        int cnt[kBiomeCount] = {}, total = 0;
+        for (unsigned seed : {5u, 11u, 29u}) {
+            Terrain t(kHalfSize, seed);
+            for (float x = -2000; x <= 2000; x += 40)
+                for (float z = -2000; z <= 2000; z += 40) { ++cnt[static_cast<int>(t.biomeAt(x, z))]; ++total; }
+        }
+        for (int b = 0; b < kBiomeCount; ++b) {
+            WSIM_CHECK(cnt[b] > total / 25);  // каждый биом занимает заметную долю (не менее 4%) ...
+            WSIM_CHECK(cnt[b] < total / 2);   // ... и ни один не съел карту
+            WSIM_CHECK(biomeName(static_cast<Biome>(b))[0] != '?');
+        }
+    }
+
     std::puts("terrain_tests: OK");
     return 0;
 }

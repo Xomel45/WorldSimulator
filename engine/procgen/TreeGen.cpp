@@ -128,11 +128,115 @@ MeshData birch(int v) {
     return m;
 }
 
+// Сосна: прямой тёмный ствол и пять ярусов хвои-конусов, нижние шире; ярусы чуть сдвинуты и повёрнуты.
+MeshData pine(int v) {
+    MeshData m;
+    const glm::vec3 bark{0.26f, 0.18f, 0.12f};
+    const float height = rrange(2, v, 1, 4.6f, 5.8f), r0 = rrange(2, v, 2, 0.17f, 0.23f);
+    const float leanX = rrange(2, v, 3, -0.12f, 0.12f), leanZ = rrange(2, v, 4, -0.12f, 0.12f);
+    addTube(m, {{0, -0.5f, 0}, {leanX * 0.5f, height * 0.5f, leanZ * 0.5f}, {leanX, height, leanZ}}, {r0 * 1.2f, r0 * 0.9f, r0 * 0.4f}, {bark * 0.85f, bark}, 6);
+    const int   tiers = 5;
+    const float base0 = 0.9f, step = (height - 1.1f) / static_cast<float>(tiers);
+    for (int k = 0; k < tiers; ++k) {
+        const float t = static_cast<float>(k) / static_cast<float>(tiers - 1);
+        const float rBase = (1.75f - 1.15f * t) * rrange(2, v, 10 + k, 0.92f, 1.08f);
+        const float y0 = base0 + step * static_cast<float>(k);
+        const glm::vec3 axis{leanX * (y0 / height), y0, leanZ * (y0 / height)};
+        const glm::vec3 col = glm::vec3(0.06f, 0.21f, 0.12f) * (0.9f + 0.25f * rnd(2, v, 20 + k)) + glm::vec3(0.02f, 0.03f, 0.0f) * t;
+        addTaperedPrism(m, axis, axis + glm::vec3(0, step * 1.9f + 0.4f, 0), rBase, 0.03f, 7, col, kMottled, rrange(2, v, 30 + k, 0.0f, 6.28f));
+    }
+    return m;
+}
+
+// Акация: тонкий изогнутый ствол с развилкой и плоская широкая "зонтичная" крона из двух приплюснутых комков.
+MeshData acacia(int v) {
+    MeshData m;
+    std::vector<SolidEllipsoid> solids;
+    const glm::vec3 bark{0.36f, 0.27f, 0.17f};
+    const float height = rrange(3, v, 1, 3.0f, 3.8f), r0 = rrange(3, v, 2, 0.17f, 0.22f);
+    const float lean = rrange(3, v, 3, -0.5f, 0.5f);
+    const glm::vec3 fork{lean, height, rrange(3, v, 4, -0.3f, 0.3f)};
+    addTube(m, {{0, -0.5f, 0}, {lean * 0.3f, height * 0.5f, 0}, fork}, {r0 * 1.2f, r0 * 0.9f, r0 * 0.7f}, {bark * 0.85f, bark}, 6);
+    for (int k = 0; k < 2; ++k) {
+        const float a = rrange(3, v, 10 + k, 0.0f, 6.28f) + 3.14f * static_cast<float>(k);
+        addTaperedPrism(m, fork - glm::vec3(0, 0.2f, 0), fork + glm::vec3(std::cos(a) * 1.0f, 0.75f, std::sin(a) * 1.0f), r0 * 0.5f, r0 * 0.28f, 5, bark);
+    }
+    const glm::vec3 leaf{0.40f, 0.48f, 0.15f};
+    const float cy = height + 0.7f;
+    blobT(m, solids, {fork.x, cy, fork.z}, {2.9f, 0.55f, 2.7f}, leaf, 0.35f, 200 + v, 1, kMottled);
+    blobT(m, solids, {fork.x + rrange(3, v, 20, -0.9f, 0.9f), cy + 0.35f, fork.z + rrange(3, v, 21, -0.9f, 0.9f)}, {1.8f, 0.4f, 1.7f}, leaf * 1.1f, 0.35f, 210 + v, 0, kMottled);
+    removeBuriedTriangles(m, solids, 1.0f);
+    return m;
+}
+
+// Кактус (сагуаро): ребристая колонна с округлой макушкой и две руки -- горизонтальный отрог и вверх.
+MeshData cactus(int v) {
+    MeshData m;
+    const glm::vec3 green{0.20f, 0.40f, 0.20f};
+    const float height = rrange(4, v, 1, 2.2f, 3.0f), r = rrange(4, v, 2, 0.24f, 0.30f);
+    addTube(m, {{0, -0.4f, 0}, {0, height * 0.5f, 0}, {0, height, 0}}, {r * 1.1f, r, r * 0.85f}, {green * 0.9f, green}, 8);
+    addBlob(m, {0, height + 0.02f, 0}, {r * 0.85f, r * 0.85f, r * 0.85f}, green * 1.05f, 0.1f, 300 + v, 0, kPlainMaterial);
+    for (int k = 0; k < 2; ++k) {
+        const float a  = rrange(4, v, 10 + k, 0.0f, 6.28f) + 3.14f * static_cast<float>(k);
+        const float y0 = height * rrange(4, v, 14 + k, 0.35f, 0.55f), reach = rrange(4, v, 16 + k, 0.55f, 0.8f), up = rrange(4, v, 18 + k, 0.7f, 1.1f);
+        const glm::vec3 d(std::cos(a), 0, std::sin(a));
+        const glm::vec3 p0{0, y0, 0}, p1 = d * reach + glm::vec3(0, y0, 0), p2 = p1 + glm::vec3(0, up, 0);
+        // Две прямые призмы и шар в колене: у трубы через изгиб в 90 градусов грани перекручиваются.
+        addTaperedPrism(m, p0, p1, r * 0.6f, r * 0.58f, 6, green);
+        addTaperedPrism(m, p1, p2, r * 0.58f, r * 0.5f, 6, green * 1.03f);
+        addBlob(m, p1, {r * 0.62f, r * 0.62f, r * 0.62f}, green, 0.08f, 340 + 3 * k + v, 0, kPlainMaterial);
+        addBlob(m, p2 + glm::vec3(0, 0.02f, 0), {r * 0.5f, r * 0.5f, r * 0.5f}, green * 1.05f, 0.1f, 320 + 3 * k + v, 0, kPlainMaterial);
+    }
+    return m;
+}
+
+// Пальма: изогнутый светлый ствол с кольцами и венок из восьми дугообразных листьев.
+MeshData palm(int v) {
+    MeshData m;
+    const glm::vec3 trunk{0.52f, 0.41f, 0.27f};
+    const float height = rrange(5, v, 1, 4.4f, 5.4f), r0 = rrange(5, v, 2, 0.17f, 0.22f);
+    const float lx = rrange(5, v, 3, -0.9f, 0.9f), lz = rrange(5, v, 4, -0.9f, 0.9f);
+    auto at = [&](float t) { return glm::vec3(lx * t * t, -0.5f + (height + 0.5f) * t, lz * t * t); };
+    std::vector<glm::vec3> pts;
+    std::vector<float>     radii;
+    std::vector<glm::vec3> cols;
+    for (int s = 0; s <= 6; ++s) {
+        const float t = static_cast<float>(s) / 6.0f;
+        pts.push_back(at(t));
+        radii.push_back(r0 * (1.15f - 0.45f * t));
+        if (s < 6) cols.push_back(trunk * (s % 2 == 0 ? 0.88f : 1.08f));  // кольца-"рубцы"
+    }
+    addTube(m, pts, radii, cols, 6);
+    const glm::vec3 top = at(1.0f);
+    const glm::vec3 leaf{0.14f, 0.40f, 0.12f};
+    const int fronds = 8;
+    for (int k = 0; k < fronds; ++k) {
+        const float a = 6.2831853f * static_cast<float>(k) / static_cast<float>(fronds) + rrange(5, v, 10, 0.0f, 0.5f);
+        const glm::vec3 d(std::cos(a), 0, std::sin(a)), side = glm::vec3(-d.z, 0, d.x);
+        const float len = rrange(5, v, 20 + k, 1.9f, 2.5f), w = 0.38f;
+        const glm::vec3 mid = top + d * (len * 0.5f) + glm::vec3(0, 0.55f, 0);
+        const glm::vec3 tip = top + d * len + glm::vec3(0, -0.45f, 0);
+        const glm::vec3 inside = top - glm::vec3(0, 1.0f, 0);
+        const glm::vec3 col = leaf * (0.92f + 0.2f * rnd(5, v, 40 + k));
+        addTri(m, top, mid + side * w, mid - side * w, inside, col, kMottled);   // два плоских треугольника: лист -- ромб
+        addTri(m, mid + side * w, tip, mid - side * w, inside, col, kMottled);
+    }
+    return m;
+}
+
 }  // namespace
 
 MeshData buildTree(TreeSpecies species, int variant) {
     variant = std::clamp(variant, 0, kTreeVariants - 1);
-    return species == TreeSpecies::Birch ? birch(variant) : oak(variant);
+    switch (species) {
+        case TreeSpecies::Birch:  return birch(variant);
+        case TreeSpecies::Pine:   return pine(variant);
+        case TreeSpecies::Acacia: return acacia(variant);
+        case TreeSpecies::Cactus: return cactus(variant);
+        case TreeSpecies::Palm:   return palm(variant);
+        case TreeSpecies::Oak:    break;
+    }
+    return oak(variant);
 }
 
 }  // namespace wsim::procgen

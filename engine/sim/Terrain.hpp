@@ -1,5 +1,6 @@
 #pragma once
 
+#include "sim/Biomes.hpp"
 #include "sim/Genome.hpp"  // Rng
 
 #include <array>
@@ -31,6 +32,14 @@ public:
     // (см. ниже); пока правок нет, цена та же, что у чистой основы.
     [[nodiscard]] float heightAt(float x, float z) const noexcept;
     [[nodiscard]] float baseHeightAt(float x, float z) const noexcept;  // без правок
+
+    // Климат (температура/влажность) -- тоже чистая функция сида и координат, не зависит от правок рельефа.
+    // Без поправки на высоту: её добавляет вызывающий через withAltitude() с высотой, которую и так знает.
+    // Участки климата ~150-300 юнитов, так что в поле существ (200x200) помещается один-два биома.
+    [[nodiscard]] Climate climateAt(float x, float z) const noexcept;
+    [[nodiscard]] Biome   biomeAt(float x, float z) const noexcept {
+        return classify(withAltitude(climateAt(x, z), heightAt(x, z)));
+    }
 
     // Правки игрока (силы бога) -- разреженная сетка поправок высоты (шаг
     // kEditCell), поверх чистой функции; сгенерированная основа не меняется.
