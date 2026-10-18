@@ -6,11 +6,15 @@
 layout(location = 0) in vec3 fragPos;
 layout(location = 1) in vec3 fragNormal;
 layout(location = 2) in vec4 fragColor;
+layout(location = 3) in vec4 curClip;
+layout(location = 4) in vec4 prevClip;
 
 layout(set = 0, binding = 0) uniform CameraUBO {
     mat4 view;
     mat4 proj;
     vec4 camPos;
+    mat4 prevViewProj;
+    vec4 jitter;
 };
 
 #include "lighting.glsl"
@@ -28,6 +32,7 @@ layout(set = 0, binding = 3, std430) readonly buffer GeoTable { Geo geos[]; };
 
 layout(location = 0) out vec4  outColor;
 layout(location = 1) out float outDist;   // расстояние камера→фрагмент (для defocus)
+layout(location = 2) out vec2  outMotion; // сдвиг в UV: текущая позиция - прошлая (без джиттера)
 
 // ─── RNG (PCG hash, per-pixel) + низкодискрепантная выборка ──────────────────
 uint gSeed;
@@ -211,4 +216,5 @@ void main() {
     lit = applyFog(lit, fragPos, camPos.xyz);
     outColor = vec4(tonemapEncode(lit), 1.0);
     outDist  = length(camPos.xyz - fragPos);
+    outMotion = (curClip.xy / curClip.w - prevClip.xy / prevClip.w) * 0.5;
 }

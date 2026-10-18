@@ -580,6 +580,44 @@ zero Vulkan/GLFW deps, same rule as `Genome`/`Brain`/`Creature`/`World`.
   real water depth/foam, no sky gradient/sun disc/clouds, shorelines are polygonal (cell 2 mesh
   vs the flat water plane), shadows of creatures are small pyramids' shadows.
 
+## Temporal upscaler and frame generation (`VulkanTemporal.cpp`, `taau.comp`, `framegen.comp`)
+
+Own implementation (not AMD's FSR 2/3): the official FidelityFX SDK builds with MSVC/`.bat` scripts, has HLSL shaders that
+need `dxc` (AUR only on Arch) and no Linux/mingw support, so it would not build for everyone. This one is GLSL, built by
+`glslc` like every other shader, works on any GPU, in the Windows cross build too. Settings → Качество → Апскейлер →
+**Temporal** (`Settings::upscaler=3`; at render scale 100% it is plain TAA); next to it the **Генерация кадров** toggle.
+- **Inputs it needed**: sub-pixel **jitter** (Halton 2,3; 8..32 phases by scale; applied in `scene.vert` to `gl_Position`,
+  not to `proj`, so shadows/picking/culling keep the unjittered matrices), **motion vectors** (third scene attachment
+  `kMotionFormat` RG16F, UV space `cur - prev`, MSAA-resolved like `viewDist`) and the existing `viewDist` as depth.
+  `CameraData` got `prevViewProj` + `jitter` (filled by `VulkanContext::updateCamera`, `updateCameraHistory`).
+  `MeshPC` is still 128 B (the portable minimum): `mat4 model`, `normalMatrix` as three `vec4` columns (a `mat3` in std430),
+  `vec4 prevDelta` = how far a moving object went in world space since the previous DRAWN frame
+  (`SceneObject::motion/trackId`, `Application::trackMotion`; creatures by id, boulders by index; > 30 units = teleport = 0).
+  Static terrain/trees/houses get motion only from the camera.
+- **`taau.comp`**: Lanczos2 reconstruction of the current frame around the jittered sample positions, motion taken from the
+  nearest-to-camera neighbour (dilation), Catmull-Rom history fetch, variance clipping in YCoCg (2 sigma, tuned: 1.25 was
+  softer, 2.5 gave the same sharpness for more ghosting risk), blend weight 0.10 + more with motion and with how far the history had to be
+  clipped. History is RGBA16F ping-pong at output size; then the FSR 1.0 **RCAS** pass (sharpness slider) writes `m_upscaled`.
+  Works in the tonemapped (perceptual) space like the rest of the pipeline. Measured (seed 7, 70% scale): sharper than the
+  spatial path and visibly close to native; the correct jitter sign was verified by sharpness metrics (wrong signs blur).
+  `resetTemporalHistory()` is called on new world/load. Not done: reactive masks for water/particles (water ripples are
+  procedural noise in the pixel shader, so they shimmer slightly), history lock for thin features, motion for rotation
+  of dynamic objects (translation only), depth-based disocclusion test (only colour clipping).
+- **Frame generation** (`framegen.comp`, `endFrame`): needs Temporal **and vsync** (without vsync MAILBOX would drop the
+  intermediate frame, so it is refused). Each real frame is preceded by an intermediate one: previous shown frame `a`
+  (copied each frame to `m_prevImage`) and current `b` are sampled at `uv ∓ 0.5·mv`, blended when they agree, plain
+  blend otherwise. `beginUIPass` composites the intermediate frame on the image acquired in `beginFrame`;
+  `endFrame` acquires a SECOND image (`m_imageAvailable2`), composites the real frame + UI on it and presents both in order
+  (one submit, two presents). The UI is drawn twice via `setUiRecorder` (so ImGui's per-call vertex buffer ring is
+  `kMaxFrames*2`). Swapchain gets one extra image when it is on. Costs ~1 frame of latency and halves the real frame rate
+  at a given vsync (60 Hz → 30 real + 30 generated); the point is smoother image when the GPU can't reach the refresh rate.
+  Not done: optical flow (it uses engine motion vectors only, UI is not interpolated), frame pacing without vsync, HUD-less
+  interpolation (the UI is re-drawn, not warped).
+- Debug env: `WSIM_UPSCALER=0..3`, `WSIM_RENDER_SCALE=0.5..1`, `WSIM_FRAMEGEN=1`, `WSIM_CAM_SPIN=deg/s` (camera rotates by
+  itself — checks motion), `WSIM_FG_SHOW=1` (the real image also shows the intermediate frame, so `WSIM_FRAME` can dump it).
+  Compare native/FSR1/temporal on one seed with the PSNR + gradient-energy script pattern from this session (crops of
+  `WSIM_FRAME` dumps).
+
 ## Behavior layer, ecology, inspection (`engine/sim/Behavior.*`, `intelligence_tests`)
 
 Before this, creatures were pure random-weight brains acting directly (moveX/Z = brain output, thresholds on
@@ -770,7 +808,7 @@ Backend = **miniaudio 0.11.22** (FetchContent of `miniaudio.h` only, `SOURCE_SUB
   must be dry, flattens a pad ×3) — Lua `ctx:build(x,z[,yaw])`, `ctx:erase_buildings(x,z,r)`; the
   built-in "Стереть" removes buildings too. Creatures ignore houses; they're decor + boulder targets
   until the civilization systems exist.
-- **Upscaler UI**: Настройки → Качество: FSR 1.0 / NIS, render scale 50–100%, sharpness
+- **Upscaler UI**: Настройки → Качество: FSR 1.0 / NIS / Temporal (own, see "Temporal upscaler and frame generation"), render scale 50–100%, sharpness
   (`Settings::upscaler/renderScale/sharpness` → `VulkanContext::setUpscaler/setSharpness`; the
   machinery was inherited and dormant). Applied on mouse release, not while dragging (it recreates
   render targets). Tabs now: Графика, Качество, Управление, Звук, Интерфейс, Моды.

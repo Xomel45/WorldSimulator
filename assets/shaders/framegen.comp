@@ -1,0 +1,35 @@
+// Генерация кадра: промежуточный кадр между прошлым и текущим показанными кадрами.
+// Поверхность сдвинулась с a (прошлый кадр) в b = a + mv (текущий); в середине она в a + 0.5*mv.
+// Для пикселя uv берём цвет из прошлого кадра в uv - 0.5*mv и из текущего в uv + 0.5*mv.
+// Если они сильно расходятся (открытый участок, неверный вектор) -- откатываемся к смеси без движения.
+#version 460
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform sampler2D uPrev;     // прошлый кадр, полное разрешение
+layout(set = 0, binding = 1) uniform sampler2D uCur;      // текущий кадр, полное разрешение
+layout(set = 0, binding = 2) uniform sampler2D uMotion;   // сдвиг в UV (разрешение рендера)
+layout(set = 0, binding = 3, rgba8) uniform writeonly image2D uOut;
+
+layout(push_constant) uniform PC {
+    vec2 outSize;
+    vec2 pad;
+} pc;
+
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (p.x >= int(pc.outSize.x) || p.y >= int(pc.outSize.y)) return;
+    vec2 uv = (vec2(p) + 0.5) / pc.outSize;
+
+    // Вектор хранится в текущем кадре, а нужен в точке b: уточняем в два шага.
+    vec2 mv = textureLod(uMotion, uv, 0.0).rg;
+    mv = textureLod(uMotion, clamp(uv + 0.5 * mv, vec2(0.0), vec2(1.0)), 0.0).rg;
+
+    vec3 a = textureLod(uPrev, uv - 0.5 * mv, 0.0).rgb;
+    vec3 b = textureLod(uCur,  uv + 0.5 * mv, 0.0).rgb;
+    vec3 plain = 0.5 * (textureLod(uPrev, uv, 0.0).rgb + textureLod(uCur, uv, 0.0).rgb);
+
+    float err  = length(a - b);
+    float conf = 1.0 - smoothstep(0.10, 0.35, err);
+    imageStore(uOut, p, vec4(mix(plain, 0.5 * (a + b), conf), 1.0));
+}

@@ -144,6 +144,8 @@ Application::Application(AppConfig config)
     m_context->setClearColor(encodedSky());
     m_input   = std::make_unique<InputSystem>(m_window->handle());
     m_imgui   = std::make_unique<ImGuiLayer>(m_window->handle(), *m_context, std::string(config.assetDir));
+    // Генерация кадров рисует интерфейс дважды за кадр (на промежуточном и настоящем изображении)
+    m_context->setUiRecorder([this](VkCommandBuffer cmd) { m_imgui->renderDrawData(cmd); });
     m_menu    = std::make_unique<MainMenu>(MenuFonts{m_imgui->titleFont(), m_imgui->uiFont()});
     m_menu->setCaps(static_cast<int>(m_context->maxMsaaSamples()), m_context->rayQuerySupported());
 
@@ -187,6 +189,10 @@ Application::Application(AppConfig config)
 
     m_settingsPath = Settings::defaultPath();
     m_settings     = Settings::load(m_settingsPath);
+    // Отладка без меню: WSIM_UPSCALER=0..3 (3 = temporal), WSIM_RENDER_SCALE=0.5..1, WSIM_FRAMEGEN=1 (нужен vsync)
+    if (const char* e = std::getenv("WSIM_UPSCALER")) m_settings.upscaler = std::atoi(e);
+    if (const char* e = std::getenv("WSIM_RENDER_SCALE")) m_settings.renderScale = static_cast<float>(std::atof(e));
+    if (std::getenv("WSIM_FRAMEGEN")) m_settings.frameGen = true;
     m_saved        = m_settings;
 
     // Рельеф + вода строятся чанками вокруг камеры (см. TerrainChunks, render()).
@@ -466,6 +472,9 @@ void Application::update(float dt) {
         return;
     }
     m_playTime += dt;
+    // Отладка: WSIM_CAM_SPIN=градусов/с -- камера сама вращается (проверка temporal-апскейлера и генерации кадров в движении)
+    static const float spin = std::getenv("WSIM_CAM_SPIN") ? std::strtof(std::getenv("WSIM_CAM_SPIN"), nullptr) : 0.0f;
+    if (spin != 0.0f) m_camera.orbit(spin * dt, 0.0f);
     if (m_settings.autosaveMinutes > 0) {
         m_autosaveTimer += dt;
         if (m_autosaveTimer >= static_cast<float>(m_settings.autosaveMinutes) * 60.0f) {
@@ -495,6 +504,7 @@ void Application::update(float dt) {
         if (const float speed = glm::length(c.velocity); speed > 0.01f)
             t.rotation.y = glm::degrees(std::atan2(c.velocity.x, c.velocity.z));
         m_creatureObjects.push_back({m_creatureMesh, t, /*solid=*/false});
+        m_creatureObjects.back().trackId = c.id;
     }
 
     // Постройки: вид по зерну, посажены на землю (если рельеф под ними меняют, дом едет вместе с землёй).
@@ -592,6 +602,7 @@ void Application::render() {
                 m_started = true;
                 m_screen  = Screen::Playing;
                 startedNewWorld();
+                m_context->resetTemporalHistory();  // другой мир -- истории нечего делать
                 break;
             case MenuAction::Continue: m_screen = Screen::Playing; break;
             case MenuAction::Save:     saveCurrent(); break;
@@ -718,6 +729,8 @@ void Application::render() {
         m_context->beginScenePass();
 
         if (playing) {
+            trackMotion(m_creatureObjects, m_prevCreaturePos);
+            trackMotion(m_boulderObjects, m_prevBoulderPos);
             drawObjects(m_chunks->objects(), frustum);
             drawObjects(m_creatureObjects, frustum);
             drawObjects(m_boulderObjects, frustum);
@@ -743,6 +756,21 @@ void Application::render() {
     }
 }
 
+// ─── trackMotion ──────────────────────────────────────────────────────────────
+// Сколько каждый подвижный объект прошёл с прошлого НАРИСОВАННОГО кадра (а не шага симуляции):
+// это и есть вектор движения для temporal-апскейлера. Новые объекты и "скачки" -- без движения.
+void Application::trackMotion(std::vector<SceneObject>& objects, std::unordered_map<std::uint64_t, glm::vec3>& prev) {
+    std::unordered_map<std::uint64_t, glm::vec3> now;
+    now.reserve(objects.size());
+    for (auto& obj : objects) {
+        const auto it = prev.find(obj.trackId);
+        obj.motion    = it != prev.end() ? obj.transform.position - it->second : glm::vec3(0.0f);
+        if (glm::dot(obj.motion, obj.motion) > 30.0f * 30.0f) obj.motion = glm::vec3(0.0f);
+        now[obj.trackId] = obj.transform.position;
+    }
+    prev = std::move(now);
+}
+
 // ─── drawObjects ──────────────────────────────────────────────────────────────
 // Общий по фрустум-отсечению + drawMesh цикл — раньше жил только для m_scene,
 // теперь его же используем для m_creatureObjects (см. render()).
@@ -753,9 +781,11 @@ void Application::drawObjects(const std::vector<SceneObject>& objects, const Fru
         const glm::mat4 model = obj.transform.matrix();
         if (!frustum.intersects(obj.mesh->localAABB.transformed(model))) continue;
 
+        const glm::mat3 nm = glm::transpose(glm::inverse(glm::mat3(model)));
         const VulkanContext::MeshPC pc{
-            .model        = model,
-            .normalMatrix = glm::transpose(glm::inverse(model)),
+            .model       = model,
+            .normalCols  = {glm::vec4(nm[0], 0.0f), glm::vec4(nm[1], 0.0f), glm::vec4(nm[2], 0.0f)},
+            .prevDelta   = glm::vec4(obj.motion, 0.0f),
         };
 
         m_context->drawMesh(obj.mesh->vbo.handle, obj.mesh->ibo.handle, obj.mesh->indexCount, pc);
@@ -824,6 +854,7 @@ bool Application::loadFromSlot(const std::string& slot) {
         return false;
     }
     m_chunks->reset();  // рельеф другой (сид и правки) -- все чанки заново
+    m_context->resetTemporalHistory();
     m_creatureObjects.clear();
     m_boulderObjects.clear();
     m_buildingObjects.clear();
@@ -961,6 +992,7 @@ void Application::stepPhysics(float dt) {
         t.orientation = b.orient;
         t.useQuat     = true;
         m_boulderObjects.push_back({m_boulderMesh, t, /*solid=*/false});
+        m_boulderObjects.back().trackId = m_boulderObjects.size();  // тела без id: по порядку (при удалении тела один кадр может мазнуть -- отсекается порогом)
     }
 }
 
@@ -1145,6 +1177,7 @@ void Application::applySettings() {
     const int   mode    = dragging ? m_applied.upscaler : m_settings.upscaler;
     m_context->setUpscaler(static_cast<VulkanContext::Upscaler>(mode), mode == 0 ? 1.0f : scale);
     m_context->setSharpness(m_settings.sharpness);
+    m_context->setFrameGeneration(m_settings.frameGen && mode == 3);
     m_audio->setVolumes(m_settings.volMaster, m_settings.volAmbient, m_settings.volCreatures, m_settings.volEffects);
     ImGui::GetStyle().FontScaleMain = m_settings.uiScale;
     m_applied = m_settings;

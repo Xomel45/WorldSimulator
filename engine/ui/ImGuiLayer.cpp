@@ -83,8 +83,10 @@ ImGuiLayer::ImGuiLayer(GLFWwindow* window, VulkanContext& ctx, std::string asset
     initInfo.QueueFamily     = ctx.graphicsQueueFamily();
     initInfo.Queue           = ctx.graphicsQueue();
     initInfo.DescriptorPool  = m_pool;
-    initInfo.MinImageCount   = VulkanContext::kMaxFrames;
-    initInfo.ImageCount      = VulkanContext::kMaxFrames;
+    // Буферы вершин ImGui берутся по кругу, по одному набору на вызов RenderDrawData. При генерации кадров
+    // интерфейс рисуется дважды за кадр, поэтому наборов вдвое больше, чем кадров в полёте.
+    initInfo.MinImageCount   = VulkanContext::kMaxFrames * 2;
+    initInfo.ImageCount      = VulkanContext::kMaxFrames * 2;
 
     // UI pass — только color (depth в нём не подключается)
     initInfo.UseDynamicRendering = true;

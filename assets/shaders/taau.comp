@@ -1,0 +1,120 @@
+// Temporal-апскейлер: накопление субпиксельных сэмплов (джиттер) по векторам движения.
+// В духе FSR 2/3: Lanczos-реконструкция текущего кадра, бикубическая история,
+// обрезка истории по окрестности (variance clipping в YCoCg), вес нового кадра растёт при
+// движении и там, где история не сходится с текущим кадром (открытые участки, быстрые объекты).
+// Работает в перцептивном (уже тонемапленном) пространстве, как весь пайплайн сцены.
+#version 460
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform sampler2D uColor;    // сцена, разрешение рендера
+layout(set = 0, binding = 1) uniform sampler2D uDist;     // расстояние камера→пиксель (R16F)
+layout(set = 0, binding = 2) uniform sampler2D uMotion;   // сдвиг в UV: текущая позиция - прошлая
+layout(set = 0, binding = 3) uniform sampler2D uHistory;  // накопленный кадр, полное разрешение
+layout(set = 0, binding = 4, rgba16f) uniform writeonly image2D uOut;
+
+layout(push_constant) uniform PC {
+    vec2  renderSize;
+    vec2  outSize;
+    vec2  jitterPx;   // сдвиг растра этого кадра в пикселях рендера
+    float reset;      // 1 -- истории нет
+    float pad;
+} pc;
+
+vec3 toYCoCg(vec3 c) {
+    return vec3(0.25 * c.r + 0.5 * c.g + 0.25 * c.b,
+                0.5 * c.r - 0.5 * c.b,
+                -0.25 * c.r + 0.5 * c.g - 0.25 * c.b);
+}
+vec3 fromYCoCg(vec3 c) {
+    return vec3(c.x + c.y - c.z, c.x + c.z, c.x - c.y - c.z);
+}
+
+float sinc(float x) { x = max(abs(x), 1e-5) * 3.14159265; return sin(x) / x; }
+float lanczos2(float x) { return abs(x) < 2.0 ? sinc(x) * sinc(x * 0.5) : 0.0; }
+
+// Catmull-Rom по 5 билинейным выборкам.
+vec4 sampleCatmullRom(sampler2D tex, vec2 uv, vec2 texSize) {
+    vec2 pos = uv * texSize;
+    vec2 tc1 = floor(pos - 0.5) + 0.5;
+    vec2 f   = pos - tc1;
+    vec2 w0  = f * (-0.5 + f * (1.0 - 0.5 * f));
+    vec2 w1  = 1.0 + f * f * (-2.5 + 1.5 * f);
+    vec2 w2  = f * (0.5 + f * (2.0 - 1.5 * f));
+    vec2 w3  = f * f * (-0.5 + 0.5 * f);
+    vec2 w12 = w1 + w2;
+    vec2 tc0  = (tc1 - 1.0) / texSize;
+    vec2 tc3  = (tc1 + 2.0) / texSize;
+    vec2 tc12 = (tc1 + w2 / w12) / texSize;
+    vec4 r = textureLod(tex, vec2(tc12.x, tc0.y), 0.0) * (w12.x * w0.y)
+           + textureLod(tex, vec2(tc0.x, tc12.y), 0.0) * (w0.x * w12.y)
+           + textureLod(tex, vec2(tc12.x, tc12.y), 0.0) * (w12.x * w12.y)
+           + textureLod(tex, vec2(tc3.x, tc12.y), 0.0) * (w3.x * w12.y)
+           + textureLod(tex, vec2(tc12.x, tc3.y), 0.0) * (w12.x * w3.y);
+    float norm = w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y;
+    return r / norm;
+}
+
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (p.x >= int(pc.outSize.x) || p.y >= int(pc.outSize.y)) return;
+
+    vec2 uv   = (vec2(p) + 0.5) / pc.outSize;
+    vec2 rpos = uv * pc.renderSize;                  // положение выходного пикселя в пикселях рендера
+    ivec2 rmax = ivec2(pc.renderSize) - 1;
+    // Пиксель рендера i снят в точке (i + 0.5 - jitter) нерастрёсанного изображения.
+    ivec2 i0 = ivec2(floor(rpos - pc.jitterPx));
+
+    vec3  sum = vec3(0.0);
+    float wsum = 0.0;
+    vec3  m1 = vec3(0.0), m2 = vec3(0.0);            // моменты окрестности для обрезки истории
+    vec3  cMin = vec3(1e9), cMax = vec3(-1e9);
+    float nearest = 1e9;
+    vec2  mv = vec2(0.0);
+
+    for (int dy = -1; dy <= 1; ++dy) {
+        for (int dx = -1; dx <= 1; ++dx) {
+            ivec2 q  = clamp(i0 + ivec2(dx, dy), ivec2(0), rmax);
+            vec3  c  = texelFetch(uColor, q, 0).rgb;
+            vec2  d  = rpos - (vec2(i0 + ivec2(dx, dy)) + 0.5 - pc.jitterPx);
+            float w  = lanczos2(d.x) * lanczos2(d.y);
+            sum  += c * w;
+            wsum += w;
+            vec3 y = toYCoCg(c);
+            m1 += y; m2 += y * y;
+            cMin = min(cMin, y); cMax = max(cMax, y);
+            // Вектор движения берём у ближайшего к камере соседа: контуры не «размазываются» фоном.
+            float dist = texelFetch(uDist, q, 0).r;
+            if (dist < nearest) { nearest = dist; mv = texelFetch(uMotion, q, 0).rg; }
+        }
+    }
+    vec3 cur = max(sum / max(wsum, 1e-4), vec3(0.0));
+
+    vec3 mean  = m1 / 9.0;
+    vec3 sigma = sqrt(max(m2 / 9.0 - mean * mean, vec3(0.0)));
+    vec3 bMin  = max(mean - 2.0 * sigma, cMin);
+    vec3 bMax  = min(mean + 2.0 * sigma, cMax);
+
+    vec2 prevUV = uv - mv;
+    bool inside = all(greaterThan(prevUV, vec2(0.0))) && all(lessThan(prevUV, vec2(1.0)));
+
+    vec3 outColor = cur;
+    if (pc.reset < 0.5 && inside) {
+        vec3 hist = max(sampleCatmullRom(uHistory, prevUV, pc.outSize).rgb, vec3(0.0));
+        vec3 hy   = toYCoCg(hist);
+        // Обрезка: тянем историю к центру окрестности, пока она не окажется в коробке.
+        vec3  center = 0.5 * (bMin + bMax);
+        vec3  ext    = 0.5 * (bMax - bMin) + 1e-4;
+        vec3  v      = hy - center;
+        vec3  a      = abs(v / ext);
+        float k      = max(a.x, max(a.y, a.z));
+        vec3  clipped = k > 1.0 ? center + v / k : hy;
+        float rejected = length(hy - clipped);
+
+        float mvPx  = length(mv * pc.outSize);
+        float alpha = 0.10 + clamp(mvPx * 0.04, 0.0, 0.25) + clamp(rejected * 6.0, 0.0, 0.5);
+        alpha = clamp(alpha, 0.10, 0.85);
+        outColor = mix(fromYCoCg(clipped), cur, alpha);
+    }
+    imageStore(uOut, p, vec4(outColor, 1.0));
+}

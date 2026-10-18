@@ -10,7 +10,9 @@
 #include <vulkan/vulkan.h>
 #include <glm/glm.hpp>
 
+#include <chrono>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <utility>
@@ -76,7 +78,9 @@ public:
     [[nodiscard]] VkSampleCountFlagBits maxMsaaSamples() const noexcept { return m_maxMsaa; }
 
     // ── Апскейлинг (AMD FSR 1.0 / NVIDIA Image Scaling) ───────────────────────
-    enum class Upscaler { Off, FSR1, NIS };
+    // Temporal -- свой временной апскейлер (джиттер + векторы движения + история, в духе FSR 2/3):
+    // при масштабе 1.0 работает как TAA. Нужен для генерации кадров.
+    enum class Upscaler { Off, FSR1, NIS, Temporal };
 
     // mode + масштаб рендера (0.5..1.0). Применяется на следующем beginFrame.
     void setUpscaler(Upscaler mode, float renderScale);
@@ -84,6 +88,20 @@ public:
     [[nodiscard]] Upscaler upscalerMode() const noexcept { return m_upscaler; }
     [[nodiscard]] float    renderScale() const noexcept { return m_renderScale; }
     [[nodiscard]] float    sharpness() const noexcept { return m_sharpness; }
+
+    // ── Генерация кадров (интерполяция между двумя настоящими кадрами) ─────────
+    // Работает только с Upscaler::Temporal: после каждого настоящего кадра показывается ещё
+    // и промежуточный, построенный по векторам движения. Выключена -- ничего не меняется.
+    void setFrameGeneration(bool enabled) noexcept {
+        if (enabled == m_frameGenWanted) return;
+        m_frameGenWanted = enabled;
+        m_needsRecreate  = true;  // swapchain нужен с запасом образов: два показа за кадр
+    }
+    [[nodiscard]] bool frameGenerationActive() const noexcept { return m_frameGenActive; }
+    // Забыть накопленную историю (телепорт камеры, новый мир, загрузка): иначе несколько кадров будет шлейф.
+    void resetTemporalHistory() noexcept { m_historyValid = false; m_prevFrameValid = false; m_havePrevViewProj = false; }
+    // Как дорисовать интерфейс в открытый проход (нужно дважды за кадр: на промежуточном и на настоящем).
+    void setUiRecorder(std::function<void(VkCommandBuffer)> fn) { m_uiRecorder = std::move(fn); }
 
     // ── Ray tracing (VK_KHR_ray_query) — детали в RtSystem ────────────────────
     [[nodiscard]] bool rayQuerySupported() const noexcept { return m_rt.supported(); }
@@ -127,9 +145,11 @@ public:
     [[nodiscard]] bool  visionActive() const noexcept { return m_visionStrength > 0.f; }
 
     // Push constants для одного draw call (128 байт — гарантированный минимум Vulkan).
+    // normalMatrix -- mat3 в std430: три столбца по 16 байт (w не используется).
     struct MeshPC {
         glm::mat4 model;
-        glm::mat4 normalMatrix;  // transpose(inverse(model)), precomputed CPU-side
+        glm::vec4 normalCols[3];  // transpose(inverse(mat3(model))), precomputed CPU-side
+        glm::vec4 prevDelta;      // xyz = на сколько объект сместился в мире с прошлого кадра (векторы движения)
     };
     static_assert(sizeof(MeshPC) == 128);
 
@@ -177,6 +197,10 @@ public:
     static constexpr VkFormat kDepthFormat     = VK_FORMAT_D32_SFLOAT;
     // Расстояние камера→фрагмент, отдельный attachment для defocus-прохода (зрение)
     static constexpr VkFormat kViewDistFormat  = VK_FORMAT_R16_SFLOAT;
+    // Вектор движения в UV (текущая позиция - прошлая), третий color attachment сцены
+    static constexpr VkFormat kMotionFormat    = VK_FORMAT_R16G16_SFLOAT;
+    // История temporal-апскейлера хранится с запасом точности (выход -- 8 бит)
+    static constexpr VkFormat kHistoryFormat   = VK_FORMAT_R16G16B16A16_SFLOAT;
 
 private:
     // ── Инициализация ─────────────────────────────────────────────────────────
@@ -209,6 +233,20 @@ private:
     void writeUpscaleDescriptors();   // после (пере)создания таргетов
     void updateUpscaleConstants();    // FSR con / NIS config UBO
     void recordUpscale(VkCommandBuffer cmd);  // compute-пассы в кадре
+
+    // Temporal-апскейлер и генерация кадров (VulkanTemporal.cpp)
+    void createTemporalPipelines();    // один раз: layout'ы, compute-пайплайны, сэмплеры
+    void createTemporalTargets();      // история, прошлый кадр, промежуточный кадр (при recreate)
+    void destroyTemporalTargets();
+    void destroyTemporalPipelines();
+    void writeTemporalDescriptors();
+    void recordTemporalUpscale(VkCommandBuffer cmd);
+    void recordFrameGeneration(VkCommandBuffer cmd);   // m_prevUpscaled + m_upscaled → m_interp
+    void recordPresentPass(VkCommandBuffer cmd, uint32_t imageIdx, VkDescriptorSet source, bool drawUi);
+    void presentWithFrameGeneration();                 // вторая половина endFrame при генерации кадров
+    void advanceJitter();                              // следующая точка последовательности Halton
+    void updateCameraHistory(CameraData& cam);
+    void recordStorePrevFrame(VkCommandBuffer cmd);    // upscaled → m_prevImage (для интерполяции в следующем кадре)
 
     // Пересоздание swapchain и зависимых ресурсов (resize / vsync / OUT_OF_DATE).
     // При свёрнутом окне (0×0) блокируется до восстановления.
@@ -332,6 +370,62 @@ private:
     VkImage        m_nisCoefUsmImage    = VK_NULL_HANDLE;
     VkDeviceMemory m_nisCoefUsmMemory   = VK_NULL_HANDLE;
     VkImageView    m_nisCoefUsmView     = VK_NULL_HANDLE;
+
+    // ── Temporal-апскейлер + генерация кадров ─────────────────────────────────
+    // Motion: RG16F, третий color attachment сцены (как viewDist: MSAA-таргет + 1× resolve)
+    VkImage        m_motionImage         = VK_NULL_HANDLE;  // MSAA (только при m_msaa>1)
+    VkDeviceMemory m_motionMemory        = VK_NULL_HANDLE;
+    VkImageView    m_motionView          = VK_NULL_HANDLE;
+    VkImageLayout  m_motionMsaaLayout    = VK_IMAGE_LAYOUT_UNDEFINED;
+    VkImage        m_motionResolveImage  = VK_NULL_HANDLE;
+    VkDeviceMemory m_motionResolveMemory = VK_NULL_HANDLE;
+    VkImageView    m_motionResolveView   = VK_NULL_HANDLE;
+    VkImageLayout  m_motionResolveLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    // История -- полное разрешение, два образа по кругу (читаем один, пишем другой)
+    VkImage        m_historyImage[2]  = {};
+    VkDeviceMemory m_historyMemory[2] = {};
+    VkImageView    m_historyView[2]   = {};
+    VkImageLayout  m_historyLayout[2] = {VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_UNDEFINED};
+    uint32_t       m_historyCur       = 0;     // в какой образ пишет текущий кадр
+    bool           m_historyValid     = false; // false -- кадр без истории (первый, после resize/телепорта)
+    // Прошлый показанный кадр (для интерполяции) и промежуточный кадр
+    VkImage        m_prevImage   = VK_NULL_HANDLE;
+    VkDeviceMemory m_prevMemory  = VK_NULL_HANDLE;
+    VkImageView    m_prevView    = VK_NULL_HANDLE;
+    VkImageLayout  m_prevLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
+    VkImage        m_interpImage  = VK_NULL_HANDLE;
+    VkDeviceMemory m_interpMemory = VK_NULL_HANDLE;
+    VkImageView    m_interpView   = VK_NULL_HANDLE;
+    VkImageLayout  m_interpLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    bool           m_prevFrameValid = false;
+
+    VkSampler             m_temporalSampler = VK_NULL_HANDLE;   // линейный, clamp
+    VkDescriptorSetLayout m_taauDescLayout  = VK_NULL_HANDLE;
+    VkPipelineLayout      m_taauPipeLayout  = VK_NULL_HANDLE;
+    VkPipeline            m_taauPipeline    = VK_NULL_HANDLE;
+    VkDescriptorSet       m_dsTaau[2]       = {};   // по образу истории, в который пишем
+    VkDescriptorSet       m_dsRcasHist[2]   = {};   // RCAS: история[i] → upscaled
+    VkDescriptorSetLayout m_fgDescLayout    = VK_NULL_HANDLE;
+    VkPipelineLayout      m_fgPipeLayout    = VK_NULL_HANDLE;
+    VkPipeline            m_fgPipeline      = VK_NULL_HANDLE;
+    VkDescriptorSet       m_dsFg            = VK_NULL_HANDLE;
+    VkDescriptorPool      m_temporalPool    = VK_NULL_HANDLE;
+    VkDescriptorSet       m_dsCompositeInterp = VK_NULL_HANDLE;  // composite: промежуточный кадр
+
+    uint32_t  m_jitterIndex = 0;
+    glm::vec2 m_jitterPx{0.f};          // сдвиг текущего кадра в пикселях рендера, [-0.5,0.5]
+    glm::mat4 m_prevViewProj{1.f};
+    bool      m_havePrevViewProj = false;
+
+    bool m_frameGenWanted = false;      // из настроек
+    bool m_frameGenActive = false;      // реально включена (нужен Temporal и без path tracing)
+    bool m_interpThisFrame = false;     // для текущего кадра есть из чего интерполировать
+    std::function<void(VkCommandBuffer)> m_uiRecorder;
+    std::vector<VkSemaphore> m_imageAvailable2;   // второй acquire за кадр (генерация кадров)
+    uint32_t m_secondImageIdx = 0;
+    std::chrono::steady_clock::time_point m_lastEndFrame{};
+    double   m_frameIntervalMs = 16.0;  // сглаженный интервал между настоящими кадрами
 
     VkDescriptorPool m_upscaleDescPool = VK_NULL_HANDLE;
     VkDescriptorSet  m_blurDescSetUpscaled = VK_NULL_HANDLE;  // composite при апскейле

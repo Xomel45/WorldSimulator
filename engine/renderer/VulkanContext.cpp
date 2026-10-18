@@ -116,6 +116,7 @@ VulkanContext::VulkanContext(Window& window, bool vsync, std::string shaderDir)
     createScenePipeline();
     createShadowPipeline();
     createUpscalePipelines();
+    createTemporalPipelines();
     createUpscaleTargets();
     if (m_rtPipeline)
         m_pt.init(m_device, m_physDevice, kMaxFrames, m_rtPipeProps, m_shaderDir);
@@ -132,6 +133,7 @@ VulkanContext::~VulkanContext() {
 
     // Upscalers
     destroyUpscaleTargets();
+    destroyTemporalPipelines();
     vkDestroyPipeline(m_device, m_nisPipeline, nullptr);
     vkDestroyPipeline(m_device, m_rcasPipeline, nullptr);
     vkDestroyPipeline(m_device, m_easuPipeline, nullptr);
@@ -204,6 +206,16 @@ VulkanContext::~VulkanContext() {
         vkDestroyImage(m_device, m_viewDistImage, nullptr);
     }
 
+    // Motion-vector targets
+    vkDestroyImageView(m_device, m_motionResolveView, nullptr);
+    vkFreeMemory(m_device, m_motionResolveMemory, nullptr);
+    vkDestroyImage(m_device, m_motionResolveImage, nullptr);
+    if (m_motionImage != VK_NULL_HANDLE) {
+        vkDestroyImageView(m_device, m_motionView, nullptr);
+        vkFreeMemory(m_device, m_motionMemory, nullptr);
+        vkDestroyImage(m_device, m_motionImage, nullptr);
+    }
+
     // Descriptors (camera)
     vkDestroyDescriptorPool(m_device, m_descPool, nullptr);
     vkDestroyDescriptorSetLayout(m_device, m_descSetLayout, nullptr);
@@ -221,6 +233,7 @@ VulkanContext::~VulkanContext() {
 
     for (uint32_t i = 0; i < kMaxFrames; ++i) {
         vkDestroySemaphore(m_device, m_imageAvailable[i], nullptr);
+        vkDestroySemaphore(m_device, m_imageAvailable2[i], nullptr);
         vkDestroyFence(m_device, m_inFlightFences[i], nullptr);
     }
     for (auto sem : m_renderFinished)
@@ -327,6 +340,15 @@ void VulkanContext::beginScenePass() {
         m_viewDistMsaaLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     }
 
+    if (m_motionResolveLayout != VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) {
+        transitionImage(cmd, m_motionResolveImage, m_motionResolveLayout, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        m_motionResolveLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    }
+    if (useMsaa && m_motionMsaaLayout != VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) {
+        transitionImage(cmd, m_motionImage, m_motionMsaaLayout, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        m_motionMsaaLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    }
+
     // Переводим depth image: UNDEFINED → DEPTH_ATTACHMENT_OPTIMAL
     transitionImage(cmd, m_depthImage,
                     VK_IMAGE_LAYOUT_UNDEFINED,
@@ -366,7 +388,22 @@ void VulkanContext::beginScenePass() {
                                : VK_ATTACHMENT_STORE_OP_STORE,
         .clearValue  = distClear,
     };
-    VkRenderingAttachmentInfo colorAttachments[2] = { colorAttach, distAttach };
+    // Attach 2 — вектор движения в UV (фон = 0: камера двигает только то, что нарисовано)
+    VkClearValue motionClear{{{ 0.f, 0.f, 0.f, 0.f }}};
+    VkRenderingAttachmentInfo motionAttach{
+        .sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+        .imageView   = useMsaa ? m_motionView : m_motionResolveView,
+        .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        .resolveMode = useMsaa ? VK_RESOLVE_MODE_AVERAGE_BIT : VK_RESOLVE_MODE_NONE,
+        .resolveImageView   = useMsaa ? m_motionResolveView : VK_NULL_HANDLE,
+        .resolveImageLayout = useMsaa ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+                                      : VK_IMAGE_LAYOUT_UNDEFINED,
+        .loadOp      = VK_ATTACHMENT_LOAD_OP_CLEAR,
+        .storeOp     = useMsaa ? VK_ATTACHMENT_STORE_OP_DONT_CARE
+                               : VK_ATTACHMENT_STORE_OP_STORE,
+        .clearValue  = motionClear,
+    };
+    VkRenderingAttachmentInfo colorAttachments[3] = { colorAttach, distAttach, motionAttach };
     VkRenderingAttachmentInfo depthAttach{
         .sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
         .imageView   = m_depthView,
@@ -379,7 +416,7 @@ void VulkanContext::beginScenePass() {
         .sType                = VK_STRUCTURE_TYPE_RENDERING_INFO,
         .renderArea           = {{0, 0}, m_renderExtent},
         .layerCount           = 1,
-        .colorAttachmentCount = 2,
+        .colorAttachmentCount = 3,
         .pColorAttachments    = colorAttachments,
         .pDepthAttachment     = &depthAttach,
     };
@@ -404,7 +441,9 @@ void VulkanContext::beginScenePass() {
 }
 
 // ─── updateCamera / updateLights ──────────────────────────────────────────────
-void VulkanContext::updateCamera(const CameraData& cam) {
+void VulkanContext::updateCamera(const CameraData& camIn) {
+    CameraData cam = camIn;
+    updateCameraHistory(cam);  // prevViewProj + джиттер (VulkanTemporal.cpp)
     std::memcpy(m_cameraMaps[m_currentFrame], &cam, sizeof(CameraData));
     // Для реконструкции первичных лучей в path-traced режиме
     m_invViewProj = glm::inverse(cam.proj * cam.view);
@@ -450,6 +489,27 @@ void VulkanContext::endFrame() {
                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     m_offscreenLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
+    // Генерация кадров: образ из beginFrame уже несёт промежуточный кадр (с интерфейсом);
+    // настоящий кадр рисуем на втором образе и показываем следом.
+    const uint32_t firstImageIdx = m_currentImageIdx;
+    bool           secondFrame   = false;
+    if (m_interpThisFrame) {
+        transitionImage(cmd, m_scImages[firstImageIdx], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        const VkResult acq = vkAcquireNextImageKHR(m_device, m_swapchain, UINT64_MAX, m_imageAvailable2[m_currentFrame],
+                                                   VK_NULL_HANDLE, &m_secondImageIdx);
+        if (acq == VK_SUCCESS || acq == VK_SUBOPTIMAL_KHR) {
+            m_currentImageIdx = m_secondImageIdx;
+            // WSIM_FG_SHOW=1 -- отладка: и «настоящий» образ берёт промежуточный кадр (так его видно в WSIM_FRAME)
+            static const bool showInterp = std::getenv("WSIM_FG_SHOW") != nullptr;
+            recordPresentPass(cmd, m_currentImageIdx, showInterp ? m_dsCompositeInterp : m_blurDescSetUpscaled, /*drawUi=*/true);
+            vkCmdEndRendering(cmd);
+            secondFrame = true;
+        } else {
+            m_needsRecreate = true;  // покажем только промежуточный; swapchain пересоздастся в beginFrame
+        }
+    }
+    if (m_frameGenActive) recordStorePrevFrame(cmd);
+
     // Снимок готового кадра (с интерфейсом): копируем swapchain-образ в host-буфер.
     if (!m_dumpFinalPath.empty() && !m_dumpFinalPending) {
         const VkDeviceSize bytes = static_cast<VkDeviceSize>(m_scExtent.width) * m_scExtent.height * 4;
@@ -484,24 +544,27 @@ void VulkanContext::endFrame() {
         m_dumpFinalPending = true;
     }
 
-    // 3. Swapchain: COLOR_ATTACHMENT_OPTIMAL → PRESENT_SRC_KHR
-    transitionImage(cmd, m_scImages[m_currentImageIdx],
-                    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                    VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+    // 3. Swapchain: COLOR_ATTACHMENT_OPTIMAL → PRESENT_SRC_KHR (первый образ при генерации кадров уже переведён)
+    if (!m_interpThisFrame || secondFrame)
+        transitionImage(cmd, m_scImages[m_currentImageIdx],
+                        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                        VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
     vkEndCommandBuffer(cmd);
 
     // 3. Submit
-    VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    const VkPipelineStageFlags waitStages[2] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+    const VkSemaphore waitSems[2]   = {m_imageAvailable[m_currentFrame], m_imageAvailable2[m_currentFrame]};
+    const VkSemaphore signalSems[2] = {m_renderFinished[firstImageIdx], m_renderFinished[m_currentImageIdx]};
     VkSubmitInfo submitInfo{
         .sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-        .waitSemaphoreCount   = 1,
-        .pWaitSemaphores      = &m_imageAvailable[m_currentFrame],
-        .pWaitDstStageMask    = &waitStage,
+        .waitSemaphoreCount   = secondFrame ? 2u : 1u,
+        .pWaitSemaphores      = waitSems,
+        .pWaitDstStageMask    = waitStages,
         .commandBufferCount   = 1,
         .pCommandBuffers      = &cmd,
-        .signalSemaphoreCount = 1,
-        .pSignalSemaphores    = &m_renderFinished[m_currentImageIdx],
+        .signalSemaphoreCount = secondFrame ? 2u : 1u,
+        .pSignalSemaphores    = signalSems,
     };
     if (vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, m_inFlightFences[m_currentFrame]) != VK_SUCCESS)
         throw std::runtime_error("vkQueueSubmit failed");
@@ -537,20 +600,24 @@ void VulkanContext::endFrame() {
         m_dumpFinalPending = false;
     }
 
-    // 4. Present
-    VkPresentInfoKHR presentInfo{
-        .sType              = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
-        .waitSemaphoreCount = 1,
-        .pWaitSemaphores    = &m_renderFinished[m_currentImageIdx],
-        .swapchainCount     = 1,
-        .pSwapchains        = &m_swapchain,
-        .pImageIndices      = &m_currentImageIdx,
+    // 4. Present (при генерации кадров -- сначала промежуточный, затем настоящий; FIFO расставляет по vblank)
+    auto present = [&](uint32_t imageIdx) {
+        VkPresentInfoKHR presentInfo{
+            .sType              = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+            .waitSemaphoreCount = 1,
+            .pWaitSemaphores    = &m_renderFinished[imageIdx],
+            .swapchainCount     = 1,
+            .pSwapchains        = &m_swapchain,
+            .pImageIndices      = &imageIdx,
+        };
+        const VkResult result = vkQueuePresentKHR(m_presentQueue, &presentInfo);
+        if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
+            m_needsRecreate = true;  // пересоздадим в начале следующего кадра
+        else if (result != VK_SUCCESS)
+            throw std::runtime_error("vkQueuePresentKHR failed");
     };
-    VkResult result = vkQueuePresentKHR(m_presentQueue, &presentInfo);
-    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
-        m_needsRecreate = true;  // пересоздадим в начале следующего кадра
-    else if (result != VK_SUCCESS)
-        throw std::runtime_error("vkQueuePresentKHR failed");
+    present(firstImageIdx);
+    if (secondFrame) present(m_currentImageIdx);
 
     m_currentFrame = (m_currentFrame + 1) % kMaxFrames;
 }
@@ -887,7 +954,8 @@ void VulkanContext::createSwapchain(uint32_t width, uint32_t height) {
     auto present = choosePresentMode(sc.presentModes, m_vsync);
     auto extent  = chooseExtent(sc.capabilities, width, height);
 
-    uint32_t imageCount = sc.capabilities.minImageCount + 1;
+    // Генерация кадров держит два образа за кадр -- запас побольше, чтобы acquire не стоял
+    uint32_t imageCount = sc.capabilities.minImageCount + ((m_frameGenWanted && m_upscaler == Upscaler::Temporal) ? 2 : 1);
     if (sc.capabilities.maxImageCount > 0)
         imageCount = std::min(imageCount, sc.capabilities.maxImageCount);
 
@@ -977,6 +1045,18 @@ void VulkanContext::recreateSwapchain() {
         m_viewDistView   = VK_NULL_HANDLE;
     }
 
+    vkDestroyImageView(m_device, m_motionResolveView, nullptr);
+    vkFreeMemory(m_device, m_motionResolveMemory, nullptr);
+    vkDestroyImage(m_device, m_motionResolveImage, nullptr);
+    if (m_motionImage != VK_NULL_HANDLE) {
+        vkDestroyImageView(m_device, m_motionView, nullptr);
+        vkFreeMemory(m_device, m_motionMemory, nullptr);
+        vkDestroyImage(m_device, m_motionImage, nullptr);
+        m_motionImage  = VK_NULL_HANDLE;
+        m_motionMemory = VK_NULL_HANDLE;
+        m_motionView   = VK_NULL_HANDLE;
+    }
+
     vkDestroyImageView(m_device, m_depthView, nullptr);
     vkFreeMemory(m_device, m_depthMemory, nullptr);
     vkDestroyImage(m_device, m_depthImage, nullptr);
@@ -1058,6 +1138,7 @@ void VulkanContext::createSyncObjects() {
     //                 поэтому семафор нельзя переиспользовать до re-acquire того же образа.
     // inFlightFences: per frame-in-flight
     m_imageAvailable.resize(kMaxFrames);
+    m_imageAvailable2.resize(kMaxFrames);
     m_renderFinished.resize(m_scImages.size());
     m_inFlightFences.resize(kMaxFrames);
 
@@ -1068,6 +1149,7 @@ void VulkanContext::createSyncObjects() {
     };
     for (uint32_t i = 0; i < kMaxFrames; ++i) {
         if (vkCreateSemaphore(m_device, &semCI,   nullptr, &m_imageAvailable[i]) != VK_SUCCESS ||
+            vkCreateSemaphore(m_device, &semCI,   nullptr, &m_imageAvailable2[i]) != VK_SUCCESS ||
             vkCreateFence    (m_device, &fenceCI, nullptr, &m_inFlightFences[i]) != VK_SUCCESS)
             throw std::runtime_error("Не удалось создать sync objects");
     }
@@ -1376,7 +1458,11 @@ void VulkanContext::createScenePipeline() {
     // Attach 0 — цвет (RGBA), attach 1 — расстояние (R16F). Маски идентичны:
     // без independentBlend все attachment'ы обязаны совпадать, а лишние каналы
     // одноканального R16F всё равно игнорируются.
-    VkPipelineColorBlendAttachmentState blendAttach[2] = {
+    VkPipelineColorBlendAttachmentState blendAttach[3] = {
+        {
+            .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                              VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT,
+        },
         {
             .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                               VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT,
@@ -1388,7 +1474,7 @@ void VulkanContext::createScenePipeline() {
     };
     VkPipelineColorBlendStateCreateInfo blend{
         .sType           = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
-        .attachmentCount = 2,
+        .attachmentCount = 3,
         .pAttachments    = blendAttach,
     };
     VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
@@ -1414,10 +1500,10 @@ void VulkanContext::createScenePipeline() {
     if (vkCreatePipelineLayout(m_device, &layoutCI, nullptr, &m_scenePipelineLayout) != VK_SUCCESS)
         throw std::runtime_error("vkCreatePipelineLayout (scene) failed");
 
-    const VkFormat sceneColorFormats[2] = { kOffscreenFormat, kViewDistFormat };
+    const VkFormat sceneColorFormats[3] = { kOffscreenFormat, kViewDistFormat, kMotionFormat };
     VkPipelineRenderingCreateInfo renderingCI{
         .sType                   = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
-        .colorAttachmentCount    = 2,
+        .colorAttachmentCount    = 3,
         .pColorAttachmentFormats = sceneColorFormats,
         .depthAttachmentFormat   = kDepthFormat,
     };
@@ -1921,6 +2007,17 @@ void VulkanContext::createOffscreenResources() {
     if (m_msaa != VK_SAMPLE_COUNT_1_BIT)
         createColorImage(m_viewDistImage, m_viewDistMemory, m_viewDistView,
                          m_msaa, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, kViewDistFormat);
+
+    // Векторы движения: тот же приём (1× для чтения апскейлером + MSAA-таргет с resolve).
+    m_motionResolveLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    m_motionMsaaLayout    = VK_IMAGE_LAYOUT_UNDEFINED;
+    createColorImage(m_motionResolveImage, m_motionResolveMemory, m_motionResolveView,
+                     VK_SAMPLE_COUNT_1_BIT,
+                     VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                     kMotionFormat);
+    if (m_msaa != VK_SAMPLE_COUNT_1_BIT)
+        createColorImage(m_motionImage, m_motionMemory, m_motionView,
+                         m_msaa, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, kMotionFormat);
 }
 
 // ─── createBlurPipeline ───────────────────────────────────────────────────────
@@ -2679,7 +2776,7 @@ void VulkanContext::createUpscaleTargets() {
             .arrayLayers   = 1,
             .samples       = VK_SAMPLE_COUNT_1_BIT,
             .tiling        = VK_IMAGE_TILING_OPTIMAL,
-            .usage         = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            .usage         = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
             .sharingMode   = VK_SHARING_MODE_EXCLUSIVE,
             .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
         };
@@ -2723,9 +2820,11 @@ void VulkanContext::createUpscaleTargets() {
 
     writeUpscaleDescriptors();
     updateUpscaleConstants();
+    createTemporalTargets();  // история и кадры для генерации (только при Temporal)
 }
 
 void VulkanContext::destroyUpscaleTargets() {
+    destroyTemporalTargets();
     if (m_upscaledImage != VK_NULL_HANDLE) {
         vkDestroyImageView(m_device, m_upscaledView, nullptr);
         vkFreeMemory(m_device, m_upscaledMemory, nullptr);
@@ -2825,7 +2924,7 @@ void VulkanContext::writeUpscaleDescriptors() {
 }
 
 void VulkanContext::updateUpscaleConstants() {
-    if (m_upscaler == Upscaler::FSR1) {
+    if (m_upscaler == Upscaler::FSR1 || m_upscaler == Upscaler::Temporal) {
         // Резкость RCAS в "стопах": 0 = максимум; UI 0..1 → 2..0
         const FsrConstants con = computeFsrConstants(
             m_renderExtent.width, m_renderExtent.height,
@@ -3126,50 +3225,26 @@ void VulkanContext::beginUIPass(float blurStrength) {
     }  // if (blurRadius > 0)
 
     // Апскейл: offscreen (render res, SHADER_READ) → upscaled (full res, SHADER_READ)
-    if (m_upscaler != Upscaler::Off)
+    const bool ptActive = m_pathTraced && m_pt.ready();
+    const bool temporal = m_upscaler == Upscaler::Temporal && !ptActive;  // в path-traced режиме нет движения/истории
+    if (temporal)
+        recordTemporalUpscale(cmd);
+    else if (m_upscaler != Upscaler::Off && m_upscaler != Upscaler::Temporal)
         recordUpscale(cmd);
 
-    // Swapchain: UNDEFINED → COLOR_ATTACHMENT
-    transitionImage(cmd, m_scImages[m_currentImageIdx],
-                    VK_IMAGE_LAYOUT_UNDEFINED,
-                    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    // Генерация кадров: промежуточный кадр показываем первым, настоящий -- в endFrame.
+    m_frameGenActive  = m_frameGenWanted && temporal && m_vsync && m_interpImage != VK_NULL_HANDLE;
+    m_interpThisFrame = m_frameGenActive && m_prevFrameValid && m_historyValid;
+    if (m_interpThisFrame) recordFrameGeneration(cmd);
 
-    // Composite + UI pass (остаётся открытым — endFrame его закрывает).
-    // Depth не подключаем: composite и ImGui его не используют.
-    VkRenderingAttachmentInfo colorAttach{
-        .sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-        .imageView   = m_scImageViews[m_currentImageIdx],
-        .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        .loadOp      = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-        .storeOp     = VK_ATTACHMENT_STORE_OP_STORE,
-    };
-    VkRenderingInfo ri{
-        .sType                = VK_STRUCTURE_TYPE_RENDERING_INFO,
-        .renderArea           = {{0, 0}, m_scExtent},
-        .layerCount           = 1,
-        .colorAttachmentCount = 1,
-        .pColorAttachments    = &colorAttach,
-    };
-    vkCmdBeginRendering(cmd, &ri);
+    // Источник для composite: промежуточный кадр / апскейл / сцена как есть
+    // (Temporal в path-traced режиме апскейлером не прошёл -- берём offscreen, билинейно растянется).
+    VkDescriptorSet compositeSrc = m_blurDescSetOffscreen;
+    if (m_upscaler != Upscaler::Off && (m_upscaler != Upscaler::Temporal || temporal)) compositeSrc = m_blurDescSetUpscaled;
+    if (m_interpThisFrame) compositeSrc = m_dsCompositeInterp;
 
-    VkViewport viewport{
-        .x = 0.f, .y = 0.f,
-        .width    = static_cast<float>(m_scExtent.width),
-        .height   = static_cast<float>(m_scExtent.height),
-        .minDepth = 0.f, .maxDepth = 1.f,
-    };
-    VkRect2D scissor{{0, 0}, m_scExtent};
-    vkCmdSetViewport(cmd, 0, 1, &viewport);
-    vkCmdSetScissor(cmd, 0, 1, &scissor);
-
-    // Composite draw: offscreen (или upscaled) → swapchain
-    const VkDescriptorSet compositeSrc = (m_upscaler != Upscaler::Off)
-        ? m_blurDescSetUpscaled : m_blurDescSetOffscreen;
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_compositePipeline);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-        m_blurPipelineLayout, 0, 1, &compositeSrc, 0, nullptr);
-    vkCmdDraw(cmd, 3, 1, 0, 0);
-    // pass остаётся открытым — ImGui дорисовывает в вызывающем коде
+    // Composite + UI pass (остаётся открытым -- endFrame его закрывает).
+    recordPresentPass(cmd, m_currentImageIdx, compositeSrc, /*drawUi=*/false);
 }
 
 }  // namespace wsim

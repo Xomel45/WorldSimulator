@@ -369,7 +369,7 @@ void MainMenu::drawSettings(ImDrawList* dl, ImVec2 size, float dt, Settings& st,
     const float rowH = 6.6f * u, lblSize = std::max(13.0f, 1.39f * u), hintSize = std::max(10.5f, 0.97f * u);
     const float rowTop = 5.8f * u + (isLoad || m_tab == kSoundTab || m_tab == kModsTab ? 3.6f * u : 0.0f);
     const int   modCount = static_cast<int>(mods.size()), saveCount = static_cast<int>(saves.size());
-    constexpr int rowCounts[kTabCount] = {5, 3, 4, 4, 3, 0};
+    constexpr int rowCounts[kTabCount] = {5, 4, 4, 4, 3, 0};
     const int rows = isLoad ? std::min(kModsVisible, saveCount) : (m_tab == kModsTab ? std::min(kModsVisible, modCount) : rowCounts[m_tab]);
     if (isLoad && saveCount > kModsVisible && mp.x > x0 - 2.0f * u && io.MouseWheel != 0.0f) m_saveScroll -= io.MouseWheel > 0.0f ? 1 : -1;
     m_saveScroll = std::clamp(m_saveScroll, 0, std::max(0, saveCount - kModsVisible));
@@ -566,16 +566,22 @@ void MainMenu::drawSettings(ImDrawList* dl, ImVec2 size, float dt, Settings& st,
         }
         case kQualityTab: {
             // Рендер в меньшем разрешении и растяжение: бесплатный FPS на слабых видеокартах.
-            auto r = rowBegin(0, "Апскейлер", "Рисуем сцену в меньшем разрешении и растягиваем до размера окна");
-            static constexpr const char* upLabels[] = {"Выкл", "FSR 1.0", "NIS"};
-            static constexpr int         upValues[] = {0, 1, 2};
-            segmented(r, upLabels, upValues, 3, st.upscaler, 2);
+            auto r = rowBegin(0, "Апскейлер", "Рендер в меньшем разрешении");
+            static constexpr const char* upLabels[] = {"Выкл", "FSR 1.0", "NIS", "Temporal"};
+            static constexpr int         upValues[] = {0, 1, 2, 3};
+            segmented(r, upLabels, upValues, 4, st.upscaler, 3);
             const bool upOn = st.upscaler != 0;
             std::snprintf(buf, sizeof buf, upOn ? "Сцена рисуется в %.0f%% разрешения окна" : "Включите апскейлер, чтобы менять масштаб", st.renderScale * 100.0f);
             r = rowBegin(1, "Масштаб рендера", buf);
             slider(r, st.renderScale, 0.5f, 1.0f, 0.05f, upOn);
             r = rowBegin(2, "Резкость", upOn ? "Усиление чёткости после растяжения" : "Работает вместе с апскейлером");
             slider(r, st.sharpness, 0.0f, 1.0f, 0.05f, upOn);
+            // Генерация кадров: между настоящими кадрами показывается построенный по движению (нужны Temporal и vsync)
+            const bool fgOk = st.upscaler == 3 && st.vsync;
+            r = rowBegin(3, "Генерация кадров",
+                         fgOk ? "Промежуточные кадры: плавнее при низком FPS, выше задержка"
+                              : "Нужны Temporal и вертикальная синхронизация");
+            toggle(r, st.frameGen, fgOk);
             break;
         }
         case kCtlTab: {
@@ -674,7 +680,7 @@ void MainMenu::drawSettings(ImDrawList* dl, ImVec2 size, float dt, Settings& st,
             const Settings d;
             switch (m_tab) {
                 case kGfxTab: st.vsync = d.vsync; st.msaa = d.msaa; st.viewRadius = d.viewRadius; st.autoViewRadius = d.autoViewRadius; st.shadows = d.shadows; break;
-                case kQualityTab: st.upscaler = d.upscaler; st.renderScale = d.renderScale; st.sharpness = d.sharpness; break;
+                case kQualityTab: st.upscaler = d.upscaler; st.renderScale = d.renderScale; st.sharpness = d.sharpness; st.frameGen = d.frameGen; break;
                 case kSoundTab: st.volMaster = d.volMaster; st.volAmbient = d.volAmbient; st.volCreatures = d.volCreatures; st.volEffects = d.volEffects; break;
                 case kCtlTab: st.panSpeed = d.panSpeed; st.orbitSens = d.orbitSens; st.zoomStep = d.zoomStep; st.invertOrbit = d.invertOrbit; break;
                 default: st.uiScale = d.uiScale; st.showDebug = d.showDebug; st.autosaveMinutes = d.autosaveMinutes; break;

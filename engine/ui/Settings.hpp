@@ -15,9 +15,10 @@ struct Settings {
     int   viewRadius = 24;     // чанков от камеры, 4..64 (чанки дальше 8 грубее, см. TerrainChunks)
     bool  shadows    = true;   // тени от солнца (каскадные карты)
     // Качество картинки: рендер в меньшем разрешении + апскейл (FSR 1.0 / NVIDIA Image Scaling)
-    int   upscaler    = 0;      // 0 выкл, 1 FSR 1.0, 2 NIS
+    int   upscaler    = 0;      // 0 выкл, 1 FSR 1.0, 2 NIS, 3 Temporal (свой временной апскейлер; при масштабе 100% -- TAA)
     float renderScale = 0.75f;  // доля разрешения окна, 0.5..1 (при включённом апскейлере)
     float sharpness   = 0.5f;   // резкость после апскейла, 0..1
+    bool  frameGen    = false;  // генерация кадров (только с Temporal и вертикальной синхронизацией)
     // Управление
     float panSpeed    = 12.0f;  // ед./с при distance=25
     float orbitSens   = 0.2f;   // градусов на пиксель

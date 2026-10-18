@@ -22,7 +22,7 @@ void Settings::clamp() noexcept {
     volCreatures = std::clamp(volCreatures, 0.0f, 1.0f);
     volEffects   = std::clamp(volEffects, 0.0f, 1.0f);
     if (autosaveMinutes != 0 && autosaveMinutes != 2 && autosaveMinutes != 5 && autosaveMinutes != 10) autosaveMinutes = 5;
-    upscaler    = std::clamp(upscaler, 0, 2);
+    upscaler    = std::clamp(upscaler, 0, 3);
     renderScale = std::clamp(renderScale, 0.5f, 1.0f);
     sharpness   = std::clamp(sharpness, 0.0f, 1.0f);
 }
@@ -53,6 +53,7 @@ Settings Settings::load(const std::string& path) {
             else if (key == "upscaler")    s.upscaler    = std::stoi(val);
             else if (key == "renderScale") s.renderScale = std::stof(val);
             else if (key == "sharpness")   s.sharpness   = std::stof(val);
+            else if (key == "frameGen")    s.frameGen    = std::stoi(val) != 0;
             else if (key == "panSpeed")    s.panSpeed    = std::stof(val);
             else if (key == "orbitSens")   s.orbitSens   = std::stof(val);
             else if (key == "zoomStep")    s.zoomStep    = std::stof(val);
@@ -74,7 +75,7 @@ bool Settings::save(const std::string& path) const {
     if (!out) return false;
     out << "vsync=" << vsync << "\nmsaa=" << msaa << "\nviewRadius=" << viewRadius << "\nautoViewRadius=" << autoViewRadius
         << "\nshadows=" << shadows << "\nvolMaster=" << volMaster << "\nvolAmbient=" << volAmbient << "\nvolCreatures=" << volCreatures
-        << "\nvolEffects=" << volEffects << "\nupscaler=" << upscaler << "\nrenderScale=" << renderScale << "\nsharpness=" << sharpness
+        << "\nvolEffects=" << volEffects << "\nupscaler=" << upscaler << "\nrenderScale=" << renderScale << "\nsharpness=" << sharpness << "\nframeGen=" << frameGen
         << "\npanSpeed=" << panSpeed << "\norbitSens=" << orbitSens
         << "\nzoomStep=" << zoomStep << "\ninvertOrbit=" << invertOrbit << "\nuiScale=" << uiScale
         << "\nshowDebug=" << showDebug << "\nautosaveMinutes=" << autosaveMinutes << "\n";

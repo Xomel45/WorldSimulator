@@ -1,6 +1,7 @@
 add_library(engine_renderer STATIC
     Window.cpp
     VulkanContext.cpp
+    VulkanTemporal.cpp
     RtSystem.cpp
     PathTracer.cpp
     GpuBuffer.cpp

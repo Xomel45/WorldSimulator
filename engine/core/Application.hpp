@@ -20,6 +20,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace wsim {
@@ -56,6 +57,7 @@ private:
     void render();
     void renderDebugUI();
     void drawObjects(const std::vector<SceneObject>& objects, const Frustum& frustum);
+    static void trackMotion(std::vector<SceneObject>& objects, std::unordered_map<std::uint64_t, glm::vec3>& prev);
     // minTop: объекты, чья верхушка ниже этой высоты, в этот каскад не попадают (см. render()).
     void drawShadowCasters(const std::vector<SceneObject>& objects, const Frustum& lightFrustum, float minTop = -1e9f);
 
@@ -87,6 +89,8 @@ private:
     World                     m_menuWorld;
     std::shared_ptr<Mesh>     m_creatureMesh;
     std::vector<SceneObject>  m_creatureObjects;
+    // Позиции объектов в прошлом нарисованном кадре (trackId → позиция): векторы движения для temporal-апскейлера
+    std::unordered_map<std::uint64_t, glm::vec3> m_prevCreaturePos, m_prevBoulderPos;
     // Валуны (физика): тела живут в m_physics, их меши -- общая каменная "картошка".
     PhysicsWorld              m_physics;
     std::shared_ptr<Mesh>     m_boulderMesh;

@@ -4,11 +4,15 @@
 layout(location = 0) in vec3 fragPos;
 layout(location = 1) in vec3 fragNormal;
 layout(location = 2) in vec4 fragColor;
+layout(location = 3) in vec4 curClip;
+layout(location = 4) in vec4 prevClip;
 
 layout(set = 0, binding = 0) uniform CameraUBO {
     mat4 view;
     mat4 proj;
     vec4 camPos;
+    mat4 prevViewProj;
+    vec4 jitter;
 };
 
 #define WSIM_RASTER_SHADOWS
@@ -17,6 +21,7 @@ layout(set = 0, binding = 0) uniform CameraUBO {
 
 layout(location = 0) out vec4  outColor;
 layout(location = 1) out float outDist;   // расстояние камера→фрагмент (для defocus)
+layout(location = 2) out vec2  outMotion; // сдвиг в UV: текущая позиция - прошлая (без джиттера)
 
 // Точечные и фонарик в растеризации без теней; тень солнца -- карта теней (sunShadow в lighting.glsl)
 float shadowFactor(vec3 origin, vec3 dir, float maxDist) { return 1.0; }
@@ -49,4 +54,5 @@ void main() {
     lit = applyFog(lit, fragPos, camPos.xyz);
     outColor = vec4(tonemapEncode(lit), 1.0);
     outDist  = dist;
+    outMotion = (curClip.xy / curClip.w - prevClip.xy / prevClip.w) * 0.5;
 }

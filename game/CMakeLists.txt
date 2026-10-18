@@ -37,6 +37,8 @@ target_compile_shaders(worldsim
     "${CMAKE_SOURCE_DIR}/assets/shaders/fsr_easu.comp"
     "${CMAKE_SOURCE_DIR}/assets/shaders/fsr_rcas.comp"
     "${CMAKE_SOURCE_DIR}/assets/shaders/nis_upscale.comp"
+    "${CMAKE_SOURCE_DIR}/assets/shaders/taau.comp"
+    "${CMAKE_SOURCE_DIR}/assets/shaders/framegen.comp"
 )
 
 # ─── Установка: переносимая папка (exe + shaders/ + assets/fonts/ + mods/) ─────

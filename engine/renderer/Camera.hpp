@@ -10,6 +10,9 @@ struct CameraData {
     glm::mat4 view;
     glm::mat4 proj;
     glm::vec4 position;  // xyz = позиция камеры, w = 0
+    // Заполняет VulkanContext::updateCamera (видимые Application значения не нужны):
+    glm::mat4 prevViewProj{1.0f};  // proj*view прошлого кадра без джиттера -- векторы движения
+    glm::vec4 jitter{0.0f};        // xy = субпиксельный сдвиг в NDC (temporal-апскейлер), zw не используются
 };
 
 // God-камера: вращается вокруг подвижной точки (target) в плоскости земли.
