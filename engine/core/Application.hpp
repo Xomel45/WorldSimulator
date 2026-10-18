@@ -15,6 +15,7 @@
 #include "ui/PowerBar.hpp"
 #include "ui/Settings.hpp"
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -100,7 +101,7 @@ private:
     std::vector<std::shared_ptr<Mesh>> m_houseMeshes;
     std::vector<SceneObject>           m_buildingObjects;
     // Еда: кусты (по World::food()).
-    std::shared_ptr<Mesh>              m_bushMesh;
+    std::array<std::shared_ptr<Mesh>, kBerryKindCount> m_bushMeshes;  // по одному на вид ягод (цвет листвы и ягод)
     std::vector<SceneObject>           m_foodObjects;
 
     // Рельеф — независим от World в этом раунде (чисто визуальный/
@@ -117,7 +118,9 @@ private:
     void stepPhysics(float dt);
     // Осмотр существа: выбор кликом (сила "Осмотр") и панель состояния со своими нуждами и занятием.
     void drawInspector(const CameraData& cam);
+    void drawBushInspector(const CameraData& cam);
     std::uint64_t              m_inspectId = 0;
+    std::optional<glm::vec2>   m_inspectBush;   // "Осмотр" куста (если рядом не нашлось существа): его положение
     struct TimedHazard { Hazard hazard; float ttl; };
     std::vector<TimedHazard>   m_impactHazards;  // места свежих ударов валунов: существа какое-то время их боятся
     void followTerrain(float dt);  // точка обзора по высоте земли, камера не лезет в рельеф

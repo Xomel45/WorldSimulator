@@ -614,6 +614,39 @@ new worlds just rebuild chunks; player terrain edits never move a biome border):
   water colour/ice or fog, no seasons, houses/buildings ignore the biome, biome borders are not shown to the player
   (no map/overlay).
 
+## Berry bushes (`engine/sim/Berries.*`, `World::growBerryBushes`, `Powers`, `Application`)
+
+Food bushes are now biome-aware and come in six berry kinds (tests: `berries_tests`, plus bush cases in `powers_tests`,
+`save_tests`, `mods_tests`):
+- **Kinds** (`BerryKind`): Raspberry (the baseline), Blueberry (0.85× nutrition, 1.35× regrow), Blackberry (1.3×, 0.75×),
+  Cloudberry (1.5×, 0.5× — richest and rarest), Tropical (1.15×, 1.2×), Cactus fruit (0.9×, 0.6×). `BerryDef` also has the
+  berry/leaf colours and the mod id. `FoodSource::kind` (default Raspberry, so `World` without a terrain — tests, the menu
+  colony — behaves exactly as before). **Nutrition** multiplies the hunger relief per bite (`self.feed(bite * nutrition)`),
+  **regrow** multiplies `kFoodRegrowRate`. No poisonous kind on purpose: creatures pick the nearest bush and can't tell kinds
+  apart, so poison would only be random death.
+- **Where they grow** (`pickBerryKind`, weights per biome): tundra cloudberry+blueberry, taiga blueberry/cloudberry/raspberry,
+  plains raspberry/blackberry/blueberry, forest blackberry/raspberry/blueberry, savanna cactus fruit+tropical, desert cactus
+  fruit, jungle tropical+blackberry. `bushDensity(biome)` scales how many (jungle 1.25×, forest 1.0, plains 0.85, taiga 0.7,
+  savanna 0.5, tundra 0.35, desert 0.25).
+- **Generation** `World::growBerryBushes(terrain)` (called after `settleOnLand` at start and on "Новый мир"; replaces the old
+  uniformly random 30): a jittered 18-unit grid over the playfield, each cell becomes a *patch* of 1-3 bushes of one kind (radius 3.5)
+  with chance `0.24 * density(biome)`; land only (height > 0.4), spacing ≥ `kBushSpacing=1.6`, at least 18 bushes, cap
+  `kMaxFood=150`. Uses the world RNG (reproducible, saved). Measured 26-46 bushes per seed (the old world had 30); a 20-minute
+  headless run on 6 seeds grew populations to ~50-200 (cap reached only on the richest seed, 52 bushes), so the ecology is in the
+  old range but now depends on where you start.
+- **God power "Кусты"** (`bush`, key 7; hold to plant in the brush circle, kind by the biome of each point; `GodContext::bush`,
+  `plantNaturalBush`) and **"Стереть"** now also removes bushes. **"Осмотр"** falls back to the nearest bush: a panel with the
+  kind, a berry bar, nutrition/regrow factors (`drawBushInspector`).
+- **Mods**: JSON type `bush` (`berry`: kind id, optional) and Lua `ctx:bush(x, z [, kind])`, `ctx:erase_bushes(x, z, r)`; the
+  mods README lists the ids.
+- **Saves**: new optional section `BRRY` (kind per bush, in `WRLD.food` order). Old files lack it → every bush is a raspberry
+  bush; an old game ignores it. Not covered by a test: loading a genuinely old file (we only write new ones).
+- **Rendering**: one mesh per kind (`buildBlobMesh` with the kind's leaf colour, berry colour and berry-face share —
+  blueberries many small faces, cloudberry few), shrinks as it is eaten. Debug: `WSIM_CAM_BUSH=<kind id>`, `WSIM_INSPECT_BUSH=1`.
+- Not done: creatures can't choose or remember kinds (and don't prefer richer berries), berries aren't tied to season, no
+  bush-planting by creatures (seed dispersal), bushes don't care about moisture inside a biome, no bush sounds beyond a pop,
+  trees/houses spacing from bushes is only the existing tree blocker.
+
 ## Temporal upscaler and frame generation (`VulkanTemporal.cpp`, `taau.comp`, `framegen.comp`)
 
 Own implementation (not AMD's FSR 2/3): the official FidelityFX SDK builds with MSVC/`.bat` scripts, has HLSL shaders that

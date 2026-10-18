@@ -15,7 +15,7 @@ int main() {
     // Встроенные силы зарегистрированы, id уникальны, чужой id занять нельзя.
     PowerRegistry reg;
     for (auto& p : makeBuiltinPowers()) WSIM_CHECK(reg.add(std::move(p)));
-    WSIM_CHECK(reg.all().size() == 8);
+    WSIM_CHECK(reg.all().size() == 9);  // + "Кусты"
     WSIM_CHECK(reg.find("raise") != nullptr);
     WSIM_CHECK(!reg.add(makeErasePower("raise", "дубль")));
 
@@ -70,6 +70,29 @@ int main() {
         WSIM_CHECK(!g2.build(lx + 2.0f, lz, 0.0f));  // слишком близко
         WSIM_CHECK(!g2.takeDirty().empty());
         WSIM_CHECK(g2.eraseBuildings(lx, lz, 3.0f) == 1 && w2.buildings().empty());
+
+        // Кусты: на суше, не ближе kBushSpacing, вид -- заданный или по биому; стирание убирает и кусты.
+        const std::size_t bushes0 = w2.foodCount();
+        WSIM_CHECK(g2.bush(lx, lz, BerryKind::Blueberry));
+        WSIM_CHECK(w2.foodCount() == bushes0 + 1 && w2.food().back().kind == BerryKind::Blueberry && w2.food().back().amount == 1.0f);
+        WSIM_CHECK(!g2.bush(lx + 0.5f, lz, BerryKind::Raspberry));  // слишком близко
+        WSIM_CHECK(g2.bush(lx + 3.0f, lz));                          // вид по биому
+        WSIM_CHECK(berryGrowsIn(w2.food().back().kind, t2.biomeAt(lx + 3.0f, lz)));
+        float wx = 0, wz = 0;
+        for (float x = -90; x <= 90; x += 3)
+            for (float z = -90; z <= 90; z += 3)
+                if (t2.isUnderwater(x, z)) { wx = x; wz = z; }
+        WSIM_CHECK(t2.isUnderwater(wx, wz) && !g2.bush(wx, wz, BerryKind::Raspberry));  // в воде не растёт
+        const PowerDef* bushPower = reg.find("bush");
+        WSIM_CHECK(bushPower && bushPower->name == "Кусты" && bushPower->interval > 0.0f);
+        const std::size_t before = w2.foodCount();
+        for (int i = 0; i < 30; ++i) bushPower->apply(g2, {lx - 4.0f, lz + 6.0f, 4.0f, 0.016f, i == 0});
+        WSIM_CHECK(w2.foodCount() > before);                         // сила сажает кусты
+        for (std::size_t i = before; i < w2.foodCount(); ++i) WSIM_CHECK(!t2.isUnderwater(w2.food()[i].position.x, w2.food()[i].position.z));
+        WSIM_CHECK(g2.eraseBushes(lx, lz, 3.5f) >= 2);
+        const std::size_t left = w2.foodCount();
+        reg.find("erase")->apply(g2, {lx - 4.0f, lz + 6.0f, 9.0f, 0.016f, true});  // "Стереть" убирает и кусты
+        WSIM_CHECK(w2.foodCount() < left);
         // В воде не строится.
         for (float x = -90; x <= 90; x += 3)
             for (float z = -90; z <= 90; z += 3)

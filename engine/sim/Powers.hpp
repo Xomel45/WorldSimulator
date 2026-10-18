@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstddef>
 #include <functional>
+#include <optional>
 #include <span>
 #include <string_view>
 #include <string>
@@ -54,6 +55,12 @@ public:
         return true;
     }
     std::size_t eraseBuildings(float x, float z, float radius) { return m_world.removeBuildings(x, z, radius); }
+    // Ягодный куст: kind -- этого вида, иначе подходящий биому точки. На суше, не ближе kBushSpacing к другому.
+    bool bush(float x, float z, std::optional<BerryKind> kind = std::nullopt) {
+        if (m_terrain.isUnderwater(x, z)) return false;
+        return kind ? m_world.plantBush(x, z, *kind) : m_world.plantNaturalBush(m_terrain, x, z);
+    }
+    std::size_t eraseBushes(float x, float z, float radius) { return m_world.removeBushes(x, z, radius); }
     // Валун падает с высоты на (x, z), катится по рельефу, давит существ и вмятывает кратеры (см. Application::update).
     bool boulder(float x, float z, float radius) {
         if (!m_physics) return false;
@@ -96,8 +103,10 @@ struct PowerDef {
 [[nodiscard]] PowerDef makeFlattenPower(std::string id, std::string name, float ratePerSecond);
 [[nodiscard]] PowerDef makeSpawnPower(std::string id, std::string name,
                                       std::vector<std::pair<Genome::TraitIndex, float>> traits, float interval);
-[[nodiscard]] PowerDef makeErasePower(std::string id, std::string name);  // существа и постройки
+[[nodiscard]] PowerDef makeErasePower(std::string id, std::string name);  // существа, постройки и кусты
 [[nodiscard]] PowerDef makeBuildPower(std::string id, std::string name);   // дом по клику
+// Ягодные кусты: в круге под кисточкой сажает кусты (пока кнопка зажата). kind пуст -- вид по биому каждой точки.
+[[nodiscard]] PowerDef makeBushPower(std::string id, std::string name, std::optional<BerryKind> kind, float interval);
 // Осмотр: выбор существа под курсором (обрабатывает Application -- панель состояния); сам мир не меняет.
 [[nodiscard]] PowerDef makeInspectPower(std::string id, std::string name);
 // Валуны: размер зависит от радиуса кисти (radius * 0.18), несколько в секунду пока кнопка зажата.

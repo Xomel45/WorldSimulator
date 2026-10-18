@@ -155,6 +155,67 @@ void World::settleOnLand(const Terrain& terrain) {
         if (terrain.isUnderwater(f.position.x, f.position.z)) f.position = landPoint(f.position);
 }
 
+// ─── Ягодные кусты ────────────────────────────────────────────────────────────
+bool World::plantBush(float x, float z, BerryKind kind) {
+    if (m_food.size() >= kMaxFood) return false;
+    for (const FoodSource& f : m_food)
+        if (std::hypot(f.position.x - x, f.position.z - z) < kBushSpacing) return false;
+    m_food.push_back(FoodSource{{x, 0.0f, z}, kFoodCap, kind});
+    return true;
+}
+
+bool World::plantNaturalBush(const Terrain& terrain, float x, float z) {
+    if (terrain.isUnderwater(x, z)) return false;
+    const BerryKind kind = pickBerryKind(terrain.biomeAt(x, z), std::uniform_real_distribution<float>(0.0f, 1.0f)(m_rng));
+    return plantBush(x, z, kind);
+}
+
+std::size_t World::removeBushes(float x, float z, float radius) {
+    const auto before = m_food.size();
+    std::erase_if(m_food, [&](const FoodSource& f) { return std::hypot(f.position.x - x, f.position.z - z) <= radius; });
+    return before - m_food.size();
+}
+
+bool World::nearestBush(float x, float z, float radius, std::size_t& index) const {
+    float best = radius;
+    bool  found = false;
+    for (std::size_t i = 0; i < m_food.size(); ++i) {
+        const float d = std::hypot(m_food[i].position.x - x, m_food[i].position.z - z);
+        if (d <= best) { best = d; index = i; found = true; }
+    }
+    return found;
+}
+
+void World::growBerryBushes(const Terrain& terrain) {
+    constexpr float       kCell = 18.0f, kPatchRadius = 3.5f, kBaseChance = 0.24f;
+    constexpr std::size_t kMinBushes = 18;  // даже в пустыне хоть что-то растёт
+    std::uniform_real_distribution<float> unit(0.0f, 1.0f);
+    m_food.clear();
+
+    const float half = kWorldHalfSize;
+    auto land = [&](float x, float z) {
+        return std::fabs(x) <= half && std::fabs(z) <= half && terrain.heightAt(x, z) > 0.4f;  // не вода и не мокрый пляж
+    };
+    for (float cz = -half; cz < half; cz += kCell)
+        for (float cx = -half; cx < half; cx += kCell) {
+            const float x0 = cx + unit(m_rng) * kCell, z0 = cz + unit(m_rng) * kCell;
+            if (!land(x0, z0)) continue;
+            const Biome biome = terrain.biomeAt(x0, z0);
+            if (unit(m_rng) >= kBaseChance * bushDensity(biome)) continue;
+            const BerryKind kind = pickBerryKind(biome, unit(m_rng));
+            const int       n    = 1 + static_cast<int>(unit(m_rng) * 2.999f);  // пятно из 1-3 кустов
+            for (int k = 0; k < n; ++k) {
+                const float a = 6.2831853f * unit(m_rng), r = kPatchRadius * std::sqrt(unit(m_rng));
+                const float x = x0 + std::cos(a) * r, z = z0 + std::sin(a) * r;
+                if (land(x, z)) plantBush(x, z, kind);
+            }
+        }
+    for (int attempt = 0; attempt < 400 && m_food.size() < kMinBushes; ++attempt) {
+        const glm::vec3 p = randomPointInBounds(m_rng);
+        if (land(p.x, p.z)) plantBush(p.x, p.z, pickBerryKind(terrain.biomeAt(p.x, p.z), unit(m_rng)));
+    }
+}
+
 WorldState World::exportState() const {
     WorldState st;
     std::ostringstream rng;
@@ -362,7 +423,7 @@ void World::tick(float dt, const Terrain* terrain) {
         if (out.eatDesire > kEatDesireThreshold && foundFood && bestFoodDist <= kInteractRadius) {
             FoodSource& src  = m_food[liveFoodIdx[bestFoodK]];
             const float bite = std::min(src.amount, kEatRate * dt);
-            self.feed(bite);
+            self.feed(bite * berryDef(src.kind).nutrition);  // морошка сытнее черники при том же объёме
             src.amount -= bite;
         }
         if (out.restDesire > kRestDesireThreshold) self.rest(kRestRate * dt);
@@ -451,7 +512,7 @@ void World::tick(float dt, const Terrain* terrain) {
 
     // 7. Еда медленно восстанавливается на месте.
     for (auto& src : m_food)
-        src.amount = std::min(kFoodCap, src.amount + kFoodRegrowRate * dt);
+        src.amount = std::min(kFoodCap, src.amount + kFoodRegrowRate * berryDef(src.kind).regrow * dt);
 }
 
 }  // namespace wsim

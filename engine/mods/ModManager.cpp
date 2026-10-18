@@ -134,6 +134,18 @@ void ModManager::loadMod(ModInfo& mod, PowerRegistry& registry) {
             def = makeFlattenPower(full, name, number(pj, "rate", 6.0f));
         } else if (type == "erase") {
             def = makeErasePower(full, name);
+        } else if (type == "bush") {
+            // "berry": id вида ягод (raspberry, blueberry, ...); без поля -- вид по биому под курсором.
+            std::optional<BerryKind> kind;
+            if (pj.contains("berry")) {
+                BerryKind k{};
+                if (!pj["berry"].is_string() || !berryFromId(pj["berry"].get<std::string>(), k)) {
+                    mod.errors->push_back(pid + ": неизвестный вид ягод (raspberry, blueberry, blackberry, cloudberry, tropical, cactus)");
+                    continue;
+                }
+                kind = k;
+            }
+            def = makeBushPower(full, name, kind, number(pj, "interval", 0.3f));
         } else if (type == "spawn") {
             std::vector<std::pair<Genome::TraitIndex, float>> traits;
             if (pj.contains("traits") && pj["traits"].is_object())

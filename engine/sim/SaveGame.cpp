@@ -23,7 +23,8 @@ constexpr std::uint32_t tag(const char (&s)[5]) {
     return static_cast<std::uint32_t>(s[0]) | static_cast<std::uint32_t>(s[1]) << 8 | static_cast<std::uint32_t>(s[2]) << 16 |
            static_cast<std::uint32_t>(s[3]) << 24;
 }
-constexpr std::uint32_t kTagTerrain = tag("TERR"), kTagWorld = tag("WRLD"), kTagPhysics = tag("PHYS"), kTagCamera = tag("CAMR");
+constexpr std::uint32_t kTagTerrain = tag("TERR"), kTagWorld = tag("WRLD"), kTagPhysics = tag("PHYS"), kTagCamera = tag("CAMR"),
+                         kTagBerries = tag("BRRY");  // вид ягод каждого куста (по порядку WRLD.food); старые сохранения -- без неё, все кусты малина
 
 void writeMeta(ByteWriter& w, const SaveMeta& m) {
     w.str(m.name);
@@ -174,6 +175,12 @@ std::vector<std::uint8_t> serializeSave(const SaveGame& g, std::uint32_t version
     }
     {
         ByteWriter b;
+        b.u32(static_cast<std::uint32_t>(g.world.food.size()));
+        for (const auto& f : g.world.food) b.u8(static_cast<std::uint8_t>(f.kind));
+        section(payload, kTagBerries, b);
+    }
+    {
+        ByteWriter b;
         b.u32(static_cast<std::uint32_t>(g.bodies.size()));
         for (const auto& body : g.bodies) {
             b.vec3(body.pos);
@@ -249,6 +256,7 @@ bool parseSave(std::span<const std::uint8_t> bytes, SaveGame& out, std::string& 
     if (crc32(payload) != expectedCrc) { error = "файл повреждён (контрольная сумма не сошлась)"; return false; }
 
     bool haveTerrain = false, haveWorld = false;
+    std::vector<std::uint8_t> berryKinds;
     ByteReader pr(payload);
     while (pr.remaining() >= 8) {
         const std::uint32_t t = pr.u32(), len = pr.u32();
@@ -296,6 +304,9 @@ bool parseSave(std::span<const std::uint8_t> bytes, SaveGame& out, std::string& 
                 b.asleepFor   = sr.f32();
                 g.bodies.push_back(b);
             }
+        } else if (t == kTagBerries) {
+            const std::uint32_t n = sr.count(kMaxFood, 1);
+            for (std::uint32_t i = 0; i < n && sr.ok(); ++i) berryKinds.push_back(sr.u8());
         } else if (t == kTagCamera) {
             g.camera.target   = sr.vec3();
             g.camera.yaw      = sr.f32();
@@ -305,6 +316,10 @@ bool parseSave(std::span<const std::uint8_t> bytes, SaveGame& out, std::string& 
         if (!sr.ok()) { error = "файл повреждён (данные секции)"; return false; }
     }
     if (!haveTerrain || !haveWorld) { error = "в файле нет рельефа или мира"; return false; }
+    // Виды ягод: если секция есть и сходится по числу кустов -- применяем (неизвестный номер -- малина).
+    if (berryKinds.size() == g.world.food.size())
+        for (std::size_t i = 0; i < berryKinds.size(); ++i)
+            g.world.food[i].kind = berryKinds[i] < kBerryKindCount ? static_cast<BerryKind>(berryKinds[i]) : BerryKind::Raspberry;
     out = std::move(g);
     return true;
 }

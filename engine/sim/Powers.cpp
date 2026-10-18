@@ -55,12 +55,32 @@ PowerDef makeErasePower(std::string id, std::string name) {
     PowerDef d;
     d.id          = std::move(id);
     d.name        = std::move(name);
-    d.description = "Убирает существ и постройки в области под курсором";
+    d.description = "Убирает существ, постройки и ягодные кусты в области под курсором";
     d.radius      = 6;
     d.minRadius   = 1;
     d.apply       = [](GodContext& g, const PowerCall& c) {
         g.erase(c.x, c.z, c.radius);
         g.eraseBuildings(c.x, c.z, c.radius);
+        g.eraseBushes(c.x, c.z, c.radius);
+    };
+    return d;
+}
+
+PowerDef makeBushPower(std::string id, std::string name, std::optional<BerryKind> kind, float interval) {
+    PowerDef d;
+    d.id          = std::move(id);
+    d.name        = std::move(name);
+    d.description = kind ? std::string("Сажает кусты: ") + berryName(*kind) + " (в круге под кистью, пока кнопка зажата)"
+                         : "Сажает ягодные кусты; вид зависит от биома под курсором";
+    d.radius      = 4;
+    d.minRadius   = 0.5f;
+    d.maxRadius   = 14;
+    d.interval    = interval;
+    auto rng      = std::make_shared<std::mt19937>(std::random_device{}());
+    d.apply       = [kind, rng](GodContext& g, const PowerCall& c) {
+        std::uniform_real_distribution<float> ang(0.0f, 6.2831853f), rad(0.0f, 1.0f);
+        const float a = ang(*rng), r = c.radius * std::sqrt(rad(*rng));
+        g.bush(c.x + std::cos(a) * r, c.z + std::sin(a) * r, kind);
     };
     return d;
 }
@@ -119,6 +139,7 @@ std::vector<PowerDef> makeBuiltinPowers() {
     v.push_back(makeSpawnPower("spawn", "Существа", {}, 0.12f));
     v.push_back(makeBoulderPower("boulder", "Валун", 0.45f));
     v.push_back(makeBuildPower("house", "Дом"));
+    v.push_back(makeBushPower("bush", "Кусты", std::nullopt, 0.3f));
     v.push_back(makeInspectPower("inspect", "Осмотр"));
     v.push_back(makeErasePower("erase", "Стереть"));
     return v;

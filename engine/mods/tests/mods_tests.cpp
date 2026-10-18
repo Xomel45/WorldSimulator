@@ -32,7 +32,10 @@ int main() {
         {"id": "hill", "name": "Холм", "type": "raise", "rate": 12, "radius": 9},
         {"id": "wolf", "name": "Волк", "type": "spawn", "traits": {"size": 1, "boldness": 1}, "interval": 0.3},
         {"id": "bolt", "name": "Молния", "type": "script", "script": "scripts/bolt.lua", "interval": -1},
-        {"id": "tbl",  "name": "Таблица", "type": "script", "script": "scripts/tbl.lua"}
+        {"id": "tbl",  "name": "Таблица", "type": "script", "script": "scripts/tbl.lua"},
+        {"id": "blue", "name": "Черника", "type": "bush", "berry": "blueberry", "radius": 3},
+        {"id": "wild", "name": "Дикие кусты", "type": "bush"},
+        {"id": "badberry", "name": "Не то", "type": "bush", "berry": "durian"}
       ]})");
     write(root / "mods" / "good" / "scripts" / "bolt.lua", R"(
       return function(ctx, p)
@@ -45,6 +48,9 @@ int main() {
         local h = ctx:height(p.x, p.z)
         assert(type(h) == "number")
         assert(ctx:spawn(p.x, p.z, {speed = 1, size = -1}))
+        assert(type(ctx:bush(p.x + 40, p.z + 40, "cloudberry")) == "boolean")
+        assert(type(ctx:bush(p.x - 40, p.z - 40)) == "boolean")
+        assert(type(ctx:erase_bushes(p.x + 40, p.z + 40, 1)) == "number")
         assert(ctx:count(p.x, p.z, 5) >= 1)
       end
       return M)");
@@ -91,7 +97,7 @@ int main() {
 
     // Находятся 4 мода (notamod без mod.json игнорируется), совместимые валидны.
     WSIM_CHECK(mgr.mods().size() == 5);
-    WSIM_CHECK(findMod(mgr, "good") && findMod(mgr, "good")->valid && findMod(mgr, "good")->errors->empty());
+    WSIM_CHECK(findMod(mgr, "good") && findMod(mgr, "good")->valid && findMod(mgr, "good")->errors->size() == 1  /* неизвестный вид ягод у badberry */);
     WSIM_CHECK(findMod(mgr, "old") && !findMod(mgr, "old")->valid && !findMod(mgr, "old")->errors->empty());
     WSIM_CHECK(findMod(mgr, "broken") && !findMod(mgr, "broken")->valid);
 
@@ -130,6 +136,21 @@ int main() {
         WSIM_CHECK(findMod(mgr, "snd")->errors->empty());
     }
 
+    // Кусты: JSON-сила с видом, без вида (по биому) и с неизвестным видом (ошибка, силы нет).
+    WSIM_CHECK(reg.find("good.blue") && reg.find("good.wild") && !reg.find("good.badberry"));
+    WSIM_CHECK(reg.find("good.blue")->description.find("Черника") != std::string::npos);
+    {
+        const std::size_t before = world.foodCount();
+        bool planted = false;
+        for (float x = -60; x <= 60 && !planted; x += 7)
+            for (float z = -60; z <= 60 && !planted; z += 7)
+                if (!terrain.isUnderwater(x, z)) {
+                    reg.find("good.blue")->apply(god, {x, z, 0.5f, 0.016f, true});  // радиус 0.5 -- почти точка
+                    planted = world.foodCount() > before;
+                }
+        WSIM_CHECK(planted && world.food().back().kind == BerryKind::Blueberry);
+    }
+
     // Рабочие скрипты действуют на мир.
     const float h0 = terrain.heightAt(10.0f, 10.0f);
     reg.find("good.hill")->apply(god, {10.0f, 10.0f, 9.0f, 1.0f / 60.0f, true});
@@ -141,7 +162,8 @@ int main() {
     WSIM_CHECK(world.populationCount() == pop0 + 2);
     reg.find("good.bolt")->apply(god, {20.0f, 20.0f, 4.0f, 0.016f, true});
     WSIM_CHECK(world.countCreatures(20.0f, 20.0f, 3.0f) == 0);
-    WSIM_CHECK(findMod(mgr, "good")->errors->empty());
+    // Единственная ошибка мода -- неизвестный вид ягод у "badberry".
+    WSIM_CHECK(findMod(mgr, "good")->errors->size() == 1 && findMod(mgr, "good")->errors->front().find("ягод") != std::string::npos);
 
     // Песочница: os/io/load недоступны; бесконечный цикл обрывается по бюджету
     // инструкций (а не вешает тест); краш скрипта отключает силу, а не игру.

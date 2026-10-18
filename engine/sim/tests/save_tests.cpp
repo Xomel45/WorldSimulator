@@ -40,6 +40,7 @@ int main() {
     a.terrain.raise(-40.0f, -30.0f, 8.0f, -3.0f);
     a.terrain.flatten(20.0f, -20.0f, 6.0f, 2.0f, 1.0f);
     a.world.settleOnLand(a.terrain);
+    a.world.growBerryBushes(a.terrain);  // кусты разных видов: вид тоже должен пережить сохранение
     WSIM_CHECK(a.world.addBuilding(30.0f, 30.0f, 45.0f, 1234));
     WSIM_CHECK(a.world.addBuilding(-30.0f, 20.0f, 120.0f, 99));
     a.physics.addSphere({5.0f, a.terrain.heightAt(5, 5) + 12.0f, 5.0f}, 1.5f);
@@ -194,6 +195,21 @@ int main() {
         WSIM_CHECK(store.remove("world_a") && !store.exists("world_a"));
         WSIM_CHECK(!store.remove("world_a"));
         fs::remove_all(dir);
+    }
+
+    // Виды ягод переживают сохранение; старый файл (без секции BRRY) читается, все кусты -- малина.
+    {
+        Game g(21);
+        g.world.growBerryBushes(g.terrain);
+        bool mixed = false;
+        for (const auto& f : g.world.food()) mixed |= f.kind != g.world.food().front().kind;
+        WSIM_CHECK(g.world.foodCount() >= 18 && mixed);
+        const auto bytes = snapshot(g.terrain, g.world, g.physics);
+        SaveGame parsed;
+        std::string err;
+        WSIM_CHECK(parseSave(bytes, parsed, err));
+        WSIM_CHECK(parsed.world.food.size() == g.world.foodCount());
+        for (std::size_t i = 0; i < parsed.world.food.size(); ++i) WSIM_CHECK(parsed.world.food[i].kind == g.world.food()[i].kind);
     }
 
     std::puts("save_tests: OK");

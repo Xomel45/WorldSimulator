@@ -1,5 +1,6 @@
 #pragma once
 
+#include "sim/Berries.hpp"
 #include "sim/Creature.hpp"
 #include "sim/Terrain.hpp"
 
@@ -29,6 +30,7 @@ struct Inhabitant {
 struct FoodSource {
     glm::vec3 position{};
     float     amount = 0.0f;
+    BerryKind kind   = BerryKind::Raspberry;  // вид ягод: сытность, скорость отрастания, цвет (sim/Berries)
 };
 
 // Population + еда + пространственный индекс для соседских запросов.
@@ -92,6 +94,10 @@ public:
 
     // Переселяет существ и еду, оказавшихся в воде, на случайную сушу в границах мира.
     void settleOnLand(const Terrain& terrain);
+    // Заново сажает ягодные кусты по рельефу: пятна по 1-3 куста на суше, густота и виды -- по биому
+    // (sim/Berries). Заменяет прежнюю еду (при создании мира и в "Новом мире"); ГСЧ -- мировой, так что результат
+    // воспроизводим и после загрузки сохранения продолжается тем же.
+    void growBerryBushes(const Terrain& terrain);
 
     [[nodiscard]] std::span<const Inhabitant>  population() const noexcept { return m_population; }
     [[nodiscard]] std::span<const FoodSource>  food() const noexcept { return m_food; }
@@ -112,6 +118,16 @@ public:
     bool addBuilding(float x, float z, float yaw, std::uint32_t seed);
     std::size_t removeBuildings(float x, float z, float radius);
     [[nodiscard]] std::span<const Building> buildings() const noexcept { return m_buildings; }
+
+    static constexpr std::size_t kMaxFood      = 150;
+    static constexpr float       kBushSpacing  = 1.6f;   // ближе центры не сажаем
+    // Куст в (x, z) данного вида, полный. false -- слишком близко к другому кусту или их уже kMaxFood.
+    bool plantBush(float x, float z, BerryKind kind);
+    // То же, но вид -- по биому точки (случайный из подходящих); false как у plantBush.
+    bool plantNaturalBush(const Terrain& terrain, float x, float z);
+    std::size_t removeBushes(float x, float z, float radius);
+    // Ближайший куст не дальше radius (индекс в food()); false -- нет.
+    [[nodiscard]] bool nearestBush(float x, float z, float radius, std::size_t& index) const;
 
 private:
     Rng           m_rng;

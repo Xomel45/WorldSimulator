@@ -8,6 +8,7 @@ add_library(engine_sim STATIC
     Physics.cpp
     Behavior.cpp
     Trees.cpp
+    Berries.cpp
     SaveGame.cpp
 )
 

@@ -73,7 +73,8 @@ std::pair<std::vector<Vertex>, std::vector<uint32_t>> buildCreatureMesh() {
 // радиуса. Грани плоские (у каждой своя нормаль), цвет серо-бурый с вариацией по граням. Окрашен
 // как простой материал (alpha 1.0), без процедурной текстуры: она привязана к миру и "плыла"
 // бы по вращающемуся телу.
-std::pair<std::vector<Vertex>, std::vector<uint32_t>> buildBlobMesh(glm::vec3 base, float roughness, bool berries) {
+std::pair<std::vector<Vertex>, std::vector<uint32_t>> buildBlobMesh(glm::vec3 base, float roughness, bool berries,
+                                                                    glm::vec3 berryColor = {0.78f, 0.13f, 0.15f}, float berryShare = 0.10f) {
     std::vector<glm::vec3> pts;
     std::vector<std::array<int, 3>> faces;
     const float t = (1.0f + std::sqrt(5.0f)) * 0.5f;
@@ -115,7 +116,7 @@ std::pair<std::vector<Vertex>, std::vector<uint32_t>> buildBlobMesh(glm::vec3 ba
         if (glm::dot(n, a + b + c) < 0.0f) { std::swap(b, c); n = -n; }  // CCW снаружи
         const float tone = 0.78f + 0.4f * hash(a + b + c);
         glm::vec4 col(base * tone, 1.0f);
-        if (berries && hash(a * 3.1f + b * 1.7f + c) > 0.9f) col = glm::vec4(0.78f, 0.13f, 0.15f, 1.0f);  // ягоды: редкие красные грани
+        if (berries && hash(a * 3.1f + b * 1.7f + c) > 1.0f - berryShare) col = glm::vec4(berryColor, 1.0f);  // ягоды: редкие грани цвета вида
         const auto base = static_cast<uint32_t>(verts.size());
         for (const glm::vec3& p : {a, b, c}) verts.push_back({glm::vec4(p, 0.f), glm::vec4(n, 0.f), col});
         idx.insert(idx.end(), {base, base + 1, base + 2});
@@ -206,7 +207,8 @@ Application::Application(AppConfig config)
             if (std::hypot(f.position.x - x, f.position.z - z) < radius + 0.6f) return true;
         return false;
     });
-    m_world.settleOnLand(m_terrain);  // стартовые существа и еда -- на суше, не в воде
+    m_world.settleOnLand(m_terrain);  // стартовые существа -- на суше, не в воде
+    m_world.growBerryBushes(m_terrain);  // кусты по биомам (пятна, виды ягод)
 
     m_applied.msaa = -1;  // заведомо не равно загруженным -- первый вызов применит всё
     applySettings();
@@ -226,12 +228,17 @@ Application::Application(AppConfig config)
         boulderV, boulderI));
 
     {
-        // Кусты с едой: зелёные "картошки" с красными ягодами; размер показывает, сколько ещё осталось.
-        auto [bushV, bushI] = buildBlobMesh({0.16f, 0.36f, 0.12f}, 0.4f, true);
-        m_bushMesh = std::make_shared<Mesh>(Mesh::create(
-            m_context->physDevice(), m_context->device(),
-            m_context->commandPool(), m_context->graphicsQueue(),
-            bushV, bushI));
+        // Кусты с едой: лиственные "картошки" с ягодами своего цвета (по виду, см. sim/Berries); размер показывает,
+        // сколько ягод ещё осталось. Черника -- с густыми мелкими ягодами, морошка -- с редкими крупными.
+        constexpr float kShare[kBerryKindCount] = {0.10f, 0.17f, 0.12f, 0.08f, 0.12f, 0.10f};
+        for (int k = 0; k < kBerryKindCount; ++k) {
+            const BerryDef& def = berryDef(static_cast<BerryKind>(k));
+            auto [bushV, bushI] = buildBlobMesh(def.leafColor, 0.4f, true, def.berryColor, kShare[k]);
+            m_bushMeshes[static_cast<std::size_t>(k)] = std::make_shared<Mesh>(Mesh::create(
+                m_context->physDevice(), m_context->device(),
+                m_context->commandPool(), m_context->graphicsQueue(),
+                bushV, bushI));
+        }
     }
     for (std::uint32_t i = 0; i < kHouseVariants; ++i) {
         const auto house = procgen::buildHouse(procgen::houseVariant(i));
@@ -293,6 +300,22 @@ Application::Application(AppConfig config)
         m_camera.restore({x, m_terrain.heightAt(x, z), z}, -90.0f, pitch, dist);
     }
 
+    // WSIM_CAM_BUSH=raspberry|blueberry|blackberry|cloudberry|tropical|cactus -- камера на ближайший к центру куст этого вида.
+    if (const char* id = std::getenv("WSIM_CAM_BUSH")) {
+        BerryKind want{};
+        if (berryFromId(id, want)) {
+            float best = 1e9f;
+            for (const FoodSource& f : m_world.food()) {
+                const float d = std::hypot(f.position.x, f.position.z);
+                if (f.kind == want && d < best) {
+                    best = d;
+                    m_camera.restore({f.position.x, m_terrain.heightAt(f.position.x, f.position.z), f.position.z}, -90.0f, -35.0f,
+                                     std::getenv("WSIM_CAM_DIST") ? std::strtof(std::getenv("WSIM_CAM_DIST"), nullptr) : 10.0f);
+                }
+            }
+        }
+    }
+
     // WSIM_CAM_TREE=oak|birch|spruce|pine|acacia|cactus|palm -- камера на ближайшее к центру дерево этого вида (проверка моделей деревьев).
     if (const char* kind = std::getenv("WSIM_CAM_TREE")) {
         const std::string name = kind;
@@ -338,7 +361,8 @@ Application::~Application() {
         // многократно -- double free).
         if (m_creatureMesh) m_creatureMesh->destroy(m_context->device());
         if (m_boulderMesh) m_boulderMesh->destroy(m_context->device());
-        if (m_bushMesh) m_bushMesh->destroy(m_context->device());
+        for (auto& mesh : m_bushMeshes)
+            if (mesh) mesh->destroy(m_context->device());
         for (auto& mesh : m_houseMeshes) mesh->destroy(m_context->device());
     }
 }
@@ -396,6 +420,16 @@ void Application::run() {
             for (const Inhabitant& in : m_world.population()) {
                 const float d = std::hypot(in.creature.position.x, in.creature.position.z);
                 if (d < best) { best = d; m_inspectId = in.creature.id; }
+            }
+        }
+        // WSIM_INSPECT_BUSH=1 -- то же для ближайшего к центру ягодного куста (панель куста).
+        static bool inspectedBush = false;
+        if (std::getenv("WSIM_INSPECT_BUSH") && !inspectedBush && totalTime > 1.5f && m_world.foodCount() > 0) {
+            inspectedBush = true;
+            float best = 1e9f;
+            for (const FoodSource& f : m_world.food()) {
+                const float d = std::hypot(f.position.x, f.position.z);
+                if (d < best) { best = d; m_inspectBush = glm::vec2(f.position.x, f.position.z); }
             }
         }
         // WSIM_SCREENSHOT=файл.ppm -- снимок сцены на ~3-й секунде (самопроверка визуала без захвата экрана).
@@ -537,7 +571,7 @@ void Application::update(float dt) {
         const float scale = 0.35f + 0.75f * std::clamp(f.amount, 0.0f, 1.0f);
         t.position = {f.position.x, m_terrain.heightAt(f.position.x, f.position.z) + 0.55f * scale, f.position.z};
         t.scale    = glm::vec3(scale * 1.15f, scale * 0.9f, scale * 1.15f);
-        m_foodObjects.push_back({m_bushMesh, t, /*solid=*/false});
+        m_foodObjects.push_back({m_bushMeshes[static_cast<std::size_t>(f.kind)], t, /*solid=*/false});
     }
 }
 
@@ -610,6 +644,7 @@ void Application::render() {
                     m_chunks->reset();
                 }
                 m_world.settleOnLand(m_terrain);
+                m_world.growBerryBushes(m_terrain);
                 m_physics.clear();
                 m_boulderObjects.clear();
                 m_buildingObjects.clear();
@@ -1010,9 +1045,61 @@ void Application::stepPhysics(float dt) {
     }
 }
 
+// ─── drawBushInspector ────────────────────────────────────────────────────────
+// Панель куста: вид ягод, сколько их осталось, сытность и скорость отрастания относительно малины.
+void Application::drawBushInspector(const CameraData& cam) {
+    const FoodSource* bush = nullptr;
+    for (const FoodSource& f : m_world.food())
+        if (std::hypot(f.position.x - m_inspectBush->x, f.position.z - m_inspectBush->y) < 0.2f) { bush = &f; break; }
+    if (!bush) { m_inspectBush.reset(); return; }  // куст убрали -- панель закрывается
+
+    const ImVec2 screen = ImGui::GetIO().DisplaySize;
+    const float  u = screen.x * 0.01f;
+    ImDrawList*  dl = ImGui::GetForegroundDrawList();
+    ImFont*      font = m_imgui->uiFont();
+    const BerryDef& def = berryDef(bush->kind);
+
+    {
+        const glm::vec4 c = cam.proj * cam.view * glm::vec4(bush->position.x, m_terrain.heightAt(bush->position.x, bush->position.z) + 0.5f, bush->position.z, 1.0f);
+        if (c.w > 0.0f) {
+            const ImVec2 p((c.x / c.w * 0.5f + 0.5f) * screen.x, (c.y / c.w * 0.5f + 0.5f) * screen.y);
+            const float  r = std::clamp(1800.0f / std::max(c.w, 1.0f), 10.0f, 50.0f);
+            dl->AddCircle(p, r, style::rgba(style::kGlow, 0.35f), 40, 5.0f);
+            dl->AddCircle(p, r, style::rgba(style::kMint, 0.95f), 40, 2.0f);
+        }
+    }
+    const float W = 27.0f * u, x0 = screen.x - W - 2.0f * u, y0 = 5.0f * u, pad = 1.4f * u;
+    const float fsTitle = std::max(15.0f, 1.55f * u), fs = std::max(11.5f, 1.05f * u), rowH = 2.1f * u;
+    const float H = pad * 2 + fsTitle * 1.3f + fs * 1.5f + rowH + fs * 1.6f;
+    for (int g = 3; g >= 1; --g)
+        dl->AddRect({x0 - 0.2f * u * g, y0 - 0.2f * u * g}, {x0 + W + 0.2f * u * g, y0 + H + 0.2f * u * g}, style::rgba(style::kGlow, 0.09f * (1.0f - 0.25f * (g - 1))), 1.0f * u + 0.2f * u * g, 0, 1.5f);
+    dl->AddRectFilled({x0, y0}, {x0 + W, y0 + H}, style::rgba(style::kRightBg, 0.93f), 1.0f * u);
+    dl->AddRect({x0, y0}, {x0 + W, y0 + H}, style::rgba(style::kGlow, 0.4f), 1.0f * u);
+
+    char  buf[128];
+    float y = y0 + pad;
+    dl->AddText(font, fsTitle, {x0 + pad, y}, style::rgba(style::kText), def.name);
+    // Цветная точка вида рядом с названием
+    const ImU32 berryCol = IM_COL32(static_cast<int>(def.berryColor.r * 255), static_cast<int>(def.berryColor.g * 255), static_cast<int>(def.berryColor.b * 255), 255);
+    dl->AddCircleFilled({x0 + W - pad - 0.9f * u, y + fsTitle * 0.55f}, 0.9f * u, berryCol);
+    y += fsTitle * 1.3f;
+    dl->AddText(font, fs * 1.1f, {x0 + pad, y}, style::rgba(style::kMint), "Ягодный куст");
+    y += fs * 1.5f;
+    dl->AddText(font, fs, {x0 + pad, y}, style::rgba(style::kDim), "Ягод");
+    const float bx = x0 + pad + 9.5f * u, bw = W - pad * 2 - 9.5f * u, by = y + fs * 0.5f, th = std::max(3.0f, 0.38f * u);
+    dl->AddRectFilled({bx, by - th * 0.5f}, {bx + bw, by + th * 0.5f}, style::rgba(0x12413b), th * 0.5f);
+    dl->AddRectFilled({bx, by - th * 0.5f}, {bx + bw * std::clamp(bush->amount, 0.0f, 1.0f), by + th * 0.5f}, berryCol, th * 0.5f);
+    y += rowH;
+    std::snprintf(buf, sizeof buf, "Сытность ×%.2f · отрастание ×%.2f", def.nutrition, def.regrow);
+    dl->AddText(font, fs, {x0 + pad, y}, style::rgba(style::kDim), buf);
+}
+
 // ─── drawInspector ────────────────────────────────────────────────────────────
 void Application::drawInspector(const CameraData& cam) {
-    if (m_inspectId == 0) return;
+    if (m_inspectId == 0) {
+        if (m_inspectBush) drawBushInspector(cam);
+        return;
+    }
     const Creature* cr = nullptr;
     for (const Inhabitant& in : m_world.population())
         if (in.creature.id == m_inspectId) { cr = &in.creature; break; }
@@ -1103,20 +1190,25 @@ void Application::applyPower(float dt) {
     if (!fire) return;
     if (power.interval > 0.0f) m_toolTimer = power.interval;
 
-    // "Осмотр": выбрать ближайшее к точке клика существо (в радиусе кисти), панель покажет его состояние.
+    // "Осмотр": выбрать ближайшее к точке клика существо (в радиусе кисти), панель покажет его состояние;
+    // если существа рядом нет -- ближайший ягодный куст.
     if (power.id == "inspect") {
         float best = std::max(m_brush, 2.5f);
         m_inspectId = 0;
+        m_inspectBush.reset();
         for (const Inhabitant& in : m_world.population()) {
             const float d = std::hypot(in.creature.position.x - hit->x, in.creature.position.z - hit->z);
             if (d < best) { best = d; m_inspectId = in.creature.id; }
         }
+        std::size_t bush = 0;
+        if (m_inspectId == 0 && m_world.nearestBush(hit->x, hit->z, std::max(m_brush, 2.5f), bush))
+            m_inspectBush = glm::vec2(m_world.food()[bush].position.x, m_world.food()[bush].position.z);
         m_toolFirst = false;
         return;
     }
 
     GodContext god(m_world, m_terrain, &m_physics, m_sound.get());
-    const std::size_t housesBefore = m_world.buildings().size();
+    const std::size_t housesBefore = m_world.buildings().size(), bushesBefore = m_world.foodCount();
     power.apply(god, PowerCall{hit->x, hit->z, m_brush, dt, m_toolFirst});
     m_toolFirst = false;
     for (const auto& rect : god.takeDirty()) m_chunks->invalidate(rect);
@@ -1128,6 +1220,7 @@ void Application::applyPower(float dt) {
         if (m_eraseSoundTimer <= 0.0f) { m_sound->effect(audio::SoundId::Whoosh, at, 0.7f); m_eraseSoundTimer = 0.4f; }  // не чаще раза в 0.4 с
     }
     else if (power.id == "house" && m_world.buildings().size() > housesBefore) m_sound->effect(audio::SoundId::Knock, at, 0.9f);
+    else if (power.id == "bush" && m_world.foodCount() > bushesBefore) m_sound->effect(audio::SoundId::Pop, at, 0.45f, 1.3f);
 }
 
 // ─── drawBrushRing ────────────────────────────────────────────────────────────
