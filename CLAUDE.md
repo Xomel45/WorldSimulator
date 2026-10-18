@@ -849,8 +849,8 @@ currently only add powers (no sim-rule changes) — by design for the first vers
   become `<modid>.<powerid>`; a mod can't override built-in or other mods' powers.
   Script paths are confined to the mod folder (`insideMod`).
 - **`LuaSandbox`** (one Lua state per mod, Lua headers private to the .cpp):
-  only base (minus dofile/loadfile/load/loadstring/require/collectgarbage), table,
-  string (minus dump), math, utf8 — NO io/os/package/debug. Text chunks only
+  only base (minus dofile/loadfile/load/loadstring/require/collectgarbage/pcall/xpcall — a caught budget error would let a script loop on), table,
+  string (minus dump/find/match/gmatch/gsub — pattern matching runs in C past the instruction hook), math, utf8 — NO io/os/package/debug. Text chunks only
   (mode "t"). Memory cap 32 MB (custom allocator), instruction budget via count
   hook (4M per power call, 20M on load), all numeric args to `ctx` clamped/finite
   checked. Script returns a function or a table with `apply`; `ctx` is a table of

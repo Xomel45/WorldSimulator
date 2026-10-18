@@ -165,13 +165,17 @@ void openSafeLibs(lua_State* L) {
         lua_pop(L, 1);
     }
     // Всё, что умеет читать файлы или выполнять строки как код, убираем.
-    for (const char* name : {"dofile", "loadfile", "load", "loadstring", "require", "collectgarbage"}) {
+    // pcall/xpcall тоже: иначе скрипт ловит ошибку «лимит инструкций» и крутит цикл дальше.
+    for (const char* name : {"dofile", "loadfile", "load", "loadstring", "require", "collectgarbage", "pcall", "xpcall"}) {
         lua_pushnil(L);
         lua_setglobal(L, name);
     }
+    // Паттерны Lua бывают экспоненциальными и выполняются внутри C, мимо счётчика инструкций.
     lua_getglobal(L, "string");
-    lua_pushnil(L);
-    lua_setfield(L, -2, "dump");
+    for (const char* name : {"dump", "find", "match", "gmatch", "gsub"}) {
+        lua_pushnil(L);
+        lua_setfield(L, -2, name);
+    }
     lua_pop(L, 1);
     lua_pushcfunction(L, l_log);
     lua_setglobal(L, "print");
@@ -219,13 +223,15 @@ LuaSandbox::Loaded LuaSandbox::loadPowerScript(const std::filesystem::path& file
 
     const std::string chunk = "@" + file.filename().string();
     if (luaL_loadbufferx(L, src.data(), src.size(), chunk.c_str(), "t") != LUA_OK) {  // "t" -- только текст, без байткода
-        std::string err = lua_tostring(L, -1);
+        const char* msg = lua_tostring(L, -1);
+        std::string err = msg ? msg : "неизвестная ошибка";
         lua_pop(L, 1);
         return {-1, err};
     }
     im->budget = kLoadBudget;
     if (lua_pcall(L, 0, 1, 0) != LUA_OK) {
-        std::string err = lua_tostring(L, -1);
+        const char* msg = lua_tostring(L, -1);
+        std::string err = msg ? msg : "неизвестная ошибка";
         lua_pop(L, 1);
         return {-1, err};
     }

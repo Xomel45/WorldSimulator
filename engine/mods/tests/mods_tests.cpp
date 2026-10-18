@@ -65,6 +65,7 @@ int main() {
         {"id": "loop",   "type": "script", "script": "loop.lua"},
         {"id": "os",     "type": "script", "script": "os.lua"},
         {"id": "io",     "type": "script", "script": "io.lua"},
+        {"id": "pcallloop", "type": "script", "script": "pcallloop.lua"},
         {"id": "crash",  "type": "script", "script": "crash.lua"},
         {"id": "escape", "type": "script", "script": "../good/scripts/bolt.lua"},
         {"id": "syntax", "type": "script", "script": "syntax.lua"},
@@ -72,6 +73,7 @@ int main() {
         {"id": "ok",     "type": "erase"}
       ]})");
     write(root / "mods" / "evil" / "loop.lua",  "return function(ctx, p) while true do end end");
+    write(root / "mods" / "evil" / "pcallloop.lua", "return function(ctx, p) while true do pcall(function() while true do end end) end end");
     write(root / "mods" / "evil" / "os.lua",    "return function(ctx, p) os.execute('touch /tmp/wsim_pwned') end");
     write(root / "mods" / "evil" / "io.lua",    "return function(ctx, p) io.open('/etc/passwd') end");
     write(root / "mods" / "evil" / "crash.lua", "return function(ctx, p) local x = nil; x.y = 1 end");
@@ -146,7 +148,7 @@ int main() {
     // Эти силы могли не пройти загрузку (скрипт исполняется при загрузке только до return),
     // поэтому проверяем те, что дошли до реестра.
     const auto t0 = std::chrono::steady_clock::now();
-    for (const char* id : {"evil.loop", "evil.os", "evil.io", "evil.crash", "evil.load"}) {
+    for (const char* id : {"evil.loop", "evil.pcallloop", "evil.os", "evil.io", "evil.crash", "evil.load"}) {
         const PowerDef* p = reg.find(id);
         WSIM_CHECK(p != nullptr);
         p->apply(god, {0.0f, 0.0f, 3.0f, 0.016f, true});
