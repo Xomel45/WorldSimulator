@@ -79,6 +79,13 @@ struct WorldStats {
     std::uint64_t meatKills = 0, bucketsMade = 0, bushesWatered = 0, stockpilesBuilt = 0, hutsBuilt = 0, firesBuilt = 0, firesStoked = 0, bitesBlockedByWalls = 0, coldTicks = 0, logsStored = 0, logsTaken = 0, deathsThirst = 0;
 };
 
+// События мира для звука и эффектов (не состояние: очищаются takeEvents(), в сохранения не входят).
+enum class EventType : std::uint8_t { TreeFelled, Built, Stab, Bitten, Plank };
+struct WorldEvent {
+    EventType type = EventType::Built;
+    glm::vec3 pos{};
+};
+
 // Полное состояние мира для сохранения/загрузки (всё, что нужно, чтобы продолжить симуляцию
 // бит в бит: в том числе состояние ГСЧ и ожидающие пинги горя).
 struct WorldState {
@@ -117,6 +124,7 @@ public:
     // Рубка деревьев меняет рельеф (Terrain::fellTree) -- поэтому террейн неконстантный; области для пересборки чанков -- в takeDirty().
     void tick(float dt, Terrain* terrain = nullptr);
     [[nodiscard]] std::vector<Terrain::Rect> takeDirty() { return std::exchange(m_dirty, {}); }
+    [[nodiscard]] std::vector<WorldEvent>    takeEvents() { return std::exchange(m_events, {}); }
 
     // Опасности на текущий кадр (заменяют предыдущие). Существа в радиусе kHazardSense от края чувствуют угрозу.
     void setHazards(std::span<const Hazard> hazards) { m_hazards.assign(hazards.begin(), hazards.end()); }
@@ -210,6 +218,8 @@ private:
     WorldStats               m_stats;
     Fauna                    m_fauna;
     std::vector<Terrain::Rect> m_dirty;
+    std::vector<WorldEvent>    m_events;
+    void pushEvent(EventType t, glm::vec3 pos) { if (m_events.size() < 64) m_events.push_back({t, pos}); }
     std::vector<Structure>     m_structures;
 
     // Потоковая подгрузка кустов (см. growBerryBushes/streamBushes в World.cpp).

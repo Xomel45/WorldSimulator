@@ -618,7 +618,8 @@ void Application::update(float dt) {
         m_world.setFocus(std::span<const glm::vec2>(&focus, 1));
     }
     m_world.tick(dt, &m_terrain);
-    for (const auto& rect : m_world.takeDirty()) { if (m_chunks) m_chunks->invalidate(rect); }   // срубленные деревья: чанки пересобираются
+    for (const auto& rect : m_world.takeDirty()) { if (m_chunks) m_chunks->invalidate(rect); }
+    { const auto events = m_world.takeEvents(); if (m_sound) m_sound->worldEvents(events); }   // срубленные деревья: чанки пересобираются
 
     // Пересобираем визуальные объекты существ из текущей популяции -- дёшево:
     // SceneObject это shared_ptr на уже созданный меш + Transform, никакой
@@ -891,6 +892,9 @@ void Application::render() {
             m_lights.ambient.w *= 1.0f - 0.15f * cold - 0.2f * rain;
             m_lights.sunColorIntensity = {glm::mix(glm::vec3(m_lights.sunColorIntensity), glm::vec3(0.85f, 0.92f, 1.0f), 0.4f * cold), m_lights.sunColorIntensity.w};
             m_fogBoost = 1.0f + 2.2f * rain + 0.6f * cold;
+            // Снег ложится зимой и тает к весне (чуть отстаёт от холода); осень красит землю.
+            m_lights.fogParams.z = playing ? std::clamp((cold - 0.3f) / 0.5f, 0.0f, 1.0f) : 0.0f;
+            m_lights.fogParams.w = autumn;
         }
         {
             const glm::vec3 c = sky / (sky + glm::vec3(1.0f));

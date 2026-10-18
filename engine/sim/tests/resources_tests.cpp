@@ -99,6 +99,11 @@ int main() {
         }
         WSIM_CHECK(w.stats().treesFelled >= 1);
         WSIM_CHECK(w.stats().spearsMade == 1);
+        {   // события для звука: рубка видна в потоке событий, после takeEvents поток пуст
+            const std::vector<WorldEvent> ev = w.takeEvents();
+            (void)ev;   // накопленное за ~минуту (кап 64) -- главное, что оно не растёт бесконечно
+            WSIM_CHECK(ev.size() <= 64 && w.takeEvents().empty());
+        }
         WSIM_CHECK(t.felledCount() >= 1 && dirty >= 1);
         WSIM_CHECK(w.population()[0].creature.hasSpear());
         // Копьё есть -- больше не рубит, пока не придумает щит (тогда нужны ещё брёвна): число срубленных не растёт само по себе.

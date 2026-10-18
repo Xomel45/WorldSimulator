@@ -199,7 +199,7 @@ void main() {
     vec3  V  = normalize(camPos.xyz - fragPos);
 
     vec3 albedo = fragColor.rgb;
-    if (matIs(fragColor.a, MAT_TERRAIN)) albedo = terrainMaterial(fragPos, N, length(camPos.xyz - fragPos), fragColor.rg);
+    if (matIs(fragColor.a, MAT_TERRAIN)) albedo = terrainMaterial(fragPos, N, length(camPos.xyz - fragPos), fragColor.rg, 0.0, 0.0);
     else if (matIs(fragColor.a, MAT_CREATURE)) albedo = creatureMaterial(albedo, fragPos);
 
     gShadowSamples = 4;                           // первичные тени — мягкие

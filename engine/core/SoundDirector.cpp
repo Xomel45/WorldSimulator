@@ -59,7 +59,7 @@ void SoundDirector::update(float dt, bool playing, const glm::vec3& focus, const
     m_audio.setListener(focus + glm::vec3(0.0f, 1.0f, 0.0f), fwd);
 
     ambient(dt, playing, focus, camDistance, world, terrain);
-    if (playing) creatureVoices(dt, world);
+    if (playing) { creatureVoices(dt, world); animalVoices(dt, world); }
     m_audio.update(dt);
 }
 
@@ -124,6 +124,55 @@ void SoundDirector::ambient(float dt, bool playing, const glm::vec3& focus, floa
             const auto      id = static_cast<SoundId>(static_cast<int>(SoundId::Chirp0) + static_cast<int>(u(m_rng) * 3.99f));
             m_audio.play(id, Group::Ambient, 0.45f, 0.9f + 0.3f * u(m_rng), &pos, 12.0f + 0.2f * camDistance, 110.0f + camDistance);
         }
+    }
+}
+
+void SoundDirector::worldEvents(const std::vector<WorldEvent>& events) {
+    if (!m_playing) return;
+    const float hearing = 40.0f + 2.5f * m_camDistance;
+    int played = 0;
+    for (const WorldEvent& e : events) {
+        if (played >= 4 || glm::length(glm::vec2(e.pos.x - m_focus.x, e.pos.z - m_focus.z)) > hearing) continue;
+        switch (e.type) {
+            case EventType::TreeFelled: effect(SoundId::Thud, e.pos, 0.55f, 0.8f); break;   // падает дерево
+            case EventType::Built:      effect(SoundId::Knock, e.pos, 0.6f, 0.9f); break;
+            case EventType::Plank:      effect(SoundId::Knock, e.pos, 0.35f, 1.3f); break;
+            case EventType::Stab:       effect(SoundId::Zap, e.pos, 0.25f, 1.6f); break;
+            case EventType::Bitten:     effect(SoundId::Thud, e.pos, 0.5f, 1.4f); break;
+        }
+        ++played;
+    }
+}
+
+// Голоса зверей: хищник, пошедший на охоту, рычит; травоядное, пустившееся бежать, подаёт тревожный крик. На фронт смены состояния.
+void SoundDirector::animalVoices(float dt, const World& world) {
+    m_animalBudget = std::min(m_animalBudget + dt * 1.5f, 2.0f);
+    const float hearing = 40.0f + 2.5f * m_camDistance;
+    std::uniform_real_distribution<float> u(0.0f, 1.0f);
+    for (const Animal& a : world.fauna().animals()) {
+        AnimalVoice& v = m_animalVoices[a.id];
+        v.cooldown = std::max(0.0f, v.cooldown - dt);
+        const auto state = static_cast<std::uint8_t>(a.state);
+        const bool edge = state != v.state;
+        v.state = state;
+        const bool predator = isPredator(a.species);
+        if (!edge || v.cooldown > 0.0f || m_animalBudget < 1.0f) continue;
+        if (!(predator ? a.state == AnimalState::Hunt : a.state == AnimalState::Flee)) continue;
+        const glm::vec3 pos = a.position + glm::vec3(0.0f, 0.5f, 0.0f);
+        if (glm::length(glm::vec2(pos.x - m_focus.x, pos.z - m_focus.z)) > hearing) continue;
+        const float size01 = std::clamp(speciesDef(a.species).size / 1.4f, 0.0f, 1.0f);
+        const int   variant = static_cast<int>(a.id % 3);
+        const SoundId id = predator ? static_cast<SoundId>(static_cast<int>(SoundId::Growl0) + variant) : static_cast<SoundId>(static_cast<int>(SoundId::Alarm0) + variant);
+        const float pitch = predator ? std::clamp(0.95f - 0.4f * size01 + 0.06f * (u(m_rng) - 0.5f), 0.5f, 1.0f) : std::clamp(1.5f - 0.5f * size01, 0.9f, 1.5f);
+        m_audio.play(id, Group::Creatures, predator ? 0.85f : 0.6f, pitch, &pos, 6.0f + 0.2f * m_camDistance, 60.0f + 2.0f * m_camDistance);
+        v.cooldown = 8.0f + 8.0f * u(m_rng);
+        m_animalBudget -= 1.0f;
+    }
+    m_pruneTimer += 0.0f;
+    if (m_animalVoices.size() > 400) {
+        std::unordered_set<std::uint64_t> alive;
+        for (const Animal& a : world.fauna().animals()) alive.insert(a.id);
+        std::erase_if(m_animalVoices, [&](const auto& kv) { return !alive.contains(kv.first); });
     }
 }
 

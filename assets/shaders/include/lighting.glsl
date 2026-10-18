@@ -21,7 +21,7 @@ layout(set = 0, binding = 1) uniform LightsUBO {
     vec4  pointColorInt[WSIM_MAX_POINT_LIGHTS];    // rgb, w = интенсивность
     ivec4 counts;                                 // x = число точечных источников
     vec4  fogColorDensity;                        // rgb = цвет тумана, w = базовая плотность
-    vec4  fogParams;                              // x = height falloff, y = время (с), zw резерв
+    vec4  fogParams;                              // x = height falloff, y = время (с), z = снежный покров, w = осень
     mat4  cascadeVP[WSIM_SHADOW_CASCADES];         // мир -> клип света по каскадам
     vec4  cascadeSplit;                            // дальние границы каскадов по глубине вида
     vec4  cascadeTexel;                            // размер текселя каскада в юнитах мира

@@ -34,7 +34,7 @@ void main() {
     float fresnel = 0.0;
     bool  water   = matIs(fragColor.a, MAT_WATER);
 
-    if (matIs(fragColor.a, MAT_TERRAIN))        albedo = terrainMaterial(fragPos, N, dist, fragColor.rg);
+    if (matIs(fragColor.a, MAT_TERRAIN))        albedo = terrainMaterial(fragPos, N, dist, fragColor.rg, lights.fogParams.z, lights.fogParams.w);
     else if (water)                              albedo = waterMaterial(fragPos, N, V, dist, fresnel);
     else if (matIs(fragColor.a, MAT_CREATURE))   albedo = creatureMaterial(albedo, fragPos);
 

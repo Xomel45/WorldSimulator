@@ -43,7 +43,7 @@ vec3 groundPalette(float T, float M, vec3 grassMid, float large) {
 
 // Рельеф: цвет по климату (биомы), пятна травы/сухой травы/проплешин, пляж, камень на склонах, снег там, где
 // холодно (в том числе на высоких горах: чанк остужает климат с высотой, правки игрока белеют сами).
-vec3 terrainMaterial(vec3 P, inout vec3 N, float dist, vec2 climate) {
+vec3 terrainMaterial(vec3 P, inout vec3 N, float dist, vec2 climate, float snowCover, float autumn) {
     float h     = P.y;
     float large = wsimFbm(P * 0.045 + 5.0);
     float mid   = wsimVNoise(P * 0.8 + 11.0);
@@ -76,6 +76,13 @@ vec3 terrainMaterial(vec3 P, inout vec3 N, float dist, vec2 climate) {
     c           = mix(c, rock, rockW);
     float snowW = (1.0 - smoothstep(0.01, 0.07, T + (large - 0.5) * 0.16)) * (1.0 - rockW * 0.6);
     c           = mix(c, snow, snowW);
+
+    // Времена года: осенью трава и земля желтеют-краснеют, зимой снег ложится на пологие места пятнами (камень и песок у воды чище).
+    float soil = (1.0 - rockW) * (1.0 - beach) * (1.0 - snowW);
+    c = mix(c, c * vec3(1.45, 0.82, 0.40) + vec3(0.07, 0.025, 0.0), autumn * 0.65 * soil);
+    float cover = snowCover * smoothstep(0.3, 0.7, N.y) * (1.0 - 0.6 * beach) * smoothstep(0.1, 0.5, snowCover + (mid - 0.5) * 0.7 + (large - 0.5) * 0.3);
+    c = mix(c, snow, clamp(cover, 0.0, 1.0));
+    snowW = max(snowW, cover);
 
     // Зернистость и микрорельеф: слабее вдали и на снегу.
     float near = 1.0 - far;

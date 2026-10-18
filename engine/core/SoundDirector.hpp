@@ -30,6 +30,7 @@ public:
     void ui(UiSound sound);                                   // клик/наведение интерфейса (2D)
     void impact(const ImpactEvent& hit);                      // валун ударил о землю
     void effect(audio::SoundId id, const glm::vec3& pos, float volume = 1.0f, float pitch = 1.0f);  // сила бога в точке
+    void worldEvents(const std::vector<WorldEvent>& events);   // рубка, стройка, удары, укусы
     void terrainRumble(float intensity) { m_rumbleTarget = intensity; }  // гул, пока лепят рельеф (0..1)
 
     // SoundSink: звуки по имени из скриптов модов.
@@ -37,6 +38,7 @@ public:
 
 private:
     void creatureVoices(float dt, const World& world);
+    void animalVoices(float dt, const World& world);
     void ambient(float dt, bool playing, const glm::vec3& focus, float camDistance, const World& world, const Terrain& terrain);
 
     struct VoiceState {
@@ -51,6 +53,9 @@ private:
     float                                      m_camDistance = 25.0f;
     float                                      m_voiceBudget = 2.0f;   // сколько голосов можно начать сейчас (копится со временем)
     float                                      m_pruneTimer  = 0.0f;
+    float                                      m_animalBudget = 1.5f;
+    struct AnimalVoice { std::uint8_t state = 255; float cooldown = 0.0f; };
+    std::unordered_map<std::uint64_t, AnimalVoice> m_animalVoices;
     float                                      m_birdTimer   = 4.0f;
     float                                      m_time        = 0.0f;
     float                                      m_rumbleTarget = 0.0f;

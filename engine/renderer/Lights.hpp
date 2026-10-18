@@ -24,7 +24,7 @@ struct LightsData {
     glm::vec4  pointColorInt[kMaxPointLights]{};     // rgb, w = интенсивность
     glm::ivec4 counts{};                             // x = число точечных источников
     glm::vec4  fogColorDensity{};                    // rgb = цвет тумана, w = базовая плотность
-    glm::vec4  fogParams{};                          // x = height falloff, y = время (с), zw резерв
+    glm::vec4  fogParams{};                          // x = height falloff, y = время (с), z = снежный покров 0..1, w = осень 0..1
     // Каскадные тени от солнца (см. Shadows.hpp, карта -- binding 4)
     glm::mat4  cascadeVP[kShadowCascades]{};         // мир -> клип света, по каскадам
     glm::vec4  cascadeSplit{};                       // дальние границы каскадов по глубине вида

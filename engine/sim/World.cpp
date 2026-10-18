@@ -523,10 +523,12 @@ void World::tick(float dt, Terrain* mutableTerrain) {
                 if (st.kind == StructureKind::Hut && std::hypot(st.x - c.position.x, st.z - c.position.z) < 3.2f) { damage *= 0.25f; ++m_stats.bitesBlockedByWalls; break; }
             if (c.hasShield()) { damage *= 0.35f; c.shieldDur = std::max(0.0f, c.shieldDur - 0.34f); ++m_stats.shieldBlocks; }
             c.health -= damage;
+            pushEvent(EventType::Bitten, c.position);
             c.needs.fear = 1.0f;
             c.dangerMemory = 120.0f;
             if (c.hasSpear() && b.attackerId != 0) {   // копьё: укушенный бьёт в ответ, хищник ранен и отступает
                 m_fauna.hurt(b.attackerId, 0.5f);
+                pushEvent(EventType::Stab, c.position);
                 c.spearDur = std::max(0.0f, c.spearDur - 0.25f);
                 ++m_stats.spearHits;
             }
@@ -869,6 +871,7 @@ void World::tick(float dt, Terrain* mutableTerrain) {
         if (self.huntRequest && senses.preyId != 0 && senses.preyDist <= 2.4f && self.huntTimer <= 0.0f) {
             self.huntTimer = 1.2f;
             self.spearDur  = std::max(0.0f, self.spearDur - 0.06f);
+            pushEvent(EventType::Stab, senses.preyPos);
             if (m_fauna.hurt(senses.preyId, 0.55f)) { self.feed(0.7f); ++m_stats.meatKills; }
         }
         // Костёр: тёплый сон рядом (энергия восстанавливается быстрее); знающий с брёвнами подкладывает, когда огонь слабеет.
@@ -905,6 +908,7 @@ void World::tick(float dt, Terrain* mutableTerrain) {
                 self.treeKnown = false;
                 m_dirty.push_back(mutableTerrain->fellTree(self.treeCx, self.treeCz));
                 ++m_stats.treesFelled;
+                pushEvent(EventType::TreeFelled, {self.treeX, selfPos.y, self.treeZ});
             }
         } else {
             self.chopProgress = 0.0f;
@@ -912,6 +916,7 @@ void World::tick(float dt, Terrain* mutableTerrain) {
 
         // Стройка: работа закончена в этом тике -- мир ставит постройку и забирает доски.
         if (self.buildRequest != 0) {
+            pushEvent(self.buildRequest == 1 ? EventType::Plank : EventType::Built, {self.buildAt.x, selfPos.y, self.buildAt.y});
             if (self.buildRequest == 1 && self.wood >= kBridgeWood && mutableTerrain && mutableTerrain->addBridge(self.buildAt.x, self.buildAt.y)) {
                 self.wood -= kBridgeWood;
                 ++m_stats.planksLaid;

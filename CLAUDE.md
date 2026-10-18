@@ -898,6 +898,16 @@ Creatures now cut trees down, carry logs, craft tools and fight predators with t
 - **Save fix found by this stage**: `World::m_streamTimer` and `Fauna::m_streamTimer` were reset to 100 on load, so continuation was only *accidentally* bit-exact; both timers are now saved (`STRM`/`FAUN` tails) and `save_tests` stays green with the seasonal hunger change. Still unsaved: `Animal::stun` (a few seconds).
 - Not done: snow on the terrain (the ground colour does not change), seasonal berry visibility/leaf colours, rain filling water or flooding, wind, lightning/fires, nocturnal species, hibernation/migration.
 
+### Stage 8: seasons on the ground, work and animal sounds
+
+- **Ground by season** (`materials.glsl: terrainMaterial(…, snowCover, autumn)`, fed through the previously reserved `LightsData::fogParams.z/.w`): autumn shifts grass/soil towards yellow-orange (`autumn` = bump around year phase 0.6),
+  winter lays **snow cover** in patches on gently sloped ground (`(cold − 0.3)/0.5`, noise-broken, less on beaches, slopes and rock stay clean) and it melts with the cold. Frame dumps: `WSIM_TIME=100` spring, `640` autumn, `920` winter.
+  Trees do not change colour yet (leaf and creature share one material code). `scene_rt.frag` passes 0/0 (that path is dormant).
+- **World events** (`World::takeEvents()`, `WorldEvent{type,pos}`; `TreeFelled, Built, Plank, Stab, Bitten`, capped at 64, not state, never saved) → `SoundDirector::worldEvents`: falling tree = low thud, building = knock (planks quieter/higher),
+  spear stab = short zap, a bite = thud; audible within `40 + 2.5·camDistance`, ≤ 4 per frame.
+- **Animal voices** (`SoundDirector::animalVoices`): on the edge into `Hunt` a predator growls (pitch lower for larger species), on the edge into `Flee` a herbivore gives an alarm call; per-animal cooldown 8-16 s, budget 1.5/s, same hearing range.
+- Not done: tree colours/bare winter trees, wet ground in rain, footsteps, creature death/birth sounds, distinct species voices (the three growl/alarm timbres are shared), ice on water, snow on roofs/structures.
+
 ## Temporal upscaler and frame generation (`VulkanTemporal.cpp`, `taau.comp`, `framegen.comp`)
 
 Own implementation (not AMD's FSR 2/3): the official FidelityFX SDK builds with MSVC/`.bat` scripts, has HLSL shaders that
@@ -1314,7 +1324,8 @@ source of truth for the hex constants at the top of `MainMenu.cpp`.
 - [x] Civilization stage 5: campfire, roles, hut ownership (see "Stage 5")
 - [x] Stage 6: ecology rebalance, night/fire ambience (see "Stage 6")
 - [x] Stage 7: seasons, weather, night predators, ecology regression test (see "Stage 7")
-- [ ] Next: terrain snow/season colours, nocturnal species, building/animal sounds, migration/hibernation
+- [x] Stage 8: seasonal ground (autumn colour, snow), work and animal sounds (see "Stage 8")
+- [ ] Next: tribes (trade, rivalry), tree seasons, nocturnal species, migration/hibernation
 - [ ] More powers (fire, rain, disasters, food, smite individuals), undo
 - [x] Sound: procedural synth + miniaudio (see "Sound")
 - [x] Day/night cycle (see "Stage 4"; night ambience sound still missing)
