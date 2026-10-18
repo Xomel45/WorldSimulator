@@ -137,6 +137,43 @@ Decision decide(Creature& c, const SenseInputs& s, const BrainOutputs& raw, floa
     if (canCraft && n.fear < 0.4f && n.hunger < 0.7f) S(Behavior::Craft) = 1.2f + 1.2f * danger01;
     if (!canCraft && c.wantsWood() && treeSeen && n.fear < 0.4f && n.hunger < 0.6f && tired < 0.65f) S(Behavior::Chop) = 0.55f + 1.3f * danger01;
 
+    // Стройка. Мост: цель (еда/исследование) за водой, а за ней есть суша -- кладёт настил на первую клетку воды перед собой.
+    // Баррикада: видит хищника на расстоянии -- ставит заслон между собой и ним. Ловушка: помнит хищника -- ставит на подходе.
+    c.buildTimer = std::max(0.0f, c.buildTimer - dt);
+    int       buildKind = 0;
+    glm::vec2 buildAt{0.0f};
+    float     buildYaw = 0.0f;
+    if (s.terrain && c.buildTimer <= 0.0f) {
+        const Terrain& t = *s.terrain;
+        glm::vec2 goal{0.0f};
+        if ((hungry || n.hunger > 0.3f) && haveFoodTarget) goal = dirTo(c.position, foodTarget);
+        else if (c.exploreTimer > 0.0f) goal = {std::cos(c.wanderHeading), std::sin(c.wanderHeading)};
+        const glm::vec2 here{c.position.x, c.position.z};
+        if (c.knows(kSkillBridge) && c.wood >= kBridgeWood && glm::length(goal) > 0.5f && !t.isUnderwater(here.x, here.y)) {
+            // Первая вода по курсу в пределах вытянутой руки; за ней (до 16 единиц) должна быть суша -- иначе мост в никуда.
+            float k0 = 0.0f;
+            for (float k = 0.5f; k <= 3.2f && k0 == 0.0f; k += 0.3f)
+                if (t.isUnderwater(here.x + goal.x * k, here.y + goal.y * k)) k0 = k;
+            bool land = false;
+            for (float k = k0 + 1.5f; k0 > 0.0f && k <= 18.0f && !land; k += 1.5f)
+                land = !t.isUnderwater(here.x + goal.x * k, here.y + goal.y * k) && t.heightAt(here.x + goal.x * k, here.y + goal.y * k) > -0.01f;
+            if (land) { buildKind = 1; buildAt = here + goal * (k0 + 0.2f); }
+        }
+        if (!buildKind && c.knows(kSkillBarricade) && c.wood >= kBarricadeWood && s.predatorSeen && s.threatDist > 4.0f && s.threatDist < 26.0f && n.fear < 0.85f &&
+            glm::length(s.threatDir) > 0.0f) {
+            const glm::vec2 th = safeNormalize(s.threatDir);
+            buildKind = 2;
+            buildAt   = here + th * 3.0f;
+            buildYaw  = std::atan2(th.y, th.x) + kPi * 0.5f;   // поперёк пути хищника
+        }
+        if (!buildKind && c.knows(kSkillTrap) && c.wood >= kTrapWood && c.dangerMemory > 0.0f && !(s.predatorSeen && s.threatDist < 6.0f)) {
+            const glm::vec2 th = (s.predatorSeen && glm::length(s.threatDir) > 0.0f) ? safeNormalize(s.threatDir) : glm::vec2{std::cos(c.wanderHeading), std::sin(c.wanderHeading)};
+            buildKind = 3;
+            buildAt   = here + th * 2.5f;
+        }
+        if (buildKind) S(Behavior::Build) = buildKind == 1 ? 2.6f : 2.4f;
+    }
+
     // Базовая линия: бродит, любопытные -- охотнее; идущий искать новые места не бросает это на полпути.
     S(Behavior::Wander) = 0.3f + c.curiosity() * c.boredomLevel() * 0.8f + (c.exploreTimer > 0.0f ? 0.6f : 0.0f);
 
@@ -218,6 +255,7 @@ Decision decide(Creature& c, const SenseInputs& s, const BrainOutputs& raw, floa
             else speed = 0.7f * std::clamp(s.treeDist / 4.0f, 0.35f, 1.0f);
             break;
         case Behavior::Craft:     speed = 0.0f; d.craft = tool; break;
+        case Behavior::Build:     speed = 0.0f; d.build = buildKind; d.buildAt = buildAt; d.buildYaw = buildYaw; break;
         case Behavior::Count:     break;
     }
 

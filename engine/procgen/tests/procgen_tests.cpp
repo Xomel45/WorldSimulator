@@ -1,5 +1,6 @@
 #include "procgen/HouseGen.hpp"
 #include "procgen/AnimalGen.hpp"
+#include "procgen/StructGen.hpp"
 #include "procgen/TreeGen.hpp"
 
 #include "test_util.hpp"
@@ -178,6 +179,21 @@ int main() {
             verts[i] = m.vertices.size();
         }
         WSIM_CHECK(verts[static_cast<int>(wsim::Species::Hare)] != verts[static_cast<int>(wsim::Species::Lion)]);
+    }
+
+    // Постройки и снаряжение: корректные меши, разумные габариты.
+    {
+        for (const MeshData& m : {buildPlank(), buildBarricade(), buildTrap(), buildSpear(), buildShield(), buildLogs(1), buildLogs(4)}) {
+            checkMesh(m);
+            WSIM_CHECK(m.vertices.size() < 700);
+        }
+        float maxX = 0, maxY = 0;
+        for (const auto& v : buildBarricade().vertices) { maxX = std::max(maxX, std::fabs(v.position.x)); maxY = std::max(maxY, v.position.y); }
+        WSIM_CHECK(maxX > 1.7f && maxX < 2.0f && maxY > 1.0f && maxY < 1.8f);
+        WSIM_CHECK(buildLogs(4).vertices.size() > buildLogs(1).vertices.size());
+        float topY = -1e9f;
+        for (const auto& v : buildPlank().vertices) topY = std::max(topY, v.position.y);
+        WSIM_CHECK(std::fabs(topY) < 1.0e-5f);
     }
 
     std::puts("procgen_tests: OK");

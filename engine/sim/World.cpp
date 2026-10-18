@@ -136,6 +136,20 @@ bool World::spawnCreature(float x, float z, std::span<const std::pair<Genome::Tr
     return true;
 }
 
+bool World::placeStructure(const Terrain* terrain, StructureKind kind, float x, float z, float yaw) {
+    if (m_structures.size() >= kMaxStructures || !std::isfinite(x) || !std::isfinite(z)) return false;
+    if (terrain && terrain->isUnderwater(x, z)) return false;
+    int near = 0;
+    for (const Structure& s : m_structures) {
+        const float d = std::hypot(s.x - x, s.z - z);
+        if (d < 1.6f) return false;
+        near += d < 8.0f && s.kind == kind;
+    }
+    if (near >= 3) return false;
+    m_structures.push_back({kind, x, z, yaw, 1.0f});
+    return true;
+}
+
 std::size_t World::removeCreatures(float x, float z, float radius) {
     const auto before = m_population.size();
     std::erase_if(m_population, [&](const Inhabitant& in) {
@@ -365,6 +379,7 @@ WorldState World::exportState() const {
     st.food       = m_food;
     st.buildings  = m_buildings;
     st.fauna      = m_fauna.exportState();
+    st.structures = m_structures;
     st.streaming  = m_streaming;
     st.time       = m_time;
     st.loadedCells.assign(m_loadedCells.begin(), m_loadedCells.end());
@@ -386,6 +401,7 @@ bool World::importState(const WorldState& st) {
     m_population = st.population;
     m_food       = st.food;
     m_buildings  = st.buildings;
+    m_structures = st.structures;
     if (!m_fauna.importState(st.fauna)) return false;
     m_streaming = st.streaming;
     m_time      = std::isfinite(st.time) ? st.time : 0.0;
@@ -448,7 +464,7 @@ void World::tick(float dt, Terrain* mutableTerrain) {
         for (const Inhabitant& in : m_population)
             if (in.creature.alive) views.push_back({in.creature.id, in.creature.position});
         std::vector<Bite> bites;
-        m_fauna.tick(dt, terrain, views, m_rng, m_streaming ? 0.0f : kWorldHalfSize, bites, m_focus);
+        m_fauna.tick(dt, terrain, views, m_rng, m_streaming ? 0.0f : kWorldHalfSize, bites, m_focus, &m_structures);
         for (const Bite& b : bites) {
             const auto it = idIndex.find(b.creatureId);
             if (it == idIndex.end()) continue;
@@ -733,6 +749,21 @@ void World::tick(float dt, Terrain* mutableTerrain) {
             self.chopProgress = 0.0f;
         }
 
+        // Стройка: работа закончена в этом тике -- мир ставит постройку и забирает доски.
+        if (self.buildRequest != 0) {
+            if (self.buildRequest == 1 && self.wood >= kBridgeWood && mutableTerrain && mutableTerrain->addBridge(self.buildAt.x, self.buildAt.y)) {
+                self.wood -= kBridgeWood;
+                ++m_stats.planksLaid;
+            } else if (self.buildRequest == 2 && self.wood >= kBarricadeWood && placeStructure(terrain, StructureKind::Barricade, self.buildAt.x, self.buildAt.y, self.buildYaw)) {
+                self.wood -= kBarricadeWood;
+                ++m_stats.barricadesBuilt;
+            } else if (self.buildRequest == 3 && self.wood >= kTrapWood && placeStructure(terrain, StructureKind::Trap, self.buildAt.x, self.buildAt.y, 0.0f)) {
+                self.wood -= kTrapWood;
+                ++m_stats.trapsSet;
+            }
+            self.buildRequest = 0;
+        }
+
         // Знания: открытие в опасности (или очень редко от скуки) и передача соседям и потомству по наблюдению.
         {
             const auto tickNo = static_cast<std::uint64_t>(m_time * 60.0 + 0.5);
@@ -741,10 +772,21 @@ void World::tick(float dt, Terrain* mutableTerrain) {
                 h ^= h >> 31; h *= 0x94D049BB133111EBull; h ^= h >> 29;
                 return static_cast<float>(h & 0xFFFFFF) / 16777216.0f < perSecond * dt;
             };
-            const float inspiration = (0.0004f + 0.012f * std::clamp(self.dangerMemory / 120.0f, 0.0f, 1.0f)) * (0.5f + self.curiosity());
-            if (!self.knows(kSkillSpear) && roll(1, inspiration)) { self.skills |= kSkillSpear; ++m_stats.skillsLearned; }
-            else if (self.knows(kSkillSpear) && !self.knows(kSkillShield) && roll(2, inspiration * 0.5f)) { self.skills |= kSkillShield; ++m_stats.skillsLearned; }
-            if (self.skills != (kSkillSpear | kSkillShield)) {
+            const float curious = 0.5f + self.curiosity();
+            const float inspiration = (0.0004f + 0.012f * std::clamp(self.dangerMemory / 120.0f, 0.0f, 1.0f)) * curious;
+            // Мост придумывает тот, кто упирается в воду, когда голоден (вода впереди по курсу).
+            bool waterAhead = false;
+            if (terrain && !self.knows(kSkillBridge) && self.needs.hunger > 0.4f)
+                waterAhead = terrain->isUnderwater(selfPos.x + std::cos(self.wanderHeading) * 3.0f, selfPos.z + std::sin(self.wanderHeading) * 3.0f);
+            struct Learn { Skill skill; Skill needs; float rate; };
+            const Learn learns[] = {{kSkillSpear, static_cast<Skill>(0), inspiration},
+                                    {kSkillShield, kSkillSpear, inspiration * 0.5f},
+                                    {kSkillBarricade, kSkillSpear, inspiration * 0.4f},
+                                    {kSkillTrap, kSkillSpear, inspiration * 0.4f},
+                                    {kSkillBridge, static_cast<Skill>(0), (0.0002f + (waterAhead ? 0.006f : 0.0f)) * curious}};
+            for (const Learn& l : learns)
+                if (!self.knows(l.skill) && (l.needs == 0 || self.knows(l.needs)) && roll(l.skill, l.rate)) { self.skills |= l.skill; ++m_stats.skillsLearned; }
+            if (self.skills != kAllSkills) {
                 forEachNearby(
                     creatureGrid, selfPos, 8.0f, [this](std::size_t j) { return m_population[j].creature.position; },
                     [&](std::size_t j, float) {
@@ -752,10 +794,10 @@ void World::tick(float dt, Terrain* mutableTerrain) {
                         const Creature& o = m_population[j].creature;
                         const bool family = o.id == self.bondedPartnerId || self.id == o.parentIds[0] || self.id == o.parentIds[1] ||
                                             o.id == self.parentIds[0] || o.id == self.parentIds[1];
-                        for (Skill sk : {kSkillSpear, kSkillShield})
-                            if (o.knows(sk) && !self.knows(sk) && (sk == kSkillSpear || self.knows(kSkillSpear)) &&
-                                roll(10 + sk, (family ? 0.06f : 0.02f) * (0.5f + self.curiosity()))) {
-                                self.skills |= sk;
+                        for (const Learn& l : learns)
+                            if (o.knows(l.skill) && !self.knows(l.skill) && (l.needs == 0 || self.knows(l.needs)) &&
+                                roll(10 + l.skill, (family ? 0.06f : 0.02f) * curious)) {
+                                self.skills |= l.skill;
                                 ++m_stats.skillsLearned;
                             }
                     });

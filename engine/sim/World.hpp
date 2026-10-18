@@ -3,6 +3,7 @@
 #include "sim/Berries.hpp"
 #include "sim/Creature.hpp"
 #include "sim/Fauna.hpp"
+#include "sim/Structures.hpp"
 #include "sim/Terrain.hpp"
 
 #include <cstddef>
@@ -74,6 +75,7 @@ struct WorldStats {
     std::uint64_t sabotages = 0;  // сколько раз кто-то подсунул другому ягоды из мести
     std::uint64_t deathsPredation = 0;  // существа, растерзанные хищниками
     std::uint64_t treesFelled = 0, spearsMade = 0, shieldsMade = 0, spearHits = 0, shieldBlocks = 0, skillsLearned = 0;
+    std::uint64_t planksLaid = 0, barricadesBuilt = 0, trapsSet = 0;
 };
 
 // Полное состояние мира для сохранения/загрузки (всё, что нужно, чтобы продолжить симуляцию
@@ -86,6 +88,7 @@ struct WorldState {
     std::vector<Building>                                buildings;
     std::vector<std::pair<std::uint64_t, float>>         pendingGrief;  // по возрастанию id
     Fauna::State                                         fauna;         // дикие животные
+    std::vector<Structure>                               structures;    // баррикады и ловушки
     // Потоковая подгрузка кустов: мировое время, материализованные ячейки и записи о спящих (старые сохранения -- пусто).
     bool                                                 streaming = false;
     double                                               time = 0.0;
@@ -152,6 +155,12 @@ public:
     std::size_t removeBuildings(float x, float z, float radius);
     [[nodiscard]] std::span<const Building> buildings() const noexcept { return m_buildings; }
 
+    // ── Постройки существ: баррикады и ловушки (мосты -- в Terrain). Ставит существо через tick; бог/тесты -- напрямую.
+    static constexpr std::size_t kMaxStructures = 240;
+    // false -- нельзя: вода, слишком близко к другой постройке, потолок, баррикада/ловушка скучены (3+ в 8 единицах).
+    bool placeStructure(const Terrain* terrain, StructureKind kind, float x, float z, float yaw);
+    [[nodiscard]] std::span<const Structure> structures() const noexcept { return m_structures; }
+
     // ── Дикие животные (sim/Fauna): травоядные и хищники по биомам ──
     // Заселяет игровую область заново (при создании мира и в "Новом мире"); ГСЧ мировой.
     void growWildlife(const Terrain& terrain);
@@ -181,6 +190,7 @@ private:
     WorldStats               m_stats;
     Fauna                    m_fauna;
     std::vector<Terrain::Rect> m_dirty;
+    std::vector<Structure>     m_structures;
 
     // Потоковая подгрузка кустов (см. growBerryBushes/streamBushes в World.cpp).
     bool                          m_streaming = false;

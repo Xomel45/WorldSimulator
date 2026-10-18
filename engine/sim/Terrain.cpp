@@ -131,6 +131,23 @@ Terrain::Rect Terrain::fellTree(std::int32_t cx, std::int32_t cz) {
             static_cast<float>(cz + 1) * kTreeCell + 3.0f};
 }
 
+bool Terrain::addBridge(float x, float z) {
+    const auto cx = static_cast<std::int32_t>(std::floor(x / kBridgeCell)), cz = static_cast<std::int32_t>(std::floor(z / kBridgeCell));
+    if (m_bridges.count(bridgeKey(cx, cz))) return false;
+    // Настил кладут туда, куда указали: там должна быть вода (клетка может заходить на берег -- это мост, а не плот).
+    if (heightAt(x, z) >= kSeaLevel) return false;
+    m_bridges.insert(bridgeKey(cx, cz));
+    return true;
+}
+
+std::vector<std::int64_t> Terrain::exportBridges() const {
+    std::vector<std::int64_t> out(m_bridges.begin(), m_bridges.end());
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+void Terrain::importBridges(const std::vector<std::int64_t>& keys) { m_bridges.clear(); m_bridges.insert(keys.begin(), keys.end()); }
+
 std::vector<std::int64_t> Terrain::exportFelled() const {
     std::vector<std::int64_t> out(m_felled.begin(), m_felled.end());
     std::sort(out.begin(), out.end());

@@ -2,6 +2,7 @@
 
 #include "sim/Biomes.hpp"
 #include "sim/Genome.hpp"  // Rng
+#include "sim/Structures.hpp"
 #include "sim/Terrain.hpp"
 
 #include <glm/glm.hpp>
@@ -71,6 +72,7 @@ struct Animal {
     std::uint64_t targetId = 0;         // кого преследует (животное или существо)
     bool          targetIsCreature = false;
     float         sinceBite = 100.0f;   // сколько прошло с последнего укуса существа (чтобы засчитать добычу)
+    float         stun = 0.0f;          // > 0 -- попал в ловушку, стоит (не сохраняется: секунды)
     bool          alive = true;
     std::uint8_t  deathCause = 0;       // 1 старость, 2 голод, 3 съеден, 4 убит богом, 5 заколот копьём
 };
@@ -87,7 +89,7 @@ struct Bite {
 };
 
 struct FaunaStats {
-    std::uint64_t births = 0, kills = 0, creatureBites = 0, deathsOld = 0, deathsStarved = 0, immigrants = 0;
+    std::uint64_t births = 0, kills = 0, creatureBites = 0, trapsTriggered = 0, deathsOld = 0, deathsStarved = 0, immigrants = 0;
 };
 
 // Мир диких животных. Не знает о World: получает позиции существ списком и возвращает укусы (World применяет их к существам).
@@ -118,7 +120,7 @@ public:
     // с краёв); halfSize <= 0 -- мир без границ: вокруг существ и точек интереса focus впервые попавшие в поле ячейки заселяются
     // (раз и навсегда -- ячейка запоминается как исследованная), а вымирающие виды пополняются кольцом вокруг этих точек.
     void tick(float dt, const Terrain* terrain, std::span<const CreatureView> creatures, Rng& rng, float halfSize, std::vector<Bite>& bites,
-              std::span<const glm::vec2> focus = {});
+              std::span<const glm::vec2> focus = {}, std::vector<Structure>* structures = nullptr);
 
     // Удар по животному (копьё существа): здоровье падает, раненый убегает; убитое снимается со следующим шагом (deathCause 5).
     void hurt(std::uint64_t id, float damage);

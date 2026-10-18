@@ -19,11 +19,13 @@ inline constexpr float kNoTarget       = 1.0e9f; // "цели нет" в пол�
 
 // Чем занято существо. Выбирается слоем поведения (Behavior.cpp) из потребностей, ощущений, черт
 // и выходов мозга; видно в инспекторе и нужно для озвучки/отладки.
-enum class Behavior : std::uint8_t { Wander, SeekFood, Eat, Rest, Flee, SeekMate, Socialize, GoHome, Sick, Sabotage, Chop, Craft, Count };
+enum class Behavior : std::uint8_t { Wander, SeekFood, Eat, Rest, Flee, SeekMate, Socialize, GoHome, Sick, Sabotage, Chop, Craft, Build, Count };
 
 // Умения (маска Creature::skills). Рубить деревья умеют все (врождённо); изготовление орудий -- знание: открывается в опасности или
 // от случая и передаётся соседям и потомству по наблюдению (World::tick), как вкус ягод -- но у знания нет "забывания".
-enum Skill : std::uint8_t { kSkillSpear = 1, kSkillShield = 2 };
+enum Skill : std::uint8_t { kSkillSpear = 1, kSkillShield = 2, kSkillBridge = 4, kSkillBarricade = 8, kSkillTrap = 16 };
+inline constexpr std::uint8_t kAllSkills = 31;
+inline constexpr float kBridgeWood = 1.0f, kBarricadeWood = 3.0f, kTrapWood = 2.0f;   // досок на настил / баррикаду / ловушку
 inline constexpr float kSpearWood = 2.0f, kShieldWood = 3.0f, kMaxWood = 4.0f;   // цена орудий и сколько можно нести
 [[nodiscard]] const char* behaviorName(Behavior b) noexcept;  // по-русски
 
@@ -154,6 +156,11 @@ public:
     std::uint8_t skills = 0;
     float        wood = 0.0f, spearDur = 0.0f, shieldDur = 0.0f, dangerMemory = 0.0f, chopProgress = 0.0f, craftProgress = 0.0f;
     std::uint8_t chopRequest = 0;
+    // Стройка (мост/баррикада/ловушка): buildRequest -- 1 мост, 2 баррикада, 3 ловушка, ставится на ТОТ тик, когда работа закончена
+    // (мир исполняет); buildProgress -- работа идёт; buildTimer -- пауза до следующей.
+    std::uint8_t buildRequest = 0;
+    float        buildProgress = 0.0f, buildTimer = 0.0f, buildYaw = 0.0f;
+    glm::vec2    buildAt{};
     bool         treeKnown = false;
     std::int32_t treeCx = 0, treeCz = 0;
     float        treeX = 0.0f, treeZ = 0.0f, treeSearch = 0.0f;
@@ -163,7 +170,15 @@ public:
     // Сколько брёвен нужно на следующее орудие, которое существо умеет, но не имеет (0 -- нечего мастерить); какое именно (1 копьё, 2 щит).
     [[nodiscard]] float woodNeeded() const noexcept { return nextTool() == 1 ? kSpearWood : (nextTool() == 2 ? kShieldWood : 0.0f); }
     [[nodiscard]] int   nextTool() const noexcept { return (knows(kSkillSpear) && !hasSpear()) ? 1 : ((knows(kSkillShield) && !hasShield()) ? 2 : 0); }
-    [[nodiscard]] bool  wantsWood() const noexcept { return nextTool() != 0 && wood < woodNeeded() && wood < kMaxWood; }
+    // Сколько брёвен хочется иметь: на следующее орудие, на пару настилов моста, на баррикаду/ловушку, пока помнит хищника.
+    [[nodiscard]] float woodGoal() const noexcept {
+        float goal = woodNeeded();
+        if (knows(kSkillBridge)) goal = std::max(goal, 2.0f);
+        if (dangerMemory > 0.0f && knows(kSkillBarricade)) goal = std::max(goal, kBarricadeWood);
+        if (dangerMemory > 0.0f && knows(kSkillTrap)) goal = std::max(goal, kTrapWood);
+        return goal;
+    }
+    [[nodiscard]] bool  wantsWood() const noexcept { return woodGoal() > wood && wood < kMaxWood; }
 
     // Поведение: текущая линия, сколько она держится (гистерезис против дёрганья), направление блуждания
     // и память о последнем месте с едой (место, где еду видели, -- туда идём, когда еды в поле зрения нет).

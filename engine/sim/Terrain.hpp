@@ -51,7 +51,25 @@ public:
     [[nodiscard]] bool edited() const noexcept { return !m_edits.empty(); }
     static constexpr float kEditCell = 1.0f;
     static constexpr float kMaxEdit  = 60.0f;  // предел суммарной поправки по модулю
-    [[nodiscard]] bool  isUnderwater(float x, float z) const noexcept { return heightAt(x, z) < kSeaLevel; }
+    // Вода, по которой нельзя пройти: ниже уровня моря и без настила моста (Terrain::bridgeAt).
+    [[nodiscard]] bool  isUnderwater(float x, float z) const noexcept { return heightAt(x, z) < kSeaLevel && !bridgeAt(x, z); }
+    // Высота, на которой стоит идущий: земля, а на мосту -- чуть выше воды.
+    [[nodiscard]] float surfaceAt(float x, float z) const noexcept {
+        const float h = heightAt(x, z);
+        return (h < kSeaLevel && bridgeAt(x, z)) ? kSeaLevel + 0.14f : h;
+    }
+
+    // Мосты: настил по клеткам kBridgeCell над водой (строят существа, сохраняется как срубленные деревья).
+    static constexpr float kBridgeCell = 2.0f;
+    [[nodiscard]] bool bridgeAt(float x, float z) const noexcept {
+        return !m_bridges.empty() && m_bridges.find(bridgeKey(static_cast<std::int32_t>(std::floor(x / kBridgeCell)), static_cast<std::int32_t>(std::floor(z / kBridgeCell)))) != m_bridges.end();
+    }
+    // Кладёт настил на клетку с (x, z), если там вода и клетки ещё нет; false -- нельзя.
+    bool addBridge(float x, float z);
+    [[nodiscard]] std::size_t bridgeCount() const noexcept { return m_bridges.size(); }
+    [[nodiscard]] std::vector<std::int64_t> exportBridges() const;   // по возрастанию
+    void importBridges(const std::vector<std::int64_t>& keys);
+    [[nodiscard]] static std::int64_t bridgeKey(std::int32_t cx, std::int32_t cz) noexcept { return (static_cast<std::int64_t>(cx) << 32) | static_cast<std::uint32_t>(cz); }
     [[nodiscard]] float halfSize() const noexcept { return m_halfSize; }
     [[nodiscard]] std::uint32_t seed() const noexcept { return m_seed; }
 
@@ -82,6 +100,7 @@ private:
     struct EditTile { std::array<float, kEditTile * kEditTile> v{}; };
     std::unordered_map<std::int64_t, EditTile> m_edits;
     std::unordered_set<std::int64_t>           m_felled;
+    std::unordered_set<std::int64_t>           m_bridges;
     [[nodiscard]] float editAt(int ix, int iz) const noexcept;
     float&              editRef(int ix, int iz);
     [[nodiscard]] float editHeightAt(float x, float z) const noexcept;

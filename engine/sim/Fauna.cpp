@@ -302,8 +302,9 @@ void Fauna::streamWildlife(float dt, const Terrain& terrain, std::span<const Cre
 }
 
 void Fauna::tick(float dt, const Terrain* terrain, std::span<const CreatureView> creatures, Rng& rng, float halfSize, std::vector<Bite>& bites,
-                 std::span<const glm::vec2> focus) {
+                 std::span<const glm::vec2> focus, std::vector<Structure>* structures) {
     const std::size_t n = m_animals.size();
+    const std::span<const Structure> built = structures ? std::span<const Structure>(*structures) : std::span<const Structure>();
 
     auto idToAnimal = [&](std::uint64_t id) -> Animal* {
         for (Animal& a : m_animals) if (a.id == id && a.alive) return &a;
@@ -332,6 +333,26 @@ void Fauna::tick(float dt, const Terrain* terrain, std::span<const CreatureView>
         else if (a.hunger < 0.6f) a.health = std::min(1.0f, a.health + 0.004f * dt);
         if (a.age >= d.lifespan) { a.alive = false; a.deathCause = 1; continue; }
         if (a.health <= 0.0f)    { a.alive = false; a.deathCause = 2; continue; }
+
+        // Ловушки бьют хищников: ранят и держат на месте несколько секунд (ловушка срабатывает один раз).
+        if (d.diet == Diet::Predator && structures) {
+            for (Structure& s : *structures) {
+                if (s.kind != StructureKind::Trap || s.hp <= 0.0f || std::hypot(s.x - a.position.x, s.z - a.position.z) > kTrapRadius) continue;
+                s.hp = 0.0f;
+                a.stun = 6.0f;
+                a.health -= 0.45f;
+                a.state = AnimalState::Rest;
+                ++m_stats.trapsTriggered;
+                if (a.health <= 0.0f) { a.alive = false; a.deathCause = 5; }
+                break;
+            }
+            if (!a.alive) continue;
+        }
+        if (a.stun > 0.0f) {
+            a.stun -= dt;
+            a.speedNow = 0.0f;
+            continue;
+        }
 
         glm::vec2 desired{0.0f};   // куда хочет идти
         float     speedFrac = 0.0f;
@@ -495,6 +516,7 @@ void Fauna::tick(float dt, const Terrain* terrain, std::span<const CreatureView>
             auto blockedAt = [&](glm::vec2 v) {
                 const glm::vec2 q = pos + v * (1.4f + 0.12f * moveSpeed);
                 if (!d.swims && terrain->isUnderwater(q.x, q.y)) return true;
+                if (blockedByBarricade(built, q.x, q.y, 0.3f)) return true;
                 if ((terrain->heightAt(q.x, q.y) - a.position.y) / 1.5f > 1.0f) return true;
                 return Trees::blocksPoint(*terrain, q.x, q.y, 0.6f);
             };
@@ -520,7 +542,7 @@ void Fauna::tick(float dt, const Terrain* terrain, std::span<const CreatureView>
             const float nx = halfSize > 0.0f ? std::clamp(a.position.x + step.x, -halfSize + 1.0f, halfSize - 1.0f) : a.position.x + step.x;
             const float nz = halfSize > 0.0f ? std::clamp(a.position.z + step.y, -halfSize + 1.0f, halfSize - 1.0f) : a.position.z + step.y;
             // Жёсткий запрет: в воду (кроме умеющих плавать) и в ствол не заходим, даже если луч вперёд ничего не заметил.
-            const bool hardBlocked = terrain && ((!d.swims && terrain->isUnderwater(nx, nz)) || Trees::blocksPoint(*terrain, nx, nz, 0.4f));
+            const bool hardBlocked = (terrain && ((!d.swims && terrain->isUnderwater(nx, nz)) || Trees::blocksPoint(*terrain, nx, nz, 0.4f))) || blockedByBarricade(built, nx, nz, 0.1f);
             if (hardBlocked) {
                 a.heading += (unitRand(rng) < 0.5f ? 1.0f : -1.0f) * 0.9f;
                 a.speedNow = 0.0f;
@@ -529,7 +551,7 @@ void Fauna::tick(float dt, const Terrain* terrain, std::span<const CreatureView>
                 a.position.z = nz;
             }
         }
-        a.position.y = terrain ? terrain->heightAt(a.position.x, a.position.z) : 0.0f;
+        a.position.y = terrain ? terrain->surfaceAt(a.position.x, a.position.z) : 0.0f;
     }
 
     // ── Размножение: взрослые сытые и здоровые, рядом есть сородич, ниже потолка вида.
@@ -604,6 +626,7 @@ void Fauna::tick(float dt, const Terrain* terrain, std::span<const CreatureView>
         if (a.deathCause == 1) ++m_stats.deathsOld;
         else if (a.deathCause == 2) ++m_stats.deathsStarved;
     }
+    if (structures) std::erase_if(*structures, [](const Structure& st) { return st.kind == StructureKind::Trap && st.hp <= 0.0f; });
     std::erase_if(m_animals, [](const Animal& a) { return !a.alive; });
 }
 

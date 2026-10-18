@@ -6,6 +6,7 @@
 #include "platform/Paths.hpp"
 #include "procgen/AnimalGen.hpp"
 #include "procgen/HouseGen.hpp"
+#include "procgen/StructGen.hpp"
 #include "ui/Style.hpp"
 #include "renderer/Frustum.hpp"
 #include "renderer/Mesh.hpp"
@@ -248,6 +249,17 @@ Application::Application(AppConfig config)
         m_animalMeshes[static_cast<std::size_t>(sp)] = std::make_shared<Mesh>(Mesh::create(
             m_context->physDevice(), m_context->device(), m_context->commandPool(), m_context->graphicsQueue(), model.vertices, model.indices));
     }
+    {   // постройки существ и снаряжение
+        auto make = [&](const procgen::MeshData& d) {
+            return std::make_shared<Mesh>(Mesh::create(m_context->physDevice(), m_context->device(), m_context->commandPool(), m_context->graphicsQueue(), d.vertices, d.indices));
+        };
+        m_plankMesh     = make(procgen::buildPlank());
+        m_barricadeMesh = make(procgen::buildBarricade());
+        m_trapMesh      = make(procgen::buildTrap());
+        m_spearMesh     = make(procgen::buildSpear());
+        m_shieldMesh    = make(procgen::buildShield());
+        for (int n = 1; n <= 4; ++n) m_logMeshes[static_cast<std::size_t>(n - 1)] = make(procgen::buildLogs(n));
+    }
     for (std::uint32_t i = 0; i < kHouseVariants; ++i) {
         const auto house = procgen::buildHouse(procgen::houseVariant(i));
         m_houseMeshes.push_back(std::make_shared<Mesh>(Mesh::create(
@@ -292,6 +304,33 @@ Application::Application(AppConfig config)
             for (float a = 0.0f; a < 6.28f && placed < 7; a += 0.9f)
                 if (god.build(std::cos(a) * r, std::sin(a) * r, a * 57.3f)) ++placed;
         for (const auto& rect : god.takeDirty()) (void)rect;  // чанки ещё не созданы -- построятся уже с правками
+    }
+
+    // WSIM_DEMO_CIV=1 -- у центра: баррикады, ловушки, мост через ближайшую воду, а у существ копья/щиты/брёвна (проверка визуала).
+    if (std::getenv("WSIM_DEMO_CIV")) {
+        WorldState st = m_world.exportState();
+        for (std::size_t i = 0; i < st.population.size(); ++i) {
+            Creature& c = st.population[i].creature;
+            c.skills = kAllSkills;
+            c.spearDur = i % 2 == 0 ? 1.0f : 0.0f;
+            c.shieldDur = i % 3 == 0 ? 1.0f : 0.0f;
+            c.wood = static_cast<float>(i % 5);
+            if (i < 12) { const float ang = static_cast<float>(i) * 0.52f; c.position = {std::cos(ang) * 5.0f, 0.0f, std::sin(ang) * 5.0f - 8.0f}; c.homePosition = c.position; }
+        }
+        (void)m_world.importState(st);
+        for (int k = 0; k < 4; ++k) {
+            const float x = -6.0f + 4.0f * static_cast<float>(k);
+            (void)m_world.placeStructure(&m_terrain, StructureKind::Barricade, x, 4.0f + 2.0f * static_cast<float>(k % 2), 0.25f * static_cast<float>(k));
+            (void)m_world.placeStructure(&m_terrain, StructureKind::Trap, x, -3.0f, 0.0f);
+        }
+        for (float z = -90; z <= 90; z += 2)
+            for (float x = -90; x <= 90; x += 2)
+                if (m_terrain.isUnderwater(x, z) && m_terrain.isUnderwater(x + 6, z) && m_terrain.isUnderwater(x, z + 6)) {
+                    for (int k = 0; k < 4; ++k) (void)m_terrain.addBridge(x + 2.0f * static_cast<float>(k), z);
+                    std::printf("DEMO bridge at %.0f,%.0f\n", x, z);
+                    z = 100;
+                    break;
+                }
     }
 
     // WSIM_MENU_PAGE=load | settings:N -- открыть страницу меню сразу (для снимков интерфейса через WSIM_FRAME).
@@ -385,6 +424,10 @@ Application::~Application() {
         for (auto& mesh : m_animalMeshes)
             if (mesh) mesh->destroy(m_context->device());
         for (auto& mesh : m_houseMeshes) mesh->destroy(m_context->device());
+        for (auto* mesh : {&m_plankMesh, &m_barricadeMesh, &m_trapMesh, &m_spearMesh, &m_shieldMesh})
+            if (*mesh) (*mesh)->destroy(m_context->device());
+        for (auto& mesh : m_logMeshes)
+            if (mesh) mesh->destroy(m_context->device());
     }
 }
 
@@ -568,6 +611,7 @@ void Application::update(float dt) {
     // существо стоит на месте, ориентацию не трогаем (у Creature нет своего
     // hеading-поля — приемлемое упрощение для первой версии, см. CLAUDE.md).
     m_creatureObjects.clear();
+    m_gearObjects.clear();
     m_creatureObjects.reserve(m_world.populationCount());
     for (const auto& inhabitant : m_world.population()) {
         const Creature& c = inhabitant.creature;
@@ -575,12 +619,26 @@ void Application::update(float dt) {
         // c.position.y всегда 0 (симуляция не знает о рельефе в этом раунде,
         // см. CLAUDE.md) -- сэмплируем высоту террейна отдельно, только для
         // визуального маркера, чтобы существо реально стояло на поверхности.
-        t.position = {c.position.x, m_terrain.heightAt(c.position.x, c.position.z), c.position.z};
+        t.position = {c.position.x, m_terrain.surfaceAt(c.position.x, c.position.z), c.position.z};
         t.scale    = glm::vec3(c.size());
         if (const float speed = glm::length(c.velocity); speed > 0.01f)
             t.rotation.y = glm::degrees(std::atan2(c.velocity.x, c.velocity.z));
         m_creatureObjects.push_back({m_creatureMesh, t, /*solid=*/false});
         m_creatureObjects.back().trackId = c.id;
+        // Снаряжение: копьё в руке (справа, вперёд), щит слева, брёвна на спине -- всё по курсу и размеру существа.
+        {
+            const float yaw = glm::radians(t.rotation.y), cy = std::cos(yaw), sy = std::sin(yaw), k = c.size();
+            auto gear = [&](const std::shared_ptr<Mesh>& mesh, glm::vec3 local, float extraYawDeg) {
+                Transform g;
+                g.position   = t.position + glm::vec3(local.x * cy + local.z * sy, local.y, -local.x * sy + local.z * cy) * k;
+                g.rotation.y = t.rotation.y + extraYawDeg;
+                g.scale      = glm::vec3(k);
+                m_gearObjects.push_back({mesh, g, /*solid=*/false});
+            };
+            if (c.hasSpear()) gear(m_spearMesh, {0.55f, 0.5f, 0.0f}, 0.0f);
+            if (c.hasShield()) gear(m_shieldMesh, {-0.55f, 0.1f, 0.15f}, 0.0f);
+            if (c.wood >= 1.0f) gear(m_logMeshes[static_cast<std::size_t>(std::clamp(static_cast<int>(c.wood), 1, 4) - 1)], {0.0f, 0.95f, -0.35f}, 0.0f);
+        }
     }
 
     // Постройки: вид по зерну, посажены на землю (если рельеф под ними меняют, дом едет вместе с землёй).
@@ -599,11 +657,33 @@ void Application::update(float dt) {
         Transform t;
         const float growth = 0.55f + 0.45f * std::min(1.0f, a.age / d.maturity);
         const float bob = a.speedNow > 0.4f ? 0.05f * d.size * std::fabs(std::sin(a.age * (4.0f + 1.2f * a.speedNow))) : 0.0f;
-        t.position   = {a.position.x, m_terrain.heightAt(a.position.x, a.position.z) + bob, a.position.z};
+        t.position   = {a.position.x, m_terrain.surfaceAt(a.position.x, a.position.z) + bob, a.position.z};
         t.rotation.y = glm::degrees(std::atan2(std::cos(a.heading), std::sin(a.heading)));
         t.scale      = glm::vec3(d.size * growth * kAnimalVisualScale);   // с высоты god-камеры настоящие размеры слишком мелки
         m_animalObjects.push_back({m_animalMeshes[static_cast<std::size_t>(a.species)], t, /*solid=*/false});
         m_animalObjects.back().trackId = a.id;
+    }
+
+    // Мосты (кэш: пересобираются, только когда настилов стало больше/мир другой) и баррикады/ловушки.
+    {
+        const std::uint64_t sig = (static_cast<std::uint64_t>(m_terrain.seed()) << 32) ^ m_terrain.bridgeCount();
+        if (sig != m_bridgeSig) {
+            m_bridgeSig = sig;
+            m_bridgeObjects.clear();
+            for (std::int64_t key : m_terrain.exportBridges()) {
+                const auto cx = static_cast<std::int32_t>(key >> 32), cz = static_cast<std::int32_t>(static_cast<std::uint32_t>(key));
+                Transform t;
+                t.position = {(static_cast<float>(cx) + 0.5f) * Terrain::kBridgeCell, Terrain::kSeaLevel + 0.14f, (static_cast<float>(cz) + 0.5f) * Terrain::kBridgeCell};
+                m_bridgeObjects.push_back({m_plankMesh, t, /*solid=*/false});
+            }
+        }
+        m_structObjects.clear();
+        for (const Structure& s : m_world.structures()) {
+            Transform t;
+            t.position = {s.x, m_terrain.heightAt(s.x, s.z), s.z};
+            if (s.kind == StructureKind::Barricade) t.rotation.y = -glm::degrees(s.yaw);
+            m_structObjects.push_back({s.kind == StructureKind::Barricade ? m_barricadeMesh : m_trapMesh, t, /*solid=*/false});
+        }
     }
 
     // Еда: кусты на земле, ужимаются, когда их объедают (пустой -- маленький росток).
@@ -815,6 +895,7 @@ void Application::render() {
                 if (!far3) drawShadowCasters(m_animalObjects, lightFrustum);
                 drawShadowCasters(m_boulderObjects, lightFrustum);
                 drawShadowCasters(m_buildingObjects, lightFrustum);
+                if (!far3) { drawShadowCasters(m_structObjects, lightFrustum); drawShadowCasters(m_gearObjects, lightFrustum); drawShadowCasters(m_bridgeObjects, lightFrustum); }
                 if (!far3) drawShadowCasters(m_foodObjects, lightFrustum);
                 m_context->endShadowCascade(i);
             }
@@ -831,6 +912,9 @@ void Application::render() {
             drawObjects(m_boulderObjects, frustum);
             drawObjects(m_buildingObjects, frustum);
             drawObjects(m_foodObjects, frustum);
+            drawObjects(m_bridgeObjects, frustum);
+            drawObjects(m_structObjects, frustum);
+            drawObjects(m_gearObjects, frustum);
         }
 
         m_context->beginUIPass();
@@ -902,6 +986,7 @@ void Application::showToast(std::string text, bool error) {
 
 void Application::startedNewWorld() {
     m_currentSlot.clear();
+    m_bridgeSig     = ~0ull;
     m_playTime      = 0.0f;
     m_autosaveTimer = 0.0f;
     char name[40];
@@ -955,6 +1040,9 @@ bool Application::loadFromSlot(const std::string& slot) {
     m_buildingObjects.clear();
     m_animalObjects.clear();
     m_prevAnimalPos.clear();
+    m_bridgeSig = ~0ull;
+    m_gearObjects.clear();
+    m_structObjects.clear();
     m_inspectId = 0;
     m_inspectAnimal.reset();
     m_camera.restore(game.camera.target, game.camera.yaw, game.camera.pitch, game.camera.distance);
@@ -1280,7 +1368,12 @@ void Application::drawInspector(const CameraData& cam) {
         std::string kit = "Брёвен " + std::to_string(static_cast<int>(cr->wood));
         if (cr->hasSpear()) kit += " · копьё";
         if (cr->hasShield()) kit += " · щит";
-        if (cr->knows(kSkillSpear)) kit += cr->knows(kSkillShield) ? " · умеет: копьё, щит" : " · умеет: копьё";
+        {
+            std::string know;
+            for (auto [sk, nm] : {std::pair{kSkillSpear, "копьё"}, {kSkillShield, "щит"}, {kSkillBridge, "мост"}, {kSkillBarricade, "баррикада"}, {kSkillTrap, "ловушка"}})
+                if (cr->knows(sk)) { know += know.empty() ? "" : ", "; know += nm; }
+            if (!know.empty()) kit += " · умеет: " + know;
+        }
         dl->AddText(font, fs, {x0 + pad, y}, style::rgba(style::kDim), kit.c_str());
         y += fs * 1.35f;
     }
@@ -1527,6 +1620,9 @@ void Application::renderDebugUI() {
         std::size_t herb = 0, pred = 0;
         for (const Animal& a : m_world.fauna().animals()) (isPredator(a.species) ? pred : herb)++;
         const FaunaStats& fs = m_world.fauna().stats();
+        ImGui::Text("Planks %llu (bridge cells %zu), barricades %llu, traps set %llu / sprung %llu", static_cast<unsigned long long>(m_world.stats().planksLaid), m_terrain.bridgeCount(),
+                    static_cast<unsigned long long>(m_world.stats().barricadesBuilt), static_cast<unsigned long long>(m_world.stats().trapsSet),
+                    static_cast<unsigned long long>(m_world.fauna().stats().trapsTriggered));
         ImGui::Text("Trees felled %llu, spears %llu, shields %llu, stabs %llu, blocks %llu, learned %llu", static_cast<unsigned long long>(m_world.stats().treesFelled),
                     static_cast<unsigned long long>(m_world.stats().spearsMade), static_cast<unsigned long long>(m_world.stats().shieldsMade),
                     static_cast<unsigned long long>(m_world.stats().spearHits), static_cast<unsigned long long>(m_world.stats().shieldBlocks),

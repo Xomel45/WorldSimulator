@@ -100,6 +100,7 @@ const char* behaviorName(Behavior b) noexcept {
         case Behavior::Sabotage:  return "Мстит";
         case Behavior::Chop:      return "Рубит дерево";
         case Behavior::Craft:     return "Мастерит";
+        case Behavior::Build:     return "Строит";
         case Behavior::Count:     break;
     }
     return "?";
@@ -191,6 +192,7 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
             dec.move  = glm::vec2(std::cos(visionHeading), std::sin(visionHeading));
             dec.eat   = dec.pick = dec.serve = dec.chop = false;
             dec.craft = 0;
+            dec.build = 0;
             dec.alarm = std::max(dec.alarm, 0.8f);
             behavior  = Behavior::Flee;
         } else if (glm::length(dec.move) > 0.01f) {
@@ -201,6 +203,19 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
     }
     pickRequest  = dec.pick ? 1 : 0;   // мир выполнит (подобрать ягоды у куста / подсунуть обидчику)
     serveRequest = dec.serve ? 1 : 0;
+    buildRequest = 0;
+    if (dec.build != 0) {
+        buildProgress += dt / (dec.build == 1 ? 1.2f : (dec.build == 2 ? 3.0f : 2.0f));
+        if (buildProgress >= 1.0f) {
+            buildProgress = 0.0f;
+            buildRequest  = static_cast<std::uint8_t>(dec.build);
+            buildAt       = dec.buildAt;
+            buildYaw      = dec.buildYaw;
+            buildTimer    = dec.build == 1 ? 0.3f : (dec.build == 2 ? 25.0f : 40.0f);
+        }
+    } else {
+        buildProgress = 0.0f;
+    }
     chopRequest  = dec.chop ? 1 : 0;   // мир срубит дерево, когда набежит время (World::tick)
     dangerMemory = senses.predatorSeen ? 120.0f : std::max(0.0f, dangerMemory - dt);
     if (dec.craft != 0) {              // мастерит на месте: 4 с, потом орудие готово, брёвна потрачены
@@ -324,7 +339,7 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
     }
     position += step;
     velocity = dt > 0.0f ? step / dt : glm::vec3(0.0f);
-    if (terrain) position.y = terrain->heightAt(position.x, position.z);
+    if (terrain) position.y = terrain->surfaceAt(position.x, position.z);
     age += dt;
     if (age >= lifespan()) { alive = false; deathCause = 1; }
 

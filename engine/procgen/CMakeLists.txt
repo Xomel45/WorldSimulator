@@ -2,6 +2,7 @@ add_library(engine_procgen STATIC
     HouseGen.cpp
     TreeGen.cpp
     AnimalGen.cpp
+    StructGen.cpp
 )
 
 target_include_directories(engine_procgen PUBLIC

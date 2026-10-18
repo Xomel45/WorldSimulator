@@ -806,6 +806,27 @@ Creatures now cut trees down, carry logs, craft tools and fight predators with t
 - Debug window: `Trees felled / spears / shields / stabs / blocks / learned`; inspector shows logs, tools and known recipes.
 - Not done (next stages): warehouse/stockpile, barricades, traps, bridges, buckets (+ thirst), hunting for meat with the spear, visuals of carried logs/tools on the creature model, mods API for felling (`ctx:fell_trees`), replanting, sounds.
 
+### Stage 2: bridges, barricades, traps, visible gear
+
+- **Skills** grew to five (`kSkillSpear/Shield/Bridge/Barricade/Trap`, mask `kAllSkills = 31`): shield, barricade and trap need the spear first; the **bridge** is invented by hungry creatures whose heading ends at water
+  (`0.006/s`, else `0.0002/s`). Teaching/inspiration is one table (`Learn[]` in `World::tick`); same neighbour/family learning as before.
+- **Bridges live in `Terrain`**: a set of `kBridgeCell = 2` cells (`addBridge/bridgeAt/exportBridges/importBridges`, saved in the `TERR` tail after the felled trees). `Terrain::isUnderwater` is now
+  "below sea level **and no planks**" — so creatures *and animals* walk over bridges with no other change; `surfaceAt(x,z)` = ground, or sea level + 0.14 on planks (creature/animal `position.y`, rendering).
+  The water mesh is unaffected (chunks use `heightAt`).
+- **`Behavior::Build`** (`Creature::buildRequest/buildProgress/buildTimer`, executed by `World::tick` after `Creature::tick`):
+  *bridge* (score 2.6) when its goal (food target if hungry, else the exploring heading) meets water within 3.2 units and land lies within 18 beyond it → lays one plank (1 log, 1.2 s) on the first wet point, so it
+  extends the bridge plank by plank as it walks on (measured: crosses a ~6 unit lake with 4 logs); *barricade* (2.4; 3 logs, 3 s, cooldown 25 s) when a predator is 4-26 units away, perpendicular to its direction;
+  *trap* (2.4; 2 logs, 2 s, cooldown 40 s) while danger is remembered. `wantsWood` now uses `woodGoal()` (bridge-knowers keep 2 logs, danger-aware barricade/trap makers 3/2).
+- **Structures** (`sim/Structures.hpp`, `World::placeStructure/structures`, cap 240, ≥1.6 apart, ≤3 of a kind within 8 units, never on water): *Barricade* — a 3.6 x 1.1 segment; **animals cannot cross it**
+  (hard step block + look-ahead in `Fauna::tick`; creatures walk through — only animals are fenced); *Trap* — a **predator** within 1.1 units springs it: 0.45 damage, stunned 6 s (`Animal::stun`, not saved),
+  trap consumed (`FaunaStats::trapsTriggered`). `Fauna::tick` got `std::vector<Structure>*`. Saves **v8**: `STRC` section (structures), bridges in `TERR`, creature `buildProgress/buildTimer`.
+- **Visible**: `procgen/StructGen` (plank, barricade of 7 stakes + rails, spiked trap, spear, shield, 1-4 log bundles; `procgen_tests`). `Application` draws bridge cells (cached by seed+count), structures, and per creature a
+  spear (right hand), shield (left) and carried logs (back) in the creature's frame (`m_gearObjects`, casts shadows). Inspector shows logs/tools/known recipes; debug window shows planks/barricades/traps.
+  Debug: `WSIM_DEMO_CIV=1` (gear on all creatures near the origin + barricades, traps and a bridge over the nearest lake; `WSIM_CAM_AT` to look).
+- Measured (20 sim-min, 4 seeds): planks 0-28, barricades 0-8, traps 3-82 (a few sprung), predator kills of creatures still 0-2 per run.
+- Not done: **stockpile/warehouse** (logs are carried and crafted in place), buckets and thirst, barricade durability (predators don't attack it), creatures don't avoid their own traps (traps only affect animals),
+  bridges never decay and cannot be removed by powers, meat hunting, mods API, building sounds, creatures do not plan routes using bridges (they only build when blocked).
+
 ## Temporal upscaler and frame generation (`VulkanTemporal.cpp`, `taau.comp`, `framegen.comp`)
 
 Own implementation (not AMD's FSR 2/3): the official FidelityFX SDK builds with MSVC/`.bat` scripts, has HLSL shaders that
@@ -1216,7 +1237,8 @@ source of truth for the hex constants at the top of `MainMenu.cpp`.
 - [x] Saves (see "Saves")
 - [x] Creature intelligence v1: behavior layer, ecology (starvation, real mating), hazards, inspector
 - [x] Resources/tools stage 1: logging, spear, shield (see "Resources and tools")
-- [ ] Civilization stage 2: barricades, traps, bridges, buckets, stockpile
+- [x] Civilization stage 2: bridges, barricades, traps, visible gear (see "Stage 2")
+- [ ] Civilization stage 3: stockpile, buckets + thirst, meat hunting, houses for creatures
 - [ ] More powers (fire, rain, disasters, food, smite individuals), undo
 - [x] Sound: procedural synth + miniaudio (see "Sound")
 - [ ] Day/night cycle (lantern and `WSIM_NIGHT` are the hooks; sound ambience has a hook too)

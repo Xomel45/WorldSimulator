@@ -15,7 +15,7 @@ namespace wsim {
 
 // 1 -- первая версия; 2 -- состояние поведения существ (здоровье, перезарядка, занятие, память еды).
 // Файлы версии 1 читаются: новые поля берут значения по умолчанию.
-inline constexpr std::uint32_t kSaveVersion = 7;  // 7: ресурсы и орудия (STRM/TERR: срубленные деревья); 6: exploreTimer; 3: яд у существ; 4: вкус ягод по внешнему виду и недомогания; 5: зуб, ягоды в руках, последняя трапеза
+inline constexpr std::uint32_t kSaveVersion = 8;  // 8: постройки (мосты в TERR, баррикады/ловушки в STRC), умения моста/баррикады/ловушки; 7: ресурсы и орудия (STRM/TERR: срубленные деревья); 6: exploreTimer; 3: яд у существ; 4: вкус ягод по внешнему виду и недомогания; 5: зуб, ягоды в руках, последняя трапеза
 
 // Краткая сводка для списка сохранений: читается из заголовка без разбора всего мира.
 struct SaveMeta {
@@ -38,6 +38,7 @@ struct SaveGame {
     std::uint32_t               terrainSeed = 0;
     float                       terrainHalfSize = 100.0f;
     std::vector<Terrain::EditTileData> terrainEdits;
+    std::vector<std::int64_t>          bridges;       // настилы мостов (клетки Terrain::kBridgeCell), по возрастанию
     std::vector<std::int64_t>          felledTrees;   // срубленные деревья (ячейки Trees::kCell), по возрастанию
     WorldState                  world;
     std::vector<RigidBody>      bodies;

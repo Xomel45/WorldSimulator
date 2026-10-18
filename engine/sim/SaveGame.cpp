@@ -24,7 +24,7 @@ constexpr std::uint32_t tag(const char (&s)[5]) {
            static_cast<std::uint32_t>(s[3]) << 24;
 }
 constexpr std::uint32_t kTagTerrain = tag("TERR"), kTagWorld = tag("WRLD"), kTagPhysics = tag("PHYS"), kTagCamera = tag("CAMR"),
-                         kTagStream = tag("STRM"),   // потоковые кусты: время, загруженные ячейки, записи о спящих, происхождение кустов
+                         kTagStream = tag("STRM"), kTagStructs = tag("STRC"),   // потоковые кусты: время, загруженные ячейки, записи о спящих, происхождение кустов
                          kTagFauna = tag("FAUN"),    // дикие животные (старые сохранения без неё -- мир без зверей)
                          kTagBerries = tag("BRRY");  // вид ягод каждого куста (по порядку WRLD.food); старые сохранения -- без неё, все кусты малина
 
@@ -115,6 +115,9 @@ void writeCreature(ByteWriter& w, const Inhabitant& in, std::uint32_t version) {
     w.boolean(c.treeKnown);
     w.u32(static_cast<std::uint32_t>(c.treeCx));
     w.u32(static_cast<std::uint32_t>(c.treeCz));
+    if (version < 8) return;
+    w.f32(c.buildProgress);   // v8: стройка (запрос исполняется в тот же тик и не хранится)
+    w.f32(c.buildTimer);
 }
 
 bool readCreature(ByteReader& r, Inhabitant& in, std::uint32_t version) {
@@ -188,7 +191,7 @@ bool readCreature(ByteReader& r, Inhabitant& in, std::uint32_t version) {
     }
     if (version >= 7) {
         auto level = [&](float hi) { const float v = r.f32(); return std::isfinite(v) ? std::clamp(v, 0.0f, hi) : 0.0f; };
-        c.skills       = static_cast<std::uint8_t>(r.u8() & (kSkillSpear | kSkillShield));
+        c.skills       = static_cast<std::uint8_t>(r.u8() & kAllSkills);
         c.wood         = level(kMaxWood);
         c.spearDur     = level(1.0f);
         c.shieldDur    = level(1.0f);
@@ -202,6 +205,11 @@ bool readCreature(ByteReader& r, Inhabitant& in, std::uint32_t version) {
         c.treeKnown = r.boolean();
         c.treeCx = static_cast<std::int32_t>(r.u32());
         c.treeCz = static_cast<std::int32_t>(r.u32());
+    }
+    if (version >= 8) {
+        auto level = [&](float hi) { const float v = r.f32(); return std::isfinite(v) ? std::clamp(v, 0.0f, hi) : 0.0f; };
+        c.buildProgress = level(1.0f);
+        c.buildTimer    = level(60.0f);
     }
     return r.ok();
 }
@@ -221,6 +229,7 @@ SaveGame captureSave(const std::string& name, std::int64_t unixTime, float playS
     s.terrainHalfSize = terrain.halfSize();
     s.terrainEdits    = terrain.exportEdits();
     s.felledTrees     = terrain.exportFelled();
+    s.bridges         = terrain.exportBridges();
     s.world           = world.exportState();
     s.bodies          = physics.bodies();
     s.camera          = camera;
@@ -249,6 +258,8 @@ std::vector<std::uint8_t> serializeSave(const SaveGame& g, std::uint32_t version
         }
         b.u32(static_cast<std::uint32_t>(g.felledTrees.size()));   // в конце секции: старые файлы без него читаются
         for (std::int64_t k : g.felledTrees) b.i64(k);
+        b.u32(static_cast<std::uint32_t>(g.bridges.size()));       // v8
+        for (std::int64_t k : g.bridges) b.i64(k);
         section(payload, kTagTerrain, b);
     }
     {
@@ -291,6 +302,12 @@ std::vector<std::uint8_t> serializeSave(const SaveGame& g, std::uint32_t version
         b.u32(static_cast<std::uint32_t>(f.explored.size()));   // заселённые ячейки мира без границ (в конце: старые файлы без них читаются)
         for (std::int64_t k : f.explored) b.i64(k);
         section(payload, kTagFauna, b);
+    }
+    {
+        ByteWriter b;
+        b.u32(static_cast<std::uint32_t>(g.world.structures.size()));
+        for (const Structure& s : g.world.structures) { b.u8(static_cast<std::uint8_t>(s.kind)); b.f32(s.x); b.f32(s.z); b.f32(s.yaw); b.f32(s.hp); }
+        section(payload, kTagStructs, b);
     }
     {
         ByteWriter b;
@@ -415,6 +432,10 @@ bool parseSave(std::span<const std::uint8_t> bytes, SaveGame& out, std::string& 
                 const std::uint32_t m = sr.count(1000000, 8);
                 for (std::uint32_t i = 0; i < m && sr.ok(); ++i) g.felledTrees.push_back(sr.i64());
             }
+            if (sr.ok() && sr.remaining() >= 4) {
+                const std::uint32_t m = sr.count(1000000, 8);
+                for (std::uint32_t i = 0; i < m && sr.ok(); ++i) g.bridges.push_back(sr.i64());
+            }
             haveTerrain = sr.ok();
         } else if (t == kTagWorld) {
             g.world.rng    = sr.str(1 << 16);
@@ -483,6 +504,17 @@ bool parseSave(std::span<const std::uint8_t> bytes, SaveGame& out, std::string& 
             if (sr.remaining() >= 4) {   // исследованные ячейки (добавлены позже секции)
                 const std::uint32_t m = sr.count(500000, 8);
                 for (std::uint32_t i = 0; i < m && sr.ok(); ++i) f.explored.push_back(sr.i64());
+            }
+        } else if (t == kTagStructs) {
+            const std::uint32_t m = sr.count(World::kMaxStructures, 17);
+            for (std::uint32_t i = 0; i < m && sr.ok(); ++i) {
+                Structure st;
+                const std::uint8_t kind = sr.u8();
+                st.x = sr.f32(); st.z = sr.f32(); st.yaw = sr.f32(); st.hp = sr.f32();
+                if (kind != 1 && kind != 2) { error = "файл повреждён (постройка)"; return false; }
+                if (!std::isfinite(st.x) || !std::isfinite(st.z) || !std::isfinite(st.yaw) || !std::isfinite(st.hp)) { error = "файл повреждён (постройка)"; return false; }
+                st.kind = static_cast<StructureKind>(kind);
+                g.world.structures.push_back(st);
             }
         } else if (t == kTagStream) {
             WorldState& w = g.world;
@@ -555,6 +587,7 @@ bool restoreSave(const SaveGame& save, Terrain& terrain, World& world, PhysicsWo
     Terrain t(save.terrainHalfSize, save.terrainSeed);
     if (!t.importEdits(save.terrainEdits)) return false;
     t.importFelled(save.felledTrees);
+    t.importBridges(save.bridges);
     World w(0);
     if (!w.importState(save.world)) return false;
     // Всё прошло -- подменяем (иначе живой мир остаётся нетронутым).
