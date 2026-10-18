@@ -6,6 +6,7 @@
 #include <array>
 #include <cstdint>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace wsim {
@@ -54,6 +55,15 @@ public:
     [[nodiscard]] float halfSize() const noexcept { return m_halfSize; }
     [[nodiscard]] std::uint32_t seed() const noexcept { return m_seed; }
 
+    // Срубленные деревья. Деревья -- чистая функция сида (sim/Trees), поэтому срубленное хранится как множество ячеек Trees::kCell:
+    // дерево ячейки (cx, cz), если она срублена, не существует (ни рисуется, ни мешает). fellTree возвращает область, чанки
+    // которой надо пересобрать. Как и правки рельефа, не зависит от процедурной основы и сохраняется.
+    [[nodiscard]] bool treeFelled(std::int32_t cx, std::int32_t cz) const noexcept;
+    Rect fellTree(std::int32_t cx, std::int32_t cz);
+    [[nodiscard]] std::size_t felledCount() const noexcept { return m_felled.size(); }
+    [[nodiscard]] std::vector<std::int64_t> exportFelled() const;   // по возрастанию
+    void importFelled(const std::vector<std::int64_t>& keys);
+
     // Сохранения: правки игрока плитками (только ненулевые). Основу рельефа восстанавливает сид.
     struct EditTileData {
         int                tx = 0, tz = 0;
@@ -71,6 +81,7 @@ private:
     static constexpr int kEditTile = 32;
     struct EditTile { std::array<float, kEditTile * kEditTile> v{}; };
     std::unordered_map<std::int64_t, EditTile> m_edits;
+    std::unordered_set<std::int64_t>           m_felled;
     [[nodiscard]] float editAt(int ix, int iz) const noexcept;
     float&              editRef(int ix, int iz);
     [[nodiscard]] float editHeightAt(float x, float z) const noexcept;

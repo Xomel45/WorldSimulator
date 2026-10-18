@@ -560,6 +560,7 @@ void Application::update(float dt) {
         m_world.setFocus(std::span<const glm::vec2>(&focus, 1));
     }
     m_world.tick(dt, &m_terrain);
+    for (const auto& rect : m_world.takeDirty()) { if (m_chunks) m_chunks->invalidate(rect); }   // срубленные деревья: чанки пересобираются
 
     // Пересобираем визуальные объекты существ из текущей популяции -- дёшево:
     // SceneObject это shared_ptr на уже созданный меш + Transform, никакой
@@ -1245,7 +1246,7 @@ void Application::drawInspector(const CameraData& cam) {
         {"Общение", cr->needs.social, 0xb7a6ff, false},
         {"Яд", cr->toxin, 0xa6e06b, true},
     };
-    const float H = pad * 2 + fsTitle * 1.3f + fs * 1.5f + rowH * 7 + fs * (6.2f + (cr->grudge > 0.3f ? 1.35f : 0.0f));
+    const float H = pad * 2 + fsTitle * 1.3f + fs * 1.5f + rowH * 7 + fs * (7.55f + (cr->grudge > 0.3f ? 1.35f : 0.0f));
     for (int g = 3; g >= 1; --g)
         dl->AddRect({x0 - 0.2f * u * g, y0 - 0.2f * u * g}, {x0 + W + 0.2f * u * g, y0 + H + 0.2f * u * g}, style::rgba(style::kGlow, 0.09f * (1.0f - 0.25f * (g - 1))), 1.0f * u + 0.2f * u * g, 0, 1.5f);
     dl->AddRectFilled({x0, y0}, {x0 + W, y0 + H}, style::rgba(style::kRightBg, 0.93f), 1.0f * u);
@@ -1275,6 +1276,14 @@ void Application::drawInspector(const CameraData& cam) {
     std::snprintf(buf, sizeof buf, "Храбрость %.0f%% · общительность %.0f%%", cr->boldness() * 100.0f, cr->sociability() * 100.0f);
     dl->AddText(font, fs, {x0 + pad, y}, style::rgba(style::kDim), buf);
     y += fs * 1.35f;
+    {   // Ресурсы и орудия.
+        std::string kit = "Брёвен " + std::to_string(static_cast<int>(cr->wood));
+        if (cr->hasSpear()) kit += " · копьё";
+        if (cr->hasShield()) kit += " · щит";
+        if (cr->knows(kSkillSpear)) kit += cr->knows(kSkillShield) ? " · умеет: копьё, щит" : " · умеет: копьё";
+        dl->AddText(font, fs, {x0 + pad, y}, style::rgba(style::kDim), kit.c_str());
+        y += fs * 1.35f;
+    }
     // Что помнит о ягодах: сколько видов пробовало, какую любит больше всего и какую обходит.
     {
         // Недомогания: то, что сейчас с существом (по их уровням).
@@ -1518,6 +1527,10 @@ void Application::renderDebugUI() {
         std::size_t herb = 0, pred = 0;
         for (const Animal& a : m_world.fauna().animals()) (isPredator(a.species) ? pred : herb)++;
         const FaunaStats& fs = m_world.fauna().stats();
+        ImGui::Text("Trees felled %llu, spears %llu, shields %llu, stabs %llu, blocks %llu, learned %llu", static_cast<unsigned long long>(m_world.stats().treesFelled),
+                    static_cast<unsigned long long>(m_world.stats().spearsMade), static_cast<unsigned long long>(m_world.stats().shieldsMade),
+                    static_cast<unsigned long long>(m_world.stats().spearHits), static_cast<unsigned long long>(m_world.stats().shieldBlocks),
+                    static_cast<unsigned long long>(m_world.stats().skillsLearned));
         ImGui::Text("Animals: %zu (herbivores %zu, predators %zu), kills %llu, creatures bitten %llu, mauled %llu", m_world.fauna().count(), herb, pred,
                     static_cast<unsigned long long>(fs.kills), static_cast<unsigned long long>(fs.creatureBites),
                     static_cast<unsigned long long>(m_world.stats().deathsPredation));

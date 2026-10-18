@@ -117,6 +117,28 @@ std::int64_t tileKey(int tx, int tz) noexcept {
 int floorDiv(int a, int b) noexcept { return a / b - ((a % b != 0) && ((a < 0) != (b < 0)) ? 1 : 0); }
 }  // namespace
 
+namespace {
+std::int64_t treeKey(std::int32_t cx, std::int32_t cz) noexcept { return (static_cast<std::int64_t>(cx) << 32) | static_cast<std::uint32_t>(cz); }
+constexpr float kTreeCell = 7.0f;   // = Trees::kCell (Trees.hpp включает Terrain.hpp, поэтому число продублировано; тест следит за равенством)
+}  // namespace
+
+bool Terrain::treeFelled(std::int32_t cx, std::int32_t cz) const noexcept { return m_felled.find(treeKey(cx, cz)) != m_felled.end(); }
+
+Terrain::Rect Terrain::fellTree(std::int32_t cx, std::int32_t cz) {
+    m_felled.insert(treeKey(cx, cz));
+    // Крона шире ячейки: пересобираем с запасом.
+    return {static_cast<float>(cx) * kTreeCell - 3.0f, static_cast<float>(cz) * kTreeCell - 3.0f, static_cast<float>(cx + 1) * kTreeCell + 3.0f,
+            static_cast<float>(cz + 1) * kTreeCell + 3.0f};
+}
+
+std::vector<std::int64_t> Terrain::exportFelled() const {
+    std::vector<std::int64_t> out(m_felled.begin(), m_felled.end());
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+void Terrain::importFelled(const std::vector<std::int64_t>& keys) { m_felled.clear(); m_felled.insert(keys.begin(), keys.end()); }
+
 float Terrain::editAt(int ix, int iz) const noexcept {
     const int tx = floorDiv(ix, kEditTile), tz = floorDiv(iz, kEditTile);
     const auto it = m_edits.find(tileKey(tx, tz));

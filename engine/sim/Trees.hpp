@@ -22,6 +22,7 @@ struct TreeInstance {
     float       yaw = 0.0f;       // градусы
     TreeSpecies species = TreeSpecies::Oak;
     std::uint8_t variant = 0;     // 0..kTreeVariants-1
+    std::int32_t cx = 0, cz = 0;  // ячейка Trees::kCell (по ней дерево срубается: Terrain::fellTree)
 };
 
 // Деревья -- чистая функция от сида рельефа и координат, как и сам рельеф: ничего не хранится, не сохраняется
@@ -52,6 +53,9 @@ public:
     // Попадает ли точка в ствол дерева (для существ и обхода препятствий). Без blocker: невидимые
     // деревья под домами остались бы препятствиями -- мелочь, зато дёшево.
     [[nodiscard]] static bool blocksPoint(const Terrain& terrain, float x, float z, float radius = kTrunkRadius);
+
+    // Ближайшее стоящее (не срубленное, годное по рельефу) дерево не дальше radius; false -- нет.
+    [[nodiscard]] static bool nearest(const Terrain& terrain, float x, float z, float radius, TreeInstance& out);
 
     // Лесистость 0..1 в точке (для тестов и отладки).
     [[nodiscard]] static float density(std::uint32_t seed, float x, float z);

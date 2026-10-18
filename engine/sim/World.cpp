@@ -1,5 +1,7 @@
 #include "sim/World.hpp"
 
+#include "sim/Trees.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -422,7 +424,8 @@ std::size_t World::removeBuildings(float x, float z, float radius) {
     return before - m_buildings.size();
 }
 
-void World::tick(float dt, const Terrain* terrain) {
+void World::tick(float dt, Terrain* mutableTerrain) {
+    const Terrain* terrain = mutableTerrain;
     m_time += dt;
     if (terrain && m_streaming) streamBushes(*terrain, dt);
 
@@ -451,8 +454,16 @@ void World::tick(float dt, const Terrain* terrain) {
             if (it == idIndex.end()) continue;
             Creature& c = m_population[it->second].creature;
             if (!c.alive) continue;
-            c.health -= b.damage;
+            float damage = b.damage;
+            if (c.hasShield()) { damage *= 0.35f; c.shieldDur = std::max(0.0f, c.shieldDur - 0.34f); ++m_stats.shieldBlocks; }
+            c.health -= damage;
             c.needs.fear = 1.0f;
+            c.dangerMemory = 120.0f;
+            if (c.hasSpear() && b.attackerId != 0) {   // копьё: укушенный бьёт в ответ, хищник ранен и отступает
+                m_fauna.hurt(b.attackerId, 0.5f);
+                c.spearDur = std::max(0.0f, c.spearDur - 0.25f);
+                ++m_stats.spearHits;
+            }
             if (c.health <= 0.0f) { c.alive = false; c.deathCause = 5; }
         }
     }
@@ -549,6 +560,31 @@ void World::tick(float dt, const Terrain* terrain) {
             senses.threatDir       = dirXZ(selfPos, an.position);
             senses.threatProximity = std::max(senses.threatProximity, std::clamp(1.0f - edge / range, 0.0f, 1.0f));
             senses.threatDist      = edge;
+            senses.predatorSeen    = true;
+        }
+
+        // Дерево для рубки: ищем (редко, результат кэшируется в существе), только пока оно нужно.
+        if (terrain && self.wantsWood()) {
+            if (self.treeKnown && terrain->treeFelled(self.treeCx, self.treeCz)) self.treeKnown = false;   // срубил кто-то другой
+            self.treeSearch -= dt;
+            if (!self.treeKnown && self.treeSearch <= 0.0f) {
+                self.treeSearch = 1.5f;
+                TreeInstance tree;
+                if (Trees::nearest(*terrain, selfPos.x, selfPos.z, 34.0f, tree)) {
+                    self.treeKnown = true;
+                    self.treeCx = tree.cx;
+                    self.treeCz = tree.cz;
+                    self.treeX = tree.x;
+                    self.treeZ = tree.z;
+                }
+            }
+            if (self.treeKnown) {
+                const float d = std::hypot(self.treeX - selfPos.x, self.treeZ - selfPos.z);
+                if (d > 45.0f) self.treeKnown = false;
+                else { senses.treeDist = std::max(d - 0.3f, 0.0f); senses.treePos = {self.treeX, selfPos.y, self.treeZ}; }
+            }
+        } else {
+            self.treeKnown = false;
         }
 
         // Соседи: толпа своих/чужих, агрегированные сигналы (прошлый тик), ближайший ГОТОВЫЙ
@@ -674,8 +710,57 @@ void World::tick(float dt, const Terrain* terrain) {
             if (badBushK != liveFoodIdx.size()) { senses.badFoodDist = badBushDist; senses.badFoodPos = m_food[liveFoodIdx[badBushK]].position; }
         }
 
+        const bool hadSpear = self.hasSpear(), hadShield = self.hasShield();
         const BrainOutputs out = self.tick(dt, senses);
         freshOutputs[i]        = out;
+        if (!hadSpear && self.hasSpear()) ++m_stats.spearsMade;
+        if (!hadShield && self.hasShield()) ++m_stats.shieldsMade;
+
+        // Рубка: пока стоит у дерева, набегает прогресс; срубленное исчезает (Terrain::fellTree), брёвна -- в руки.
+        if (self.chopRequest && self.treeKnown && mutableTerrain && senses.treeDist <= 2.2f) {
+            self.chopProgress += dt / 3.0f;
+            if (self.chopProgress >= 1.0f) {
+                TreeInstance tree;
+                float yield = 1.0f;
+                if (Trees::nearest(*terrain, self.treeX, self.treeZ, 0.6f, tree)) yield = std::clamp(std::round(tree.scale * 1.6f), 1.0f, 3.0f);
+                self.wood = std::min(kMaxWood, self.wood + yield);
+                self.chopProgress = 0.0f;
+                self.treeKnown = false;
+                m_dirty.push_back(mutableTerrain->fellTree(self.treeCx, self.treeCz));
+                ++m_stats.treesFelled;
+            }
+        } else {
+            self.chopProgress = 0.0f;
+        }
+
+        // Знания: открытие в опасности (или очень редко от скуки) и передача соседям и потомству по наблюдению.
+        {
+            const auto tickNo = static_cast<std::uint64_t>(m_time * 60.0 + 0.5);
+            auto roll = [&](std::uint64_t salt, float perSecond) {
+                std::uint64_t h = (self.id * 0x9E3779B97F4A7C15ull) ^ (tickNo * 0xBF58476D1CE4E5B9ull) ^ (salt * 0x94D049BB133111EBull);
+                h ^= h >> 31; h *= 0x94D049BB133111EBull; h ^= h >> 29;
+                return static_cast<float>(h & 0xFFFFFF) / 16777216.0f < perSecond * dt;
+            };
+            const float inspiration = (0.0004f + 0.012f * std::clamp(self.dangerMemory / 120.0f, 0.0f, 1.0f)) * (0.5f + self.curiosity());
+            if (!self.knows(kSkillSpear) && roll(1, inspiration)) { self.skills |= kSkillSpear; ++m_stats.skillsLearned; }
+            else if (self.knows(kSkillSpear) && !self.knows(kSkillShield) && roll(2, inspiration * 0.5f)) { self.skills |= kSkillShield; ++m_stats.skillsLearned; }
+            if (self.skills != (kSkillSpear | kSkillShield)) {
+                forEachNearby(
+                    creatureGrid, selfPos, 8.0f, [this](std::size_t j) { return m_population[j].creature.position; },
+                    [&](std::size_t j, float) {
+                        if (j == i) return;
+                        const Creature& o = m_population[j].creature;
+                        const bool family = o.id == self.bondedPartnerId || self.id == o.parentIds[0] || self.id == o.parentIds[1] ||
+                                            o.id == self.parentIds[0] || o.id == self.parentIds[1];
+                        for (Skill sk : {kSkillSpear, kSkillShield})
+                            if (o.knows(sk) && !self.knows(sk) && (sk == kSkillSpear || self.knows(kSkillSpear)) &&
+                                roll(10 + sk, (family ? 0.06f : 0.02f) * (0.5f + self.curiosity()))) {
+                                self.skills |= sk;
+                                ++m_stats.skillsLearned;
+                            }
+                    });
+            }
+        }
 
         // Месть: взять ягоды у плохого куста / подсунуть обидчику (решение принял слой поведения, исполняет мир).
         if (self.pickRequest && badBushK != liveFoodIdx.size() && badBushDist <= kInteractRadius) {

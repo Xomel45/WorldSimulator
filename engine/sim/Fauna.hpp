@@ -72,7 +72,7 @@ struct Animal {
     bool          targetIsCreature = false;
     float         sinceBite = 100.0f;   // сколько прошло с последнего укуса существа (чтобы засчитать добычу)
     bool          alive = true;
-    std::uint8_t  deathCause = 0;       // 1 старость, 2 голод, 3 съеден, 4 убит богом
+    std::uint8_t  deathCause = 0;       // 1 старость, 2 голод, 3 съеден, 4 убит богом, 5 заколот копьём
 };
 
 // Сводка мира для животных: существа (позиции для страха/охоты) и опасности наружу.
@@ -83,6 +83,7 @@ struct CreatureView {
 struct Bite {
     std::uint64_t creatureId = 0;
     float         damage = 0.0f;
+    std::uint64_t attackerId = 0;   // кто укусил (копьё отвечает ударом)
 };
 
 struct FaunaStats {
@@ -118,6 +119,9 @@ public:
     // (раз и навсегда -- ячейка запоминается как исследованная), а вымирающие виды пополняются кольцом вокруг этих точек.
     void tick(float dt, const Terrain* terrain, std::span<const CreatureView> creatures, Rng& rng, float halfSize, std::vector<Bite>& bites,
               std::span<const glm::vec2> focus = {});
+
+    // Удар по животному (копьё существа): здоровье падает, раненый убегает; убитое снимается со следующим шагом (deathCause 5).
+    void hurt(std::uint64_t id, float damage);
 
     // Сохранение.
     struct State {

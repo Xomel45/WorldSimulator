@@ -789,6 +789,23 @@ infinite pure functions of the seed — so berries stopped at the square's edge 
 - Not done: creatures far from the camera still simulate every tick (no level of detail for the sim); animals have no sleep state and do not despawn far away; houses, boulders and
   terrain edits are not streamed (they are global lists / sparse tiles); the creature `homePosition` pull keeps most of them near their birthplace (mean distance ~80-100).
 
+## Resources and tools (stage 1 of civilization: logging, spear, shield)
+
+Creatures now cut trees down, carry logs, craft tools and fight predators with them. Code: `Creature` (fields), `Behavior::Chop/Craft`, `World::tick`, `Terrain::fellTree`, `Trees::nearest`, tests in `resources_tests`.
+- **Felled trees**: trees are a pure function of the seed, so a felled tree is stored as a *set of `Trees::kCell` cells* in `Terrain` (`fellTree/treeFelled/exportFelled/importFelled`, next to the edit tiles; `Trees::candidate`
+  returns "no tree" for a felled cell). `fellTree` returns the rect to rebuild; `World` queues it (`takeDirty()`), `Application` calls `TerrainChunks::invalidate` after each tick. **`World::tick` now takes a non-const `Terrain*`**.
+  Saved in the `TERR` section tail (list after the edit tiles; old files without it load fine). `TreeInstance` got `cx, cz` (its cell).
+- **Inventory/tools on `Creature`**: `wood` (max `kMaxWood=4`), `spearDur/shieldDur` (1 = new, 0 = none), `skills` mask (`kSkillSpear`, `kSkillShield`; *chopping is innate*), `dangerMemory` (120 s after seeing a predator;
+  also set by a bite), tree-search cache (`treeKnown/treeCx/Cz/X/Z/treeSearch`, managed by the world). Save format **v7** (creature tail); everything is clamped on load.
+- **Behavior**: `Chop` (score `0.55 + 1.3·danger`, only if it knows a recipe it lacks the tool for and needs wood, not hungry/afraid/tired) walks to the nearest tree (`World` searches `Trees::nearest` radius 34 every 1.5 s, only for creatures
+  that want wood) and chops 3 s (`chopRequest`; yield 1-3 logs by tree scale); `Craft` (score `1.2 + 1.2·danger`) stands 4 s and turns 2 logs into a spear or 3 into a shield (`Creature::tick`).
+- **Knowledge** (`World::tick`, hash rolls, no RNG consumption): inspiration `(0.0004 + 0.012·danger)·(0.5+curiosity)` per second (shield only after the spear, half rate); learning from a neighbour within 8 units
+  `0.02·(0.5+curiosity)` per second, ×3 for family. No forgetting; children learn from parents by proximity (not inherited).
+- **Combat**: `Bite` carries `attackerId`. A shield cuts bite damage to 35% and loses 0.34 durability per block; a spear stabs back for 0.5 (`Fauna::hurt`: predator flees for 6 s, dies at 0 health, deathCause 5) and loses 0.25 per hit.
+- Measured (20 sim-min, 4 seeds): 20-60% of creatures know a recipe after 5 min, 30-290 trees felled, ~0-5 stabs (predators are rare), no population collapse (seed 11 climbs towards the 200 cap).
+- Debug window: `Trees felled / spears / shields / stabs / blocks / learned`; inspector shows logs, tools and known recipes.
+- Not done (next stages): warehouse/stockpile, barricades, traps, bridges, buckets (+ thirst), hunting for meat with the spear, visuals of carried logs/tools on the creature model, mods API for felling (`ctx:fell_trees`), replanting, sounds.
+
 ## Temporal upscaler and frame generation (`VulkanTemporal.cpp`, `taau.comp`, `framegen.comp`)
 
 Own implementation (not AMD's FSR 2/3): the official FidelityFX SDK builds with MSVC/`.bat` scripts, has HLSL shaders that
@@ -1198,6 +1215,8 @@ source of truth for the hex constants at the top of `MainMenu.cpp`.
 - [x] Lantern, boulder physics, houses (procgen), upscaler settings, Windows cross-build
 - [x] Saves (see "Saves")
 - [x] Creature intelligence v1: behavior layer, ecology (starvation, real mating), hazards, inspector
+- [x] Resources/tools stage 1: logging, spear, shield (see "Resources and tools")
+- [ ] Civilization stage 2: barricades, traps, bridges, buckets, stockpile
 - [ ] More powers (fire, rain, disasters, food, smite individuals), undo
 - [x] Sound: procedural synth + miniaudio (see "Sound")
 - [ ] Day/night cycle (lantern and `WSIM_NIGHT` are the hooks; sound ambience has a hook too)

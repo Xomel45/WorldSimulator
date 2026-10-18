@@ -128,6 +128,15 @@ Decision decide(Creature& c, const SenseInputs& s, const BrainOutputs& raw, floa
     if (c.grudge > 0.5f && c.grudgeId != 0 && c.health > 0.5f && n.hunger < 0.6f && (carrying ? targetSeen : badSeen))
         S(Behavior::Sabotage) = 2.4f * (c.grudge - 0.25f) * std::max(0.1f, 1.3f - c.empathy());
 
+    // Ресурсы: умеющий мастерить, но без орудия, рубит дерево (нужно брёвен на копьё/щит), потом мастерит. Опасность рядом
+    // (хищника видели недавно) подстёгивает; голод, страх и усталость важнее.
+    const float danger01 = std::clamp(c.dangerMemory / 120.0f, 0.0f, 1.0f);
+    const bool  treeSeen = s.treeDist < kNoTarget;
+    const int   tool = c.nextTool();
+    const bool  canCraft = tool != 0 && c.wood >= c.woodNeeded();
+    if (canCraft && n.fear < 0.4f && n.hunger < 0.7f) S(Behavior::Craft) = 1.2f + 1.2f * danger01;
+    if (!canCraft && c.wantsWood() && treeSeen && n.fear < 0.4f && n.hunger < 0.6f && tired < 0.65f) S(Behavior::Chop) = 0.55f + 1.3f * danger01;
+
     // Базовая линия: бродит, любопытные -- охотнее; идущий искать новые места не бросает это на полпути.
     S(Behavior::Wander) = 0.3f + c.curiosity() * c.boredomLevel() * 0.8f + (c.exploreTimer > 0.0f ? 0.6f : 0.0f);
 
@@ -203,6 +212,12 @@ Decision decide(Creature& c, const SenseInputs& s, const BrainOutputs& raw, floa
                 else speed = 0.6f * std::clamp(s.badFoodDist / 4.0f, 0.3f, 1.0f);
             }
             break;
+        case Behavior::Chop:
+            dir = dirTo(c.position, s.treePos);
+            if (s.treeDist <= 1.8f) { speed = 0.0f; d.chop = true; }
+            else speed = 0.7f * std::clamp(s.treeDist / 4.0f, 0.35f, 1.0f);
+            break;
+        case Behavior::Craft:     speed = 0.0f; d.craft = tool; break;
         case Behavior::Count:     break;
     }
 

@@ -108,6 +108,13 @@ void writeCreature(ByteWriter& w, const Inhabitant& in, std::uint32_t version) {
     w.f32(c.carryAge);
     if (version < 6) return;
     w.f32(c.exploreTimer);  // v6: уход от кормовой точки
+    if (version < 7) return;
+    // v7: ресурсы и орудия, кэш дерева для рубки.
+    w.u8(c.skills);
+    for (float v : {c.wood, c.spearDur, c.shieldDur, c.dangerMemory, c.chopProgress, c.craftProgress, c.treeX, c.treeZ, c.treeSearch}) w.f32(v);
+    w.boolean(c.treeKnown);
+    w.u32(static_cast<std::uint32_t>(c.treeCx));
+    w.u32(static_cast<std::uint32_t>(c.treeCz));
 }
 
 bool readCreature(ByteReader& r, Inhabitant& in, std::uint32_t version) {
@@ -179,6 +186,23 @@ bool readCreature(ByteReader& r, Inhabitant& in, std::uint32_t version) {
         const float e = r.f32();
         c.exploreTimer = std::isfinite(e) ? std::clamp(e, 0.0f, 60.0f) : 0.0f;
     }
+    if (version >= 7) {
+        auto level = [&](float hi) { const float v = r.f32(); return std::isfinite(v) ? std::clamp(v, 0.0f, hi) : 0.0f; };
+        c.skills       = static_cast<std::uint8_t>(r.u8() & (kSkillSpear | kSkillShield));
+        c.wood         = level(kMaxWood);
+        c.spearDur     = level(1.0f);
+        c.shieldDur    = level(1.0f);
+        c.dangerMemory = level(300.0f);
+        c.chopProgress = level(1.0f);
+        c.craftProgress = level(1.0f);
+        const float tx = r.f32(), tz = r.f32();
+        c.treeX = std::isfinite(tx) ? tx : 0.0f;
+        c.treeZ = std::isfinite(tz) ? tz : 0.0f;
+        c.treeSearch = level(10.0f);
+        c.treeKnown = r.boolean();
+        c.treeCx = static_cast<std::int32_t>(r.u32());
+        c.treeCz = static_cast<std::int32_t>(r.u32());
+    }
     return r.ok();
 }
 
@@ -196,6 +220,7 @@ SaveGame captureSave(const std::string& name, std::int64_t unixTime, float playS
     s.terrainSeed     = terrain.seed();
     s.terrainHalfSize = terrain.halfSize();
     s.terrainEdits    = terrain.exportEdits();
+    s.felledTrees     = terrain.exportFelled();
     s.world           = world.exportState();
     s.bodies          = physics.bodies();
     s.camera          = camera;
@@ -222,6 +247,8 @@ std::vector<std::uint8_t> serializeSave(const SaveGame& g, std::uint32_t version
             b.u32(static_cast<std::uint32_t>(t.tz));
             b.floats(t.values);
         }
+        b.u32(static_cast<std::uint32_t>(g.felledTrees.size()));   // в конце секции: старые файлы без него читаются
+        for (std::int64_t k : g.felledTrees) b.i64(k);
         section(payload, kTagTerrain, b);
     }
     {
@@ -384,6 +411,10 @@ bool parseSave(std::span<const std::uint8_t> bytes, SaveGame& out, std::string& 
                 d.values = sr.floats(Terrain::kEditTileSize * Terrain::kEditTileSize);
                 g.terrainEdits.push_back(std::move(d));
             }
+            if (sr.ok() && sr.remaining() >= 4) {
+                const std::uint32_t m = sr.count(1000000, 8);
+                for (std::uint32_t i = 0; i < m && sr.ok(); ++i) g.felledTrees.push_back(sr.i64());
+            }
             haveTerrain = sr.ok();
         } else if (t == kTagWorld) {
             g.world.rng    = sr.str(1 << 16);
@@ -523,6 +554,7 @@ bool parseSave(std::span<const std::uint8_t> bytes, SaveGame& out, std::string& 
 bool restoreSave(const SaveGame& save, Terrain& terrain, World& world, PhysicsWorld& physics) {
     Terrain t(save.terrainHalfSize, save.terrainSeed);
     if (!t.importEdits(save.terrainEdits)) return false;
+    t.importFelled(save.felledTrees);
     World w(0);
     if (!w.importState(save.world)) return false;
     // Всё прошло -- подменяем (иначе живой мир остаётся нетронутым).

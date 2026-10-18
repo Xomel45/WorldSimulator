@@ -42,6 +42,7 @@ struct Candidate {
 Candidate candidate(const Terrain& terrain, int cx, int cz) {
     const std::uint32_t seed = terrain.seed();
     Candidate c;
+    if (terrain.treeFelled(cx, cz)) return c;   // срублено (Terrain::fellTree)
     const float jx = 0.12f + 0.76f * unit(cellHash(seed, cx, cz, 1)), jz = 0.12f + 0.76f * unit(cellHash(seed, cx, cz, 2));
     const float x = (static_cast<float>(cx) + jx) * Trees::kCell, z = (static_cast<float>(cz) + jz) * Trees::kCell;
     const float d = Trees::density(seed, x, z);
@@ -69,6 +70,8 @@ Candidate candidate(const Terrain& terrain, int cx, int cz) {
 
     c.exists = true;
     TreeInstance& t = c.tree;
+    t.cx      = cx;
+    t.cz      = cz;
     t.x       = x;
     t.z       = z;
     t.scale   = 0.8f + 0.5f * unit(cellHash(seed, cx, cz, 4));
@@ -143,6 +146,24 @@ std::vector<TreeInstance> Trees::inRect(const Terrain& terrain, float x0, float 
             out.push_back(t);
         }
     return out;
+}
+
+bool Trees::nearest(const Terrain& terrain, float x, float z, float radius, TreeInstance& out) {
+    const int cx0 = static_cast<int>(std::floor((x - radius) / kCell)), cx1 = static_cast<int>(std::floor((x + radius) / kCell));
+    const int cz0 = static_cast<int>(std::floor((z - radius) / kCell)), cz1 = static_cast<int>(std::floor((z + radius) / kCell));
+    float best = radius;
+    bool  found = false;
+    for (int cz = cz0; cz <= cz1; ++cz)
+        for (int cx = cx0; cx <= cx1; ++cx) {
+            Candidate c = candidate(terrain, cx, cz);
+            if (!c.exists) continue;
+            const float d = std::hypot(c.tree.x - x, c.tree.z - z);
+            if (d >= best || !suitable(terrain, c.tree)) continue;
+            best = d;
+            out = c.tree;
+            found = true;
+        }
+    return found;
 }
 
 bool Trees::blocksPoint(const Terrain& terrain, float x, float z, float radius) {

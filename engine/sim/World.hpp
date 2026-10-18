@@ -73,6 +73,7 @@ struct WorldStats {
     std::uint64_t deathsOld = 0, deathsStarved = 0, deathsExhausted = 0, deathsPoison = 0, deathsOther = 0;
     std::uint64_t sabotages = 0;  // сколько раз кто-то подсунул другому ягоды из мести
     std::uint64_t deathsPredation = 0;  // существа, растерзанные хищниками
+    std::uint64_t treesFelled = 0, spearsMade = 0, shieldsMade = 0, spearHits = 0, shieldBlocks = 0, skillsLearned = 0;
 };
 
 // Полное состояние мира для сохранения/загрузки (всё, что нужно, чтобы продолжить симуляцию
@@ -108,7 +109,9 @@ public:
     // Один шаг: сенсы -> мозг -> резолв действий -> размножение -> смерть -> еда.
     // terrain != nullptr -- существа подчиняются рельефу (уклон, вода); nullptr --
     // плоский мир без ограничений (тесты, декоративная колония в меню).
-    void tick(float dt, const Terrain* terrain = nullptr);
+    // Рубка деревьев меняет рельеф (Terrain::fellTree) -- поэтому террейн неконстантный; области для пересборки чанков -- в takeDirty().
+    void tick(float dt, Terrain* terrain = nullptr);
+    [[nodiscard]] std::vector<Terrain::Rect> takeDirty() { return std::exchange(m_dirty, {}); }
 
     // Опасности на текущий кадр (заменяют предыдущие). Существа в радиусе kHazardSense от края чувствуют угрозу.
     void setHazards(std::span<const Hazard> hazards) { m_hazards.assign(hazards.begin(), hazards.end()); }
@@ -177,6 +180,7 @@ private:
     std::vector<Hazard>      m_hazards;
     WorldStats               m_stats;
     Fauna                    m_fauna;
+    std::vector<Terrain::Rect> m_dirty;
 
     // Потоковая подгрузка кустов (см. growBerryBushes/streamBushes в World.cpp).
     bool                          m_streaming = false;

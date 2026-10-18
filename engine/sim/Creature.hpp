@@ -19,7 +19,12 @@ inline constexpr float kNoTarget       = 1.0e9f; // "цели нет" в пол�
 
 // Чем занято существо. Выбирается слоем поведения (Behavior.cpp) из потребностей, ощущений, черт
 // и выходов мозга; видно в инспекторе и нужно для озвучки/отладки.
-enum class Behavior : std::uint8_t { Wander, SeekFood, Eat, Rest, Flee, SeekMate, Socialize, GoHome, Sick, Sabotage, Count };
+enum class Behavior : std::uint8_t { Wander, SeekFood, Eat, Rest, Flee, SeekMate, Socialize, GoHome, Sick, Sabotage, Chop, Craft, Count };
+
+// Умения (маска Creature::skills). Рубить деревья умеют все (врождённо); изготовление орудий -- знание: открывается в опасности или
+// от случая и передаётся соседям и потомству по наблюдению (World::tick), как вкус ягод -- но у знания нет "забывания".
+enum Skill : std::uint8_t { kSkillSpear = 1, kSkillShield = 2 };
+inline constexpr float kSpearWood = 2.0f, kShieldWood = 3.0f, kMaxWood = 4.0f;   // цена орудий и сколько можно нести
 [[nodiscard]] const char* behaviorName(Behavior b) noexcept;  // по-русски
 
 struct Needs {
@@ -85,6 +90,9 @@ struct SenseInputs {
     // Для мести (Behavior::Sabotage): ближайший куст, чей внешний вид существо знает как плохой; и тот, на кого зуб.
     float     badFoodDist = kNoTarget;  glm::vec3 badFoodPos{};
     float     grudgeDist  = kNoTarget;  glm::vec3 grudgePos{};
+    // Ресурсы: ближайшее дерево для рубки (ищет мир, только если существу нужно дерево) и "видит ли хищника" (запоминается как опасность).
+    float     treeDist = kNoTarget;  glm::vec3 treePos{};
+    bool      predatorSeen = false;
 };
 
 class Creature {
@@ -139,6 +147,23 @@ public:
     std::uint8_t  carryKind = 255;
     float         carryAmount = 0.0f, carryAge = 0.0f;
     std::uint8_t  pickRequest = 0, serveRequest = 0;
+
+    // Ресурсы и орудия (этап "цивилизация"). wood -- брёвна в руках; spearDur/shieldDur -- прочность копья/щита (0 -- нет);
+    // skills -- маска умений; dangerMemory -- сколько ещё секунд помнит хищника рядом (подталкивает мастерить и рубить).
+    // chopRequest -- просит мир рубить дерево treeCx/treeCz (кэш поиска ближайшего: treeKnown/treeX/treeZ/treeSearch, ведёт мир).
+    std::uint8_t skills = 0;
+    float        wood = 0.0f, spearDur = 0.0f, shieldDur = 0.0f, dangerMemory = 0.0f, chopProgress = 0.0f, craftProgress = 0.0f;
+    std::uint8_t chopRequest = 0;
+    bool         treeKnown = false;
+    std::int32_t treeCx = 0, treeCz = 0;
+    float        treeX = 0.0f, treeZ = 0.0f, treeSearch = 0.0f;
+    [[nodiscard]] bool  knows(Skill s) const noexcept { return (skills & s) != 0; }
+    [[nodiscard]] bool  hasSpear() const noexcept { return spearDur > 0.0f; }
+    [[nodiscard]] bool  hasShield() const noexcept { return shieldDur > 0.0f; }
+    // Сколько брёвен нужно на следующее орудие, которое существо умеет, но не имеет (0 -- нечего мастерить); какое именно (1 копьё, 2 щит).
+    [[nodiscard]] float woodNeeded() const noexcept { return nextTool() == 1 ? kSpearWood : (nextTool() == 2 ? kShieldWood : 0.0f); }
+    [[nodiscard]] int   nextTool() const noexcept { return (knows(kSkillSpear) && !hasSpear()) ? 1 : ((knows(kSkillShield) && !hasShield()) ? 2 : 0); }
+    [[nodiscard]] bool  wantsWood() const noexcept { return nextTool() != 0 && wood < woodNeeded() && wood < kMaxWood; }
 
     // Поведение: текущая линия, сколько она держится (гистерезис против дёрганья), направление блуждания
     // и память о последнем месте с едой (место, где еду видели, -- туда идём, когда еды в поле зрения нет).

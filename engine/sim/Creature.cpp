@@ -98,6 +98,8 @@ const char* behaviorName(Behavior b) noexcept {
         case Behavior::GoHome:    return "Идёт домой";
         case Behavior::Sick:      return "Тошнит";
         case Behavior::Sabotage:  return "Мстит";
+        case Behavior::Chop:      return "Рубит дерево";
+        case Behavior::Craft:     return "Мастерит";
         case Behavior::Count:     break;
     }
     return "?";
@@ -187,7 +189,8 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
         }
         if (visionTimer > 0.0f) {
             dec.move  = glm::vec2(std::cos(visionHeading), std::sin(visionHeading));
-            dec.eat   = dec.pick = dec.serve = false;
+            dec.eat   = dec.pick = dec.serve = dec.chop = false;
+            dec.craft = 0;
             dec.alarm = std::max(dec.alarm, 0.8f);
             behavior  = Behavior::Flee;
         } else if (glm::length(dec.move) > 0.01f) {
@@ -198,6 +201,18 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
     }
     pickRequest  = dec.pick ? 1 : 0;   // мир выполнит (подобрать ягоды у куста / подсунуть обидчику)
     serveRequest = dec.serve ? 1 : 0;
+    chopRequest  = dec.chop ? 1 : 0;   // мир срубит дерево, когда набежит время (World::tick)
+    dangerMemory = senses.predatorSeen ? 120.0f : std::max(0.0f, dangerMemory - dt);
+    if (dec.craft != 0) {              // мастерит на месте: 4 с, потом орудие готово, брёвна потрачены
+        craftProgress += dt / 4.0f;
+        if (craftProgress >= 1.0f) {
+            craftProgress = 0.0f;
+            if (dec.craft == 1 && wood >= kSpearWood)       { wood -= kSpearWood;  spearDur = 1.0f; }
+            else if (dec.craft == 2 && wood >= kShieldWood) { wood -= kShieldWood; shieldDur = 1.0f; }
+        }
+    } else {
+        craftProgress = 0.0f;
+    }
     glm::vec2 moveDir = dec.move;
 
     // Рельеф: чем круче подъём в выбранную сторону, тем медленнее и тяжелее идти;
