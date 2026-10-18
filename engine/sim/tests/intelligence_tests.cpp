@@ -421,6 +421,53 @@ int main() {
         WSIM_CHECK(maxFromBush > 12.0f);           // ушёл исследовать, а не кружит у пустого места
     }
     {
+        // Хищники и существа: голодный волк преследует существо; оно замечает угрозу, бежит и зовёт на помощь; а сытый -- нет.
+        auto chase = [&](float wolfHunger) {
+            Creature c = adult(3, {0.0f, 0.0f, 0.0f});
+            c.needs.hunger = 0.1f;
+            World w = scenario(3, {c}, {});
+            WorldState st = w.exportState();
+            Animal wolf;
+            wolf.id = 1; wolf.species = Species::Wolf; wolf.position = {18.0f, 0.0f, 0.0f}; wolf.hunger = wolfHunger; wolf.age = 400.0f; wolf.wanderTimer = 1000.0f;
+            st.fauna.animals = {wolf};
+            st.fauna.nextId = 10;
+            WSIM_CHECK(w.importState(st));
+            struct R { bool fled = false, alarmed = false; std::uint64_t bites = 0; std::size_t pop = 1; } r;
+            for (int i = 0; i < static_cast<int>(40.0f / kDt); ++i) {
+                w.tick(kDt, nullptr);
+                if (!w.population().empty()) {
+                    r.fled |= w.population()[0].creature.behavior == Behavior::Flee;
+                    r.alarmed |= w.population()[0].lastOutputs.alarmCall > 0.5f;
+                }
+            }
+            r.bites = w.fauna().stats().creatureBites;
+            r.pop = w.population().size();
+            return r;
+        };
+        const auto hungry = chase(0.95f);
+        WSIM_CHECK(hungry.fled && hungry.alarmed);        // увидел охотника: бежит и кричит
+        WSIM_CHECK(hungry.bites >= 1);                     // волк его догнал и укусил (быстрее существа)
+        const auto sated = chase(0.1f);
+        WSIM_CHECK(!sated.fled && sated.bites == 0);       // сытый далёкий волк опасности не представляет
+    }
+    {
+        // Укусы убивают: существо с малым здоровьем рядом с голодным волком гибнет, и это записано отдельной причиной.
+        Creature c = adult(3, {0.0f, 0.0f, 0.0f});
+        c.needs.hunger = 0.1f;
+        c.health = 0.3f;
+        World w = scenario(3, {c}, {});
+        WorldState st = w.exportState();
+        Animal wolf;
+        wolf.id = 1; wolf.species = Species::Wolf; wolf.position = {4.0f, 0.0f, 0.0f}; wolf.hunger = 0.95f; wolf.age = 400.0f; wolf.wanderTimer = 1000.0f;
+        st.fauna.animals = {wolf};
+        st.fauna.nextId = 10;
+        WSIM_CHECK(w.importState(st));
+        for (int i = 0; i < static_cast<int>(30.0f / kDt) && w.populationCount() > 0; ++i) w.tick(kDt, nullptr);
+        WSIM_CHECK(w.populationCount() == 0 && w.stats().deathsPredation == 1);
+        for (int i = 0; i < 120; ++i) w.tick(kDt, nullptr);
+        WSIM_CHECK(w.fauna().animals().size() == 1 && w.fauna().animals()[0].hunger < 0.6f);   // и волк насытился
+    }
+    {
         // Статистика: смерть от яда считается отдельно.
         Creature c = adult(3, {0.0f, 0.0f, 0.0f});
         c.needs.hunger = 0.3f;

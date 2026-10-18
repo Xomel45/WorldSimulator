@@ -16,6 +16,8 @@ namespace {
 // выверенный баланс, до появления террейна/god-tools их придётся подкрутить). ─
 
 constexpr float kCellSize            = 15.0f;   // сторона ячейки пространственной сетки
+constexpr float kPredatorSense       = 28.0f;   // хищника, идущего на охоту, существо замечает издалека; просто близкого -- с kPredatorNear
+constexpr float kPredatorNear        = 12.0f;
 constexpr float kHazardSense         = 18.0f;   // с какого расстояния от края опасности (валуна) существо её чувствует
 constexpr float kSeparationRadius    = 3.0f;    // ближе -- существа расталкиваются, чтобы не слипаться в кучу
 constexpr float kGroupRadius         = 18.0f;   // кого считаем "своей группой" для тяги к сородичам
@@ -142,6 +144,8 @@ std::size_t World::countCreatures(float x, float z, float radius) const {
     return n;
 }
 
+void World::growWildlife(const Terrain& terrain) { m_fauna.populate(terrain, m_rng, kWorldHalfSize); }
+
 void World::settleOnLand(const Terrain& terrain) {
     auto landPoint = [&](glm::vec3 fallback) {
         for (int attempt = 0; attempt < 64; ++attempt) {
@@ -214,6 +218,21 @@ void World::growBerryBushes(const Terrain& terrain) {
                 if (land(x, z)) plantBush(x, z, kind);
             }
         }
+    // Ядовитые пятна не должны съедать мир: бывало 10 ядовитых кустов из 22 -- существа вымирали голодом. Лишние ядовитые
+    // перевыбираются среди безопасных видов своего биома (доля ядовитых не выше четверти).
+    {
+        auto poisonous = [&]() { std::size_t k = 0; for (const FoodSource& f : m_food) k += isPoisonous(f.kind); return k; };
+        std::size_t bad = poisonous();
+        for (FoodSource& f : m_food) {
+            if (bad * 4 <= m_food.size()) break;
+            if (!isPoisonous(f.kind)) continue;
+            const Biome biome = terrain.biomeAt(f.position.x, f.position.z);
+            for (int tries = 0; tries < 12; ++tries) {
+                const BerryKind k = pickBerryKind(biome, unit(m_rng));
+                if (!isPoisonous(k)) { f.kind = k; --bad; break; }
+            }
+        }
+    }
     for (int attempt = 0; attempt < 400 && m_food.size() < kMinBushes; ++attempt) {
         const glm::vec3 p = randomPointInBounds(m_rng);
         if (land(p.x, p.z)) plantBush(p.x, p.z, pickBerryKind(terrain.biomeAt(p.x, p.z), unit(m_rng)));
@@ -229,6 +248,7 @@ WorldState World::exportState() const {
     st.population = m_population;
     st.food       = m_food;
     st.buildings  = m_buildings;
+    st.fauna      = m_fauna.exportState();
     st.pendingGrief.assign(m_pendingGrief.begin(), m_pendingGrief.end());
     std::sort(st.pendingGrief.begin(), st.pendingGrief.end());
     return st;
@@ -244,6 +264,7 @@ bool World::importState(const WorldState& st) {
     m_population = st.population;
     m_food       = st.food;
     m_buildings  = st.buildings;
+    if (!m_fauna.importState(st.fauna)) return false;
     m_pendingGrief.clear();
     for (const auto& [id, v] : st.pendingGrief) m_pendingGrief[id] = v;
     return true;
@@ -276,6 +297,25 @@ void World::tick(float dt, const Terrain* terrain) {
     for (std::size_t i = 0; i < n; ++i)
         idIndex[m_population[i].creature.id] = i;
 
+    // Дикие животные: шаг раньше существ. Хищник мог укусить существо -- здоровье падает сразу, убитое помечаем (причина 5).
+    {
+        std::vector<CreatureView> views;
+        views.reserve(n);
+        for (const Inhabitant& in : m_population)
+            if (in.creature.alive) views.push_back({in.creature.id, in.creature.position});
+        std::vector<Bite> bites;
+        m_fauna.tick(dt, terrain, views, m_rng, kWorldHalfSize, bites);
+        for (const Bite& b : bites) {
+            const auto it = idIndex.find(b.creatureId);
+            if (it == idIndex.end()) continue;
+            Creature& c = m_population[it->second].creature;
+            if (!c.alive) continue;
+            c.health -= b.damage;
+            c.needs.fear = 1.0f;
+            if (c.health <= 0.0f) { c.alive = false; c.deathCause = 5; }
+        }
+    }
+
     const Grid creatureGrid = buildGrid(n, [this](std::size_t i) { return m_population[i].creature.position; });
 
     std::vector<std::size_t> liveFoodIdx;
@@ -301,6 +341,7 @@ void World::tick(float dt, const Terrain* terrain) {
     std::vector<float>        ateValue(n, 0.0f);
     for (std::size_t i = 0; i < n; ++i) {
         Creature&       self    = m_population[i].creature;
+        if (!self.alive) continue;   // растерзанного в этом тике хищником дальше не тикаем -- в конце его уберут
         const glm::vec3 selfPos = self.position;
 
         SenseInputs senses{};
@@ -354,6 +395,19 @@ void World::tick(float dt, const Terrain* terrain) {
                     senses.threatDist      = std::max(edge, 0.0f);
                 }
             }
+        }
+
+        // Хищники (дикие животные): на охоте видны с kPredatorSense, спокойные -- вблизи (kPredatorNear). Идут по тому же каналу
+        // "угроза", что и валуны: страх, бегство, крик тревоги -- остальные пугаются уже по этому крику.
+        for (const Animal& an : m_fauna.animals()) {
+            if (!an.alive || !isPredator(an.species)) continue;
+            const float dist = std::hypot(an.position.x - selfPos.x, an.position.z - selfPos.z);
+            const float edge = std::max(dist - 1.0f, 0.0f);
+            const float range = an.state == AnimalState::Hunt ? kPredatorSense : kPredatorNear;
+            if (dist >= range || edge >= senses.threatDist) continue;
+            senses.threatDir       = dirXZ(selfPos, an.position);
+            senses.threatProximity = std::max(senses.threatProximity, std::clamp(1.0f - edge / range, 0.0f, 1.0f));
+            senses.threatDist      = edge;
         }
 
         // Соседи: толпа своих/чужих, агрегированные сигналы (прошлый тик), ближайший ГОТОВЫЙ
@@ -613,6 +667,7 @@ void World::tick(float dt, const Terrain* terrain) {
             case 2: ++m_stats.deathsStarved; break;
             case 3: ++m_stats.deathsExhausted; break;
             case 4: ++m_stats.deathsPoison; break;
+            case 5: ++m_stats.deathsPredation; break;
             default: ++m_stats.deathsOther; break;
         }
         auto             ping = [this](std::uint64_t id) {

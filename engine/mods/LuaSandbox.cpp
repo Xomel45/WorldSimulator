@@ -138,6 +138,22 @@ int l_bush(lua_State* L) {
     lua_pushboolean(L, god(L).bush(num(L, 2, -kCoord, kCoord), num(L, 3, -kCoord, kCoord), kind));
     return 1;
 }
+// ctx:animal(x, z [, "wolf"]) -> удалось ли выпустить; без вида -- по биому точки
+int l_animal(lua_State* L) {
+    std::optional<Species> species;
+    if (!lua_isnoneornil(L, 4)) {
+        Species sp{};
+        if (!speciesFromId(luaL_checkstring(L, 4), sp)) luaL_argerror(L, 4, "неизвестный вид зверя (hare, deer, antelope, tapir, wolf, fox, lion, jaguar)");
+        species = sp;
+    }
+    lua_pushboolean(L, god(L).animal(num(L, 2, -kCoord, kCoord), num(L, 3, -kCoord, kCoord), species));
+    return 1;
+}
+// ctx:erase_animals(x, z, radius) -> сколько убрано
+int l_erase_animals(lua_State* L) {
+    lua_pushinteger(L, static_cast<lua_Integer>(god(L).eraseAnimals(num(L, 2, -kCoord, kCoord), num(L, 3, -kCoord, kCoord), num(L, 4, 0.5f, 100.0f))));
+    return 1;
+}
 // ctx:erase_bushes(x, z, radius) -> сколько убрано
 int l_erase_bushes(lua_State* L) {
     lua_pushinteger(L, static_cast<lua_Integer>(god(L).eraseBushes(num(L, 2, -kCoord, kCoord), num(L, 3, -kCoord, kCoord), num(L, 4, 0.5f, 100.0f))));
@@ -201,7 +217,7 @@ void buildCtx(LuaSandbox::Impl* im) {
     lua_State* L = im->L;
     lua_newtable(L);
     const luaL_Reg fns[] = {{"height", l_height}, {"raise", l_raise}, {"flatten", l_flatten}, {"spawn", l_spawn},
-                            {"erase", l_erase},   {"boulder", l_boulder}, {"build", l_build}, {"sound", l_sound}, {"erase_buildings", l_erase_buildings}, {"bush", l_bush}, {"erase_bushes", l_erase_bushes}, {"count", l_count}, {"log", l_log},         {nullptr, nullptr}};
+                            {"erase", l_erase},   {"boulder", l_boulder}, {"build", l_build}, {"sound", l_sound}, {"erase_buildings", l_erase_buildings}, {"bush", l_bush}, {"erase_bushes", l_erase_bushes}, {"animal", l_animal}, {"erase_animals", l_erase_animals}, {"count", l_count}, {"log", l_log},         {nullptr, nullptr}};
     luaL_setfuncs(L, fns, 0);
     im->ctxRef = luaL_ref(L, LUA_REGISTRYINDEX);
 }

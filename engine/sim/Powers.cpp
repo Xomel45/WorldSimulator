@@ -55,13 +55,14 @@ PowerDef makeErasePower(std::string id, std::string name) {
     PowerDef d;
     d.id          = std::move(id);
     d.name        = std::move(name);
-    d.description = "Убирает существ, постройки и ягодные кусты в области под курсором";
+    d.description = "Убирает существ, зверей, постройки и ягодные кусты в области под курсором";
     d.radius      = 6;
     d.minRadius   = 1;
     d.apply       = [](GodContext& g, const PowerCall& c) {
         g.erase(c.x, c.z, c.radius);
         g.eraseBuildings(c.x, c.z, c.radius);
         g.eraseBushes(c.x, c.z, c.radius);
+        g.eraseAnimals(c.x, c.z, c.radius);
     };
     return d;
 }
@@ -81,6 +82,25 @@ PowerDef makeBushPower(std::string id, std::string name, std::optional<BerryKind
         std::uniform_real_distribution<float> ang(0.0f, 6.2831853f), rad(0.0f, 1.0f);
         const float a = ang(*rng), r = c.radius * std::sqrt(rad(*rng));
         g.bush(c.x + std::cos(a) * r, c.z + std::sin(a) * r, kind);
+    };
+    return d;
+}
+
+PowerDef makeAnimalPower(std::string id, std::string name, std::optional<Species> species, float interval) {
+    PowerDef d;
+    d.id          = std::move(id);
+    d.name        = std::move(name);
+    d.description = species ? std::string("Выпускает зверей: ") + speciesDef(*species).name + " (в круге под кистью, пока кнопка зажата)"
+                            : "Выпускает диких зверей; вид зависит от биома под курсором";
+    d.radius      = 5;
+    d.minRadius   = 0.5f;
+    d.maxRadius   = 20;
+    d.interval    = interval;
+    auto rng      = std::make_shared<std::mt19937>(std::random_device{}());
+    d.apply       = [species, rng](GodContext& g, const PowerCall& c) {
+        std::uniform_real_distribution<float> ang(0.0f, 6.2831853f), rad(0.0f, 1.0f);
+        const float a = ang(*rng), r = c.radius * std::sqrt(rad(*rng));
+        g.animal(c.x + std::cos(a) * r, c.z + std::sin(a) * r, species);
     };
     return d;
 }
@@ -137,6 +157,7 @@ std::vector<PowerDef> makeBuiltinPowers() {
     v.push_back(makeRaisePower("lower", "Опустить", -8.0f));
     v.push_back(makeFlattenPower("flatten", "Выровнять", 6.0f));
     v.push_back(makeSpawnPower("spawn", "Существа", {}, 0.12f));
+    v.push_back(makeAnimalPower("animals", "Звери", std::nullopt, 0.6f));
     v.push_back(makeBoulderPower("boulder", "Валун", 0.45f));
     v.push_back(makeBuildPower("house", "Дом"));
     v.push_back(makeBushPower("bush", "Кусты", std::nullopt, 0.3f));

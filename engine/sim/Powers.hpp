@@ -61,6 +61,15 @@ public:
         return kind ? m_world.plantBush(x, z, *kind) : m_world.plantNaturalBush(m_terrain, x, z);
     }
     std::size_t eraseBushes(float x, float z, float radius) { return m_world.removeBushes(x, z, radius); }
+    // Дикое животное: species -- этого вида, иначе подходящий биому точки. Не в воде (кроме умеющих плавать), не вплотную к другому.
+    bool animal(float x, float z, std::optional<Species> species = std::nullopt) {
+        if (species) {
+            if (!speciesDef(*species).swims && m_terrain.isUnderwater(x, z)) return false;
+            return m_world.spawnAnimal(*species, x, z);
+        }
+        return m_world.spawnNaturalAnimal(m_terrain, x, z);
+    }
+    std::size_t eraseAnimals(float x, float z, float radius) { return m_world.removeAnimals(x, z, radius); }
     // Валун падает с высоты на (x, z), катится по рельефу, давит существ и вмятывает кратеры (см. Application::update).
     bool boulder(float x, float z, float radius) {
         if (!m_physics) return false;
@@ -103,8 +112,10 @@ struct PowerDef {
 [[nodiscard]] PowerDef makeFlattenPower(std::string id, std::string name, float ratePerSecond);
 [[nodiscard]] PowerDef makeSpawnPower(std::string id, std::string name,
                                       std::vector<std::pair<Genome::TraitIndex, float>> traits, float interval);
-[[nodiscard]] PowerDef makeErasePower(std::string id, std::string name);  // существа, постройки и кусты
+[[nodiscard]] PowerDef makeErasePower(std::string id, std::string name);  // существа, звери, постройки и кусты
 [[nodiscard]] PowerDef makeBuildPower(std::string id, std::string name);   // дом по клику
+// Дикие животные: в круге под кистью появляются звери (пока кнопка зажата). species пуст -- вид по биому каждой точки.
+[[nodiscard]] PowerDef makeAnimalPower(std::string id, std::string name, std::optional<Species> species, float interval);
 // Ягодные кусты: в круге под кисточкой сажает кусты (пока кнопка зажата). kind пуст -- вид по биому каждой точки.
 [[nodiscard]] PowerDef makeBushPower(std::string id, std::string name, std::optional<BerryKind> kind, float interval);
 // Осмотр: выбор существа под курсором (обрабатывает Application -- панель состояния); сам мир не меняет.

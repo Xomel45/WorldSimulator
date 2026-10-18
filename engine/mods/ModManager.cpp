@@ -134,6 +134,18 @@ void ModManager::loadMod(ModInfo& mod, PowerRegistry& registry) {
             def = makeFlattenPower(full, name, number(pj, "rate", 6.0f));
         } else if (type == "erase") {
             def = makeErasePower(full, name);
+        } else if (type == "animal") {
+            // "species": id вида (hare, deer, antelope, tapir, wolf, fox, lion, jaguar); без поля -- по биому под курсором.
+            std::optional<Species> species;
+            if (pj.contains("species")) {
+                Species sp{};
+                if (!pj["species"].is_string() || !speciesFromId(pj["species"].get<std::string>(), sp)) {
+                    mod.errors->push_back(pid + ": неизвестный вид зверя (hare, deer, antelope, tapir, wolf, fox, lion, jaguar)");
+                    continue;
+                }
+                species = sp;
+            }
+            def = makeAnimalPower(full, name, species, number(pj, "interval", 0.6f));
         } else if (type == "bush") {
             // "berry": id вида ягод (raspberry, blueberry, ...); без поля -- вид по биому под курсором.
             std::optional<BerryKind> kind;

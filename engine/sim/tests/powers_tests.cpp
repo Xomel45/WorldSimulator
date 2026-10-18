@@ -15,7 +15,7 @@ int main() {
     // Встроенные силы зарегистрированы, id уникальны, чужой id занять нельзя.
     PowerRegistry reg;
     for (auto& p : makeBuiltinPowers()) WSIM_CHECK(reg.add(std::move(p)));
-    WSIM_CHECK(reg.all().size() == 9);  // + "Кусты"
+    WSIM_CHECK(reg.all().size() == 10);  // + "Кусты", "Звери"
     WSIM_CHECK(reg.find("raise") != nullptr);
     WSIM_CHECK(!reg.add(makeErasePower("raise", "дубль")));
 
@@ -89,6 +89,24 @@ int main() {
         for (int i = 0; i < 30; ++i) bushPower->apply(g2, {lx - 4.0f, lz + 6.0f, 4.0f, 0.016f, i == 0});
         WSIM_CHECK(w2.foodCount() > before);                         // сила сажает кусты
         for (std::size_t i = before; i < w2.foodCount(); ++i) WSIM_CHECK(!t2.isUnderwater(w2.food()[i].position.x, w2.food()[i].position.z));
+        // Звери: на суше, нужного вида или по биому; в воде нет; "Стереть" и eraseAnimals их убирают.
+        const std::size_t beasts0 = w2.fauna().count();
+        WSIM_CHECK(g2.animal(lx - 5.0f, lz, Species::Deer));
+        WSIM_CHECK(w2.fauna().count() == beasts0 + 1 && w2.fauna().animals().back().species == Species::Deer);
+        WSIM_CHECK(!g2.animal(lx - 5.3f, lz, Species::Hare));                 // вплотную нельзя
+        WSIM_CHECK(!g2.animal(wx, wz, Species::Hare) && !g2.animal(wx, wz));   // в воде нельзя
+        bool natural = false;
+        for (int i = 1; i < 12 && !natural; ++i) natural = g2.animal(lx - 5.0f + 2.5f * static_cast<float>(i), lz + 2.5f);
+        WSIM_CHECK(natural && w2.fauna().count() > beasts0 + 1);
+        const PowerDef* beastPower = reg.find("animals");
+        WSIM_CHECK(beastPower && beastPower->name == "Звери" && beastPower->interval > 0.0f);
+        for (int i = 0; i < 40; ++i) beastPower->apply(g2, {lx - 4.0f, lz - 8.0f, 6.0f, 0.016f, i == 0});
+        WSIM_CHECK(w2.fauna().count() > beasts0 + 2);
+        WSIM_CHECK(g2.eraseAnimals(lx - 5.0f, lz, 1.0f) >= 1);
+        const std::size_t beastsLeft = w2.fauna().count();
+        reg.find("erase")->apply(g2, {lx - 4.0f, lz - 8.0f, 7.0f, 0.016f, true});   // радиус не достаёт до кустов (они в ~9 единицах)
+        WSIM_CHECK(w2.fauna().count() < beastsLeft);
+
         WSIM_CHECK(g2.eraseBushes(lx, lz, 3.5f) >= 2);
         const std::size_t left = w2.foodCount();
         reg.find("erase")->apply(g2, {lx - 4.0f, lz + 6.0f, 9.0f, 0.016f, true});  // "Стереть" убирает и кусты

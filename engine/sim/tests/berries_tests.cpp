@@ -77,6 +77,9 @@ int main() {
                 for (std::size_t j = 0; j < i; ++j)
                     WSIM_CHECK(std::hypot(f.position.x - a.food()[j].position.x, f.position.z - a.food()[j].position.z) >= World::kBushSpacing - 1e-4f);
             }
+            std::size_t bad = 0;
+            for (const FoodSource& f : a.food()) bad += isPoisonous(f.kind);
+            WSIM_CHECK(bad * 4 <= a.foodCount() + 3);   // ядовитых не больше четверти (+ огрех округления у крошечных миров)
             foodAcrossSeeds += static_cast<int>(a.foodCount());
             bool differs = a.foodCount() != c.foodCount();
             for (std::size_t i = 0; !differs && i < std::min(a.foodCount(), c.foodCount()); ++i) differs = a.food()[i].position.x != c.food()[i].position.x;

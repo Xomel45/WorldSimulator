@@ -35,7 +35,10 @@ int main() {
         {"id": "tbl",  "name": "Таблица", "type": "script", "script": "scripts/tbl.lua"},
         {"id": "blue", "name": "Черника", "type": "bush", "berry": "blueberry", "radius": 3},
         {"id": "wild", "name": "Дикие кусты", "type": "bush"},
-        {"id": "badberry", "name": "Не то", "type": "bush", "berry": "durian"}
+        {"id": "badberry", "name": "Не то", "type": "bush", "berry": "durian"},
+        {"id": "wolfpack", "name": "Волки", "type": "animal", "species": "wolf", "radius": 4},
+        {"id": "beasts", "name": "Звери", "type": "animal"},
+        {"id": "badbeast", "name": "Не то", "type": "animal", "species": "dragon"}
       ]})");
     write(root / "mods" / "good" / "scripts" / "bolt.lua", R"(
       return function(ctx, p)
@@ -51,6 +54,9 @@ int main() {
         assert(type(ctx:bush(p.x + 40, p.z + 40, "cloudberry")) == "boolean")
         assert(type(ctx:bush(p.x - 40, p.z - 40)) == "boolean")
         assert(type(ctx:erase_bushes(p.x + 40, p.z + 40, 1)) == "number")
+        assert(type(ctx:animal(p.x + 30, p.z - 30, "hare")) == "boolean")
+        assert(type(ctx:animal(p.x - 30, p.z + 30)) == "boolean")
+        assert(type(ctx:erase_animals(p.x + 30, p.z - 30, 1)) == "number")
         assert(ctx:count(p.x, p.z, 5) >= 1)
       end
       return M)");
@@ -97,7 +103,7 @@ int main() {
 
     // Находятся 4 мода (notamod без mod.json игнорируется), совместимые валидны.
     WSIM_CHECK(mgr.mods().size() == 5);
-    WSIM_CHECK(findMod(mgr, "good") && findMod(mgr, "good")->valid && findMod(mgr, "good")->errors->size() == 1  /* неизвестный вид ягод у badberry */);
+    WSIM_CHECK(findMod(mgr, "good") && findMod(mgr, "good")->valid && findMod(mgr, "good")->errors->size() == 2  /* неизвестные виды у badberry и badbeast */);
     WSIM_CHECK(findMod(mgr, "old") && !findMod(mgr, "old")->valid && !findMod(mgr, "old")->errors->empty());
     WSIM_CHECK(findMod(mgr, "broken") && !findMod(mgr, "broken")->valid);
 
@@ -138,6 +144,19 @@ int main() {
 
     // Кусты: JSON-сила с видом, без вида (по биому) и с неизвестным видом (ошибка, силы нет).
     WSIM_CHECK(reg.find("good.blue") && reg.find("good.wild") && !reg.find("good.badberry"));
+    WSIM_CHECK(reg.find("good.wolfpack") && reg.find("good.beasts") && !reg.find("good.badbeast"));
+    WSIM_CHECK(reg.find("good.wolfpack")->description.find("Волк") != std::string::npos);
+    {
+        const std::size_t before = world.fauna().count();
+        bool released = false;
+        for (float x = -60; x <= 60 && !released; x += 7)
+            for (float z = -60; z <= 60 && !released; z += 7)
+                if (!terrain.isUnderwater(x, z)) {
+                    reg.find("good.wolfpack")->apply(god, {x, z, 0.5f, 0.016f, true});
+                    released = world.fauna().count() > before;
+                }
+        WSIM_CHECK(released && world.fauna().animals().back().species == Species::Wolf);
+    }
     WSIM_CHECK(reg.find("good.blue")->description.find("Черника") != std::string::npos);
     {
         const std::size_t before = world.foodCount();
@@ -162,8 +181,8 @@ int main() {
     WSIM_CHECK(world.populationCount() == pop0 + 2);
     reg.find("good.bolt")->apply(god, {20.0f, 20.0f, 4.0f, 0.016f, true});
     WSIM_CHECK(world.countCreatures(20.0f, 20.0f, 3.0f) == 0);
-    // Единственная ошибка мода -- неизвестный вид ягод у "badberry".
-    WSIM_CHECK(findMod(mgr, "good")->errors->size() == 1 && findMod(mgr, "good")->errors->front().find("ягод") != std::string::npos);
+    // Ошибки мода -- неизвестные виды у "badberry" (ягоды) и "badbeast" (звери).
+    WSIM_CHECK(findMod(mgr, "good")->errors->size() == 2 && findMod(mgr, "good")->errors->front().find("ягод") != std::string::npos);
 
     // Песочница: os/io/load недоступны; бесконечный цикл обрывается по бюджету
     // инструкций (а не вешает тест); краш скрипта отключает силу, а не игру.

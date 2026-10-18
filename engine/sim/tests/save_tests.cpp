@@ -41,6 +41,7 @@ int main() {
     a.terrain.flatten(20.0f, -20.0f, 6.0f, 2.0f, 1.0f);
     a.world.settleOnLand(a.terrain);
     a.world.growBerryBushes(a.terrain);  // кусты разных видов: вид тоже должен пережить сохранение
+    a.world.growWildlife(a.terrain);     // и дикие животные: после загрузки мир идёт дальше бит в бит и с ними
     WSIM_CHECK(a.world.addBuilding(30.0f, 30.0f, 45.0f, 1234));
     WSIM_CHECK(a.world.addBuilding(-30.0f, 20.0f, 120.0f, 99));
     a.physics.addSphere({5.0f, a.terrain.heightAt(5, 5) + 12.0f, 5.0f}, 1.5f);
@@ -133,6 +134,26 @@ int main() {
         WSIM_CHECK(parseSave(serializeSave(withTaste, 2), v2back, e3));
         const Creature& oc = v2back.world.population[0].creature;
         WSIM_CHECK(oc.toxin == 0.0f && !oc.knowsBerry(BerryKind::Nightshade) && !oc.knowsBerry(BerryKind::Cloudberry));
+    }
+
+    // ── Дикие животные переживают сохранение: список, состояния, счётчик id и таймер миграции ──
+    {
+        WSIM_CHECK(!parsed.world.fauna.animals.empty());
+        SaveGame back;
+        std::string ef;
+        WSIM_CHECK(parseSave(serializeSave(parsed), back, ef));
+        WSIM_CHECK(back.world.fauna.animals.size() == parsed.world.fauna.animals.size() && back.world.fauna.nextId == parsed.world.fauna.nextId);
+        for (std::size_t i = 0; i < back.world.fauna.animals.size(); ++i) {
+            const Animal& x = back.world.fauna.animals[i];
+            const Animal& y = parsed.world.fauna.animals[i];
+            WSIM_CHECK(x.id == y.id && x.species == y.species && x.position == y.position && x.state == y.state && x.hunger == y.hunger &&
+                       x.age == y.age && x.targetId == y.targetId && x.breedCooldown == y.breedCooldown && x.alive == y.alive);
+        }
+        // Старый файл (без секции FAUN) читается: мир без зверей.
+        SaveGame noFauna = parsed;
+        noFauna.world.fauna = {};
+        SaveGame readBack;
+        WSIM_CHECK(parseSave(serializeSave(noFauna), readBack, ef) && readBack.world.fauna.animals.empty());
     }
 
     // ── Метаданные читаются отдельно, без разбора мира ───────────────────────

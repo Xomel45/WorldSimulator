@@ -4,6 +4,7 @@
 #include "core/Logger.hpp"
 #include "core/TerrainChunks.hpp"
 #include "platform/Paths.hpp"
+#include "procgen/AnimalGen.hpp"
 #include "procgen/HouseGen.hpp"
 #include "ui/Style.hpp"
 #include "renderer/Frustum.hpp"
@@ -124,6 +125,8 @@ std::pair<std::vector<Vertex>, std::vector<uint32_t>> buildBlobMesh(glm::vec3 ba
     return {std::move(verts), std::move(idx)};
 }
 
+constexpr float kAnimalVisualScale = 1.6f;  // модели зверей крупнее "настоящих" размеров SpeciesDef (камера высоко)
+
 // WSIM_SEED=N фиксирует сид мира при запуске (сравнение картинок/замеры); иначе случайный.
 unsigned startSeed() {
     if (const char* e = std::getenv("WSIM_SEED")) return static_cast<unsigned>(std::strtoul(e, nullptr, 10));
@@ -209,6 +212,7 @@ Application::Application(AppConfig config)
     });
     m_world.settleOnLand(m_terrain);  // стартовые существа -- на суше, не в воде
     m_world.growBerryBushes(m_terrain);  // кусты по биомам (пятна, виды ягод)
+    m_world.growWildlife(m_terrain);     // дикие животные по биомам
 
     m_applied.msaa = -1;  // заведомо не равно загруженным -- первый вызов применит всё
     applySettings();
@@ -239,6 +243,11 @@ Application::Application(AppConfig config)
                 m_context->commandPool(), m_context->graphicsQueue(),
                 bushV, bushI));
         }
+    }
+    for (int sp = 0; sp < kSpeciesCount; ++sp) {  // дикие животные: модель на вид
+        const auto model = procgen::buildAnimal(static_cast<Species>(sp));
+        m_animalMeshes[static_cast<std::size_t>(sp)] = std::make_shared<Mesh>(Mesh::create(
+            m_context->physDevice(), m_context->device(), m_context->commandPool(), m_context->graphicsQueue(), model.vertices, model.indices));
     }
     for (std::uint32_t i = 0; i < kHouseVariants; ++i) {
         const auto house = procgen::buildHouse(procgen::houseVariant(i));
@@ -298,6 +307,17 @@ Application::Application(AppConfig config)
         float x = 0, z = 0, dist = 60, pitch = -45;
         std::sscanf(at, "%f,%f,%f,%f", &x, &z, &dist, &pitch);
         m_camera.restore({x, m_terrain.heightAt(x, z), z}, -90.0f, pitch, dist);
+    }
+
+    // WSIM_ZOO=1 -- убрать зверей и выпустить по одному каждого вида рядком у точки обзора (проверка моделей).
+    if (std::getenv("WSIM_ZOO")) {
+        m_world.removeAnimals(0.0f, 0.0f, 1.0e4f);
+        const glm::vec3 c = m_camera.target();
+        for (int i = 0; i < kSpeciesCount; ++i) {
+            const float x = c.x - 14.0f + 4.0f * static_cast<float>(i);
+            for (float dz = 0.0f; dz < 40.0f; dz += 3.0f)  // ближайшая суша вдоль линии
+                if (m_world.spawnAnimal(static_cast<Species>(i), x, c.z + dz) || m_world.spawnAnimal(static_cast<Species>(i), x, c.z - dz)) break;
+        }
     }
 
     // WSIM_CAM_BUSH=raspberry|blueberry|blackberry|cloudberry|tropical|cactus -- камера на ближайший к центру куст этого вида.
@@ -362,6 +382,8 @@ Application::~Application() {
         if (m_creatureMesh) m_creatureMesh->destroy(m_context->device());
         if (m_boulderMesh) m_boulderMesh->destroy(m_context->device());
         for (auto& mesh : m_bushMeshes)
+            if (mesh) mesh->destroy(m_context->device());
+        for (auto& mesh : m_animalMeshes)
             if (mesh) mesh->destroy(m_context->device());
         for (auto& mesh : m_houseMeshes) mesh->destroy(m_context->device());
     }
@@ -489,8 +511,8 @@ void Application::processInput(float dt) {
 
     // Силы бога: 1..9 -- выбор, [ ] -- радиус кисти, Ctrl+колесо -- тоже радиус.
     const auto powers = m_powers.all();
-    for (int k = 0; k < 9 && k < static_cast<int>(powers.size()); ++k)
-        if (m_input->isKeyPressed(GLFW_KEY_1 + k)) {
+    for (int k = 0; k < 10 && k < static_cast<int>(powers.size()); ++k)
+        if (m_input->isKeyPressed(k < 9 ? GLFW_KEY_1 + k : GLFW_KEY_0)) {   // 1..9, десятая сила -- на 0
             if (m_power != k) m_sound->ui(UiSound::Click);
             m_power = k;
             m_brush = std::clamp(m_brush, powers[static_cast<std::size_t>(k)].minRadius, powers[static_cast<std::size_t>(k)].maxRadius);
@@ -562,6 +584,20 @@ void Application::update(float dt) {
         t.position   = {b.x, m_terrain.heightAt(b.x, b.z), b.z};
         t.rotation.y = b.yaw;
         m_buildingObjects.push_back({m_houseMeshes[b.seed % kHouseVariants], t, /*solid=*/false});
+    }
+
+    // Дикие животные: модель вида на земле, развёрнута по курсу (морда +Z), детёныши меньше, на бегу чуть подпрыгивают.
+    m_animalObjects.clear();
+    for (const Animal& a : m_world.fauna().animals()) {
+        const SpeciesDef& d = speciesDef(a.species);
+        Transform t;
+        const float growth = 0.55f + 0.45f * std::min(1.0f, a.age / d.maturity);
+        const float bob = a.speedNow > 0.4f ? 0.05f * d.size * std::fabs(std::sin(a.age * (4.0f + 1.2f * a.speedNow))) : 0.0f;
+        t.position   = {a.position.x, m_terrain.heightAt(a.position.x, a.position.z) + bob, a.position.z};
+        t.rotation.y = glm::degrees(std::atan2(std::cos(a.heading), std::sin(a.heading)));
+        t.scale      = glm::vec3(d.size * growth * kAnimalVisualScale);   // с высоты god-камеры настоящие размеры слишком мелки
+        m_animalObjects.push_back({m_animalMeshes[static_cast<std::size_t>(a.species)], t, /*solid=*/false});
+        m_animalObjects.back().trackId = a.id;
     }
 
     // Еда: кусты на земле, ужимаются, когда их объедают (пустой -- маленький росток).
@@ -645,6 +681,7 @@ void Application::render() {
                 }
                 m_world.settleOnLand(m_terrain);
                 m_world.growBerryBushes(m_terrain);
+                m_world.growWildlife(m_terrain);
                 m_physics.clear();
                 m_boulderObjects.clear();
                 m_buildingObjects.clear();
@@ -769,6 +806,7 @@ void Application::render() {
                 drawShadowCasters(m_chunks->shadowCasters(), lightFrustum, full ? -1e9f : kTerrainMinTop[i]);
                 if (!far3) drawShadowCasters(m_chunks->treeCasters(), lightFrustum);
                 if (!far3) drawShadowCasters(m_creatureObjects, lightFrustum);
+                if (!far3) drawShadowCasters(m_animalObjects, lightFrustum);
                 drawShadowCasters(m_boulderObjects, lightFrustum);
                 drawShadowCasters(m_buildingObjects, lightFrustum);
                 if (!far3) drawShadowCasters(m_foodObjects, lightFrustum);
@@ -780,8 +818,10 @@ void Application::render() {
         if (playing) {
             trackMotion(m_creatureObjects, m_prevCreaturePos);
             trackMotion(m_boulderObjects, m_prevBoulderPos);
+            trackMotion(m_animalObjects, m_prevAnimalPos);
             drawObjects(m_chunks->objects(), frustum);
             drawObjects(m_creatureObjects, frustum);
+            drawObjects(m_animalObjects, frustum);
             drawObjects(m_boulderObjects, frustum);
             drawObjects(m_buildingObjects, frustum);
             drawObjects(m_foodObjects, frustum);
@@ -907,7 +947,10 @@ bool Application::loadFromSlot(const std::string& slot) {
     m_creatureObjects.clear();
     m_boulderObjects.clear();
     m_buildingObjects.clear();
+    m_animalObjects.clear();
+    m_prevAnimalPos.clear();
     m_inspectId = 0;
+    m_inspectAnimal.reset();
     m_camera.restore(game.camera.target, game.camera.yaw, game.camera.pitch, game.camera.distance);
     m_cursorWorld.reset();
     m_toolDown = false;
@@ -1045,6 +1088,56 @@ void Application::stepPhysics(float dt) {
     }
 }
 
+// ─── drawAnimalInspector ──────────────────────────────────────────────────────
+// Панель зверя: вид и рацион, чем занят, сытость, здоровье, возраст; у хищника -- за кем гонится.
+void Application::drawAnimalInspector(const CameraData& cam) {
+    const Animal* an = nullptr;
+    for (const Animal& a : m_world.fauna().animals())
+        if (a.id == *m_inspectAnimal) { an = &a; break; }
+    if (!an) { m_inspectAnimal.reset(); return; }  // зверя больше нет -- панель закрывается
+    const SpeciesDef& d = speciesDef(an->species);
+
+    const ImVec2 screen = ImGui::GetIO().DisplaySize;
+    const float  u = screen.x * 0.01f;
+    ImDrawList*  dl = ImGui::GetForegroundDrawList();
+    ImFont*      font = m_imgui->uiFont();
+    {
+        const glm::vec4 c = cam.proj * cam.view * glm::vec4(an->position.x, m_terrain.heightAt(an->position.x, an->position.z) + 0.6f * d.size, an->position.z, 1.0f);
+        if (c.w > 0.0f) {
+            const ImVec2 p((c.x / c.w * 0.5f + 0.5f) * screen.x, (c.y / c.w * 0.5f + 0.5f) * screen.y);
+            const float  r = std::clamp(2400.0f * d.size / std::max(c.w, 1.0f), 12.0f, 70.0f);
+            dl->AddCircle(p, r, style::rgba(style::kGlow, 0.35f), 40, 5.0f);
+            dl->AddCircle(p, r, style::rgba(style::kMint, 0.95f), 40, 2.0f);
+        }
+    }
+    const float W = 27.0f * u, x0 = screen.x - W - 2.0f * u, y0 = 5.0f * u, pad = 1.4f * u;
+    const float fsTitle = std::max(15.0f, 1.55f * u), fs = std::max(11.5f, 1.05f * u), rowH = 2.1f * u;
+    const float H = pad * 2 + fsTitle * 1.3f + fs * 1.5f + rowH * 2 + fs * 1.5f;
+    for (int g = 3; g >= 1; --g)
+        dl->AddRect({x0 - 0.2f * u * g, y0 - 0.2f * u * g}, {x0 + W + 0.2f * u * g, y0 + H + 0.2f * u * g}, style::rgba(style::kGlow, 0.09f * (1.0f - 0.25f * (g - 1))), 1.0f * u + 0.2f * u * g, 0, 1.5f);
+    dl->AddRectFilled({x0, y0}, {x0 + W, y0 + H}, style::rgba(style::kRightBg, 0.93f), 1.0f * u);
+    dl->AddRect({x0, y0}, {x0 + W, y0 + H}, style::rgba(style::kGlow, 0.4f), 1.0f * u);
+
+    char  buf[128];
+    float y = y0 + pad;
+    dl->AddText(font, fsTitle, {x0 + pad, y}, style::rgba(style::kText), d.name);
+    y += fsTitle * 1.3f;
+    std::snprintf(buf, sizeof buf, "%s · %s", d.diet == Diet::Predator ? "Хищник" : "Травоядное", animalStateName(an->state));
+    dl->AddText(font, fs * 1.1f, {x0 + pad, y}, style::rgba(style::kMint), buf);
+    y += fs * 1.5f;
+    struct Bar { const char* label; float v; unsigned color; };
+    const Bar bars[] = {{"Здоровье", an->health, 0x7dffc4}, {"Голод", an->hunger, 0xffb86b}};
+    for (const Bar& b : bars) {
+        dl->AddText(font, fs, {x0 + pad, y}, style::rgba(style::kDim), b.label);
+        const float bx = x0 + pad + 9.5f * u, bw = W - pad * 2 - 9.5f * u, by = y + fs * 0.5f, th = std::max(3.0f, 0.38f * u);
+        dl->AddRectFilled({bx, by - th * 0.5f}, {bx + bw, by + th * 0.5f}, style::rgba(0x12413b), th * 0.5f);
+        dl->AddRectFilled({bx, by - th * 0.5f}, {bx + bw * std::clamp(b.v, 0.0f, 1.0f), by + th * 0.5f}, style::rgba(b.color), th * 0.5f);
+        y += rowH;
+    }
+    std::snprintf(buf, sizeof buf, "%s · возраст %.0f%% жизни", an->age >= d.maturity ? "взрослый" : "детёныш", 100.0f * an->age / d.lifespan);
+    dl->AddText(font, fs, {x0 + pad, y}, style::rgba(style::kDim), buf);
+}
+
 // ─── drawBushInspector ────────────────────────────────────────────────────────
 // Панель куста: вид ягод, сколько их осталось, сытность и скорость отрастания относительно малины.
 void Application::drawBushInspector(const CameraData& cam) {
@@ -1108,7 +1201,8 @@ void Application::drawBushInspector(const CameraData& cam) {
 // ─── drawInspector ────────────────────────────────────────────────────────────
 void Application::drawInspector(const CameraData& cam) {
     if (m_inspectId == 0) {
-        if (m_inspectBush) drawBushInspector(cam);
+        if (m_inspectAnimal) drawAnimalInspector(cam);
+        else if (m_inspectBush) drawBushInspector(cam);
         return;
     }
     const Creature* cr = nullptr;
@@ -1242,12 +1336,22 @@ void Application::applyPower(float dt) {
         float best = std::max(m_brush, 2.5f);
         m_inspectId = 0;
         m_inspectBush.reset();
+        m_inspectAnimal.reset();
         for (const Inhabitant& in : m_world.population()) {
             const float d = std::hypot(in.creature.position.x - hit->x, in.creature.position.z - hit->z);
             if (d < best) { best = d; m_inspectId = in.creature.id; }
         }
+        // Зверь ближе существа -- осматриваем его (звери крупнее и чаще оказываются под курсором).
+        std::size_t beast = 0;
+        if (m_world.fauna().nearest(hit->x, hit->z, std::max(m_brush, 2.5f), beast)) {
+            const Animal& a = m_world.fauna().animals()[beast];
+            if (std::hypot(a.position.x - hit->x, a.position.z - hit->z) < best || m_inspectId == 0) {
+                m_inspectId = 0;
+                m_inspectAnimal = a.id;
+            }
+        }
         std::size_t bush = 0;
-        if (m_inspectId == 0 && m_world.nearestBush(hit->x, hit->z, std::max(m_brush, 2.5f), bush))
+        if (m_inspectId == 0 && !m_inspectAnimal && m_world.nearestBush(hit->x, hit->z, std::max(m_brush, 2.5f), bush))
             m_inspectBush = glm::vec2(m_world.food()[bush].position.x, m_world.food()[bush].position.z);
         m_toolFirst = false;
         return;
@@ -1405,9 +1509,17 @@ void Application::renderDebugUI() {
                     static_cast<unsigned long long>(st.deathsPoison), static_cast<unsigned long long>(st.deathsExhausted + st.deathsOther));
     }
     ImGui::Text("Food sources: %zu", m_world.foodCount());
+    {
+        std::size_t herb = 0, pred = 0;
+        for (const Animal& a : m_world.fauna().animals()) (isPredator(a.species) ? pred : herb)++;
+        const FaunaStats& fs = m_world.fauna().stats();
+        ImGui::Text("Animals: %zu (herbivores %zu, predators %zu), kills %llu, creatures bitten %llu, mauled %llu", m_world.fauna().count(), herb, pred,
+                    static_cast<unsigned long long>(fs.kills), static_cast<unsigned long long>(fs.creatureBites),
+                    static_cast<unsigned long long>(m_world.stats().deathsPredation));
+    }
     ImGui::Separator();
     ImGui::TextUnformatted("WASD pan, RMB-drag orbit, wheel zoom, Esc menu, F10 quit");
-    ImGui::TextUnformatted("LMB use power, 1-9 select, [ ] or Ctrl+wheel brush size");
+    ImGui::TextUnformatted("LMB use power, 1-9/0 select, [ ] or Ctrl+wheel brush size");
     ImGui::TextUnformatted("F toggle lantern");
     ImGui::End();
 }

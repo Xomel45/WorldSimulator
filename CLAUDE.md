@@ -717,6 +717,51 @@ Food bushes are now biome-aware and come in eleven berry kinds (six safe ones, f
 - Not done: berries aren't tied to season, no bush-planting by creatures (seed dispersal), bushes don't care about moisture
   inside a biome, no bush sounds beyond a pop, trees/houses spacing from bushes is only the existing tree blocker.
 
+## Wildlife (`engine/sim/Fauna.*`, `procgen/AnimalGen.*`, `World`, `Application`)
+
+Wild animals — a separate subsystem from the genome/brain "creatures" (the Norn-like protagonists). Simple innate behaviour, biome-bound like
+berries and trees. Tests: `fauna_tests` (species table, population, flight, hunting, creature bites, breeding/caps, starvation, migration, water),
+world-level cases in `intelligence_tests`, `save_tests` (FAUN section, bit-exact continuation with wildlife), `procgen_tests` (models), `powers_tests`,
+`mods_tests`.
+- **Species** (`Species`, `SpeciesDef`, `speciesDef()`): herbivores **Hare, Deer, Antelope, Tapir** and predators **Wolf, Fox, Lion, Jaguar**. Each has
+  size, speed, sense/panic radius, group size, per-biome presence weights, population cap, maturity, breed cooldown, lifespan, prey mask, whether it
+  hunts creatures, whether it swims. Habitats: hare plains/forest/taiga/tundra, deer forest/plains/taiga, antelope savanna (+desert/plains), tapir
+  jungle, wolf taiga/tundra/forest, fox plains/forest/taiga/tundra, lion savanna, jaguar jungle (`pickSpeciesFor`; predators are ×0.12 as likely
+  as herbivores in a biome pick).
+- **`Fauna`** (no dependency on `World`; gets `CreatureView`s, returns `Bite`s; deterministic through the world RNG): `populate` (14 herbivore groups by
+  biome, then one pack per predator species if ≥ 3 prey exist and 85% roll), `spawn/spawnNatural/removeInCircle/nearest`, `tick`, `exportState/importState`.
+  `kMaxAnimals = 160`, caps per species (hare 14, deer 10, antelope 12, tapir 5, wolf 4, fox 3, lion 3, jaguar 2). Settles at ~40-50 animals.
+- **Herbivore AI**: nearest predator within `panic` (or a creature within 0.3·panic) → **Flee** (full speed, stamina 0.07/s, 2.5 s after the threat is
+  gone); hunger > 0.55 → **Graze** (hunger -0.06/s anywhere — grass is not a modelled resource) until 0.2; else Wander (herd cohesion towards the centre
+  of same-species within 18 units if > 7 away) alternating with Rest. **Predator AI**: hunger grows 0.0025/s; > 0.5 → picks the nearest prey animal in
+  `sense` (else, with `huntsCreatures` and hunger > 0.7, a creature within 0.8·sense), **Hunt** up to 25 s at full speed (stamina -0.12/s, exhausted =
+  0.3× speed), gives up beyond 1.4·sense (15 s search cooldown); in reach it attacks: animal prey is killed with probability 0.55 per 0.7 s attempt
+  (hunger -0.55, **Feed** 6 s); a creature is **bitten** for 0.28 every 1.1 s (`Bite` → `World`), and when the creature vanishes within 4 s of a bite
+  the wolf counts the meal (hunger -0.5). Foxes never hunt creatures; a predator with animal prey nearby never goes for a creature.
+- **Life cycle**: hunger 1 → health -0.012/s → starvation death; lifespan death; mature (age ≥ maturity), hunger < 0.4 (0.45 predators), health ≥ 0.7,
+  cooldown over, under the species cap, a mature same-species mate within 9 units → birth after ~6 s on average (hare litters of 1-2); **immigration**
+  every 25 s: a herbivore species below `max(2, cap/6)` gets a new group at the playfield edge in a suitable biome (70%), a missing predator comes (10%)
+  only if ≥ 6 prey animals exist. Movement: look-ahead around water/cliffs/trunks (`Trees::blocksPoint`) **plus a hard block** on each step (an animal never
+  enters water unless it swims — the look-ahead alone let hares wade), soft playfield bounds, separation within 1.4·size.
+- **World integration**: `World` owns `Fauna m_fauna`; `growWildlife(terrain)` at start and on "Новый мир"; `Fauna::tick` runs first each tick;
+  **bites** reduce `Creature::health` (fear = 1) and a killed creature gets `deathCause 5` (`WorldStats::deathsPredation`). Creatures **sense predators
+  as threats** through the existing hazard channel: a hunting predator is felt from 28 units, a calm one from 12 (`kPredatorSense/kPredatorNear`) —
+  fear, Flee, alarm call, herd panic all come for free. Saves: new `FAUN` section (older files simply have no animals; immigration refills them).
+- **Measured** (20 min, 8 seeds, all systems on): ~39-49 animals, 11-40 animal kills, 4-43 creature bites and **1-12 creatures mauled** per world; creature
+  populations stay in their usual 20-80 range. Also fixed while measuring: `growBerryBushes` could make 45% of bushes poisonous in small worlds (one seed
+  starved to extinction) — poisonous bushes are now capped at a quarter.
+- **Rendering**: `AnimalGen::buildAnimal(species)` — flat-shaded low-poly (body + belly blobs, 4 tapered-prism legs with dark hooves, neck, head, snout, ears,
+  tail; deer antlers, antelope horns, lion mane, jaguar spots, fox/wolf bushy tails, tapir snout/saddle), model faces +Z, feet on y = 0. `Application` builds
+  one mesh per species, yaw from `heading`, juveniles smaller (`0.55 + 0.45·age/maturity`), a little bob when running, `kAnimalVisualScale = 1.6` (true
+  sizes are too small from the god camera), shadows and temporal-AA motion vectors (`trackId` = animal id) like creatures. Debug: `WSIM_ZOO=1` (one of each
+  species in a row at the camera pivot), the debug window shows "Animals: N (herbivores, predators), kills, bitten, mauled".
+- **Tools**: god power **"Звери"** (key 5; `GodContext::animal`, biome-appropriate species per point; "Стереть" removes animals too; the 10th power is on key `0`),
+  **"Осмотр"** picks the nearest animal/creature/bush (`drawAnimalInspector`: species, diet · state, health, hunger, age); mods: JSON type `animal`
+  (`species`: hare, deer, antelope, tapir, wolf, fox, lion, jaguar), Lua `ctx:animal(x, z [, species])`, `ctx:erase_animals(x, z, r)`.
+- Not done: **no animal sounds** (howls, bleats), no leg/head animation (models are rigid, only a bob), no sexes/antler growth, animals ignore berries, houses and
+  boulders (no flee from hazards), creatures don't hunt, herd or domesticate animals, no corpses/scavengers, no fish/birds/swimming species except tapir and
+  jaguar wading, predators don't coordinate as packs, no day/night rhythm for hunting.
+
 ## Temporal upscaler and frame generation (`VulkanTemporal.cpp`, `taau.comp`, `framegen.comp`)
 
 Own implementation (not AMD's FSR 2/3): the official FidelityFX SDK builds with MSVC/`.bat` scripts, has HLSL shaders that

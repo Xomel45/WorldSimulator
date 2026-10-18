@@ -24,6 +24,7 @@ constexpr std::uint32_t tag(const char (&s)[5]) {
            static_cast<std::uint32_t>(s[3]) << 24;
 }
 constexpr std::uint32_t kTagTerrain = tag("TERR"), kTagWorld = tag("WRLD"), kTagPhysics = tag("PHYS"), kTagCamera = tag("CAMR"),
+                         kTagFauna = tag("FAUN"),    // дикие животные (старые сохранения без неё -- мир без зверей)
                          kTagBerries = tag("BRRY");  // вид ягод каждого куста (по порядку WRLD.food); старые сохранения -- без неё, все кусты малина
 
 void writeMeta(ByteWriter& w, const SaveMeta& m) {
@@ -244,6 +245,25 @@ std::vector<std::uint8_t> serializeSave(const SaveGame& g, std::uint32_t version
     }
     {
         ByteWriter b;
+        const Fauna::State& f = g.world.fauna;
+        b.u64(f.nextId);
+        b.f32(f.immigrationTimer);
+        b.u32(static_cast<std::uint32_t>(f.animals.size()));
+        for (const Animal& a : f.animals) {
+            b.u64(a.id);
+            b.u8(static_cast<std::uint8_t>(a.species));
+            b.vec3(a.position);
+            for (float v : {a.heading, a.speedNow, a.hunger, a.health, a.age, a.stamina, a.breedCooldown, a.attackCooldown, a.searchCooldown, a.stateTimer, a.wanderTimer, a.sinceBite}) b.f32(v);
+            b.u8(static_cast<std::uint8_t>(a.state));
+            b.u64(a.targetId);
+            b.boolean(a.targetIsCreature);
+            b.boolean(a.alive);
+            b.u8(a.deathCause);
+        }
+        section(payload, kTagFauna, b);
+    }
+    {
+        ByteWriter b;
         b.u32(static_cast<std::uint32_t>(g.bodies.size()));
         for (const auto& body : g.bodies) {
             b.vec3(body.pos);
@@ -366,6 +386,40 @@ bool parseSave(std::span<const std::uint8_t> bytes, SaveGame& out, std::string& 
                 b.sleepTimer  = sr.f32();
                 b.asleepFor   = sr.f32();
                 g.bodies.push_back(b);
+            }
+        } else if (t == kTagFauna) {
+            Fauna::State& f = g.world.fauna;
+            f.nextId = std::max<std::uint64_t>(sr.u64(), 1);
+            const float timer = sr.f32();
+            f.immigrationTimer = std::isfinite(timer) ? timer : 0.0f;
+            const std::uint32_t n = sr.count(Fauna::kMaxAnimals, 81);  // 81 байт на животное
+            for (std::uint32_t i = 0; i < n && sr.ok(); ++i) {
+                Animal a;
+                a.id = sr.u64();
+                const std::uint8_t sp = sr.u8();
+                a.species  = sp < kSpeciesCount ? static_cast<Species>(sp) : Species::Hare;
+                a.position = sr.vec3();
+                auto fin = [&](float lo, float hi) { const float v = sr.f32(); return std::isfinite(v) ? std::clamp(v, lo, hi) : 0.0f; };
+                a.heading = fin(-100.0f, 100.0f);
+                a.speedNow = fin(0.0f, 50.0f);
+                a.hunger = fin(0.0f, 1.0f);
+                a.health = fin(0.0f, 1.0f);
+                a.age = fin(0.0f, 1.0e6f);
+                a.stamina = fin(0.0f, 1.0f);
+                a.breedCooldown = fin(0.0f, 1.0e4f);
+                a.attackCooldown = fin(0.0f, 100.0f);
+                a.searchCooldown = fin(0.0f, 1000.0f);
+                a.stateTimer = fin(0.0f, 1000.0f);
+                a.wanderTimer = fin(-1000.0f, 1000.0f);
+                a.sinceBite = fin(0.0f, 1.0e6f);
+                const std::uint8_t st = sr.u8();
+                a.state = st < static_cast<std::uint8_t>(AnimalState::Count) ? static_cast<AnimalState>(st) : AnimalState::Wander;
+                a.targetId = sr.u64();
+                a.targetIsCreature = sr.boolean();
+                a.alive = sr.boolean();
+                a.deathCause = sr.u8();
+                if (!std::isfinite(a.position.x) || !std::isfinite(a.position.z)) { error = "файл повреждён (животное)"; return false; }
+                f.animals.push_back(a);
             }
         } else if (t == kTagBerries) {
             const std::uint32_t n = sr.count(kMaxFood, 1);

@@ -2,6 +2,7 @@
 
 #include "sim/Berries.hpp"
 #include "sim/Creature.hpp"
+#include "sim/Fauna.hpp"
 #include "sim/Terrain.hpp"
 
 #include <cstddef>
@@ -58,6 +59,7 @@ struct WorldStats {
     std::uint64_t births = 0, matings = 0;
     std::uint64_t deathsOld = 0, deathsStarved = 0, deathsExhausted = 0, deathsPoison = 0, deathsOther = 0;
     std::uint64_t sabotages = 0;  // сколько раз кто-то подсунул другому ягоды из мести
+    std::uint64_t deathsPredation = 0;  // существа, растерзанные хищниками
 };
 
 // Полное состояние мира для сохранения/загрузки (всё, что нужно, чтобы продолжить симуляцию
@@ -69,6 +71,7 @@ struct WorldState {
     std::vector<FoodSource>                              food;
     std::vector<Building>                                buildings;
     std::vector<std::pair<std::uint64_t, float>>         pendingGrief;  // по возрастанию id
+    Fauna::State                                         fauna;         // дикие животные
 };
 
 class World {
@@ -120,6 +123,14 @@ public:
     std::size_t removeBuildings(float x, float z, float radius);
     [[nodiscard]] std::span<const Building> buildings() const noexcept { return m_buildings; }
 
+    // ── Дикие животные (sim/Fauna): травоядные и хищники по биомам ──
+    // Заселяет игровую область заново (при создании мира и в "Новом мире"); ГСЧ мировой.
+    void growWildlife(const Terrain& terrain);
+    [[nodiscard]] const Fauna& fauna() const noexcept { return m_fauna; }
+    bool spawnAnimal(Species s, float x, float z) { return m_fauna.spawn(s, x, z, m_rng); }
+    bool spawnNaturalAnimal(const Terrain& terrain, float x, float z) { return m_fauna.spawnNatural(terrain, x, z, m_rng); }
+    std::size_t removeAnimals(float x, float z, float radius) { return m_fauna.removeInCircle(x, z, radius); }
+
     static constexpr std::size_t kMaxFood      = 150;
     static constexpr float       kBushSpacing  = 1.6f;   // ближе центры не сажаем
     // Куст в (x, z) данного вида, полный. false -- слишком близко к другому кусту или их уже kMaxFood.
@@ -139,6 +150,7 @@ private:
     std::vector<Building>    m_buildings;
     std::vector<Hazard>      m_hazards;
     WorldStats               m_stats;
+    Fauna                    m_fauna;
 
     // id выжившего родственника только что умершего существа -> ping на
     // ровно следующий тик (см. SenseInputs::lovedOneDied -- тот же

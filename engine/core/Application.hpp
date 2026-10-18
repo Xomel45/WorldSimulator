@@ -102,6 +102,10 @@ private:
     std::vector<SceneObject>           m_buildingObjects;
     // Еда: кусты (по World::food()).
     std::array<std::shared_ptr<Mesh>, kBerryKindCount> m_bushMeshes;  // по одному на вид ягод (цвет листвы и ягод)
+    // Дикие животные (World::fauna()): по мешу на вид; объекты пересобираются из мира каждый update().
+    std::array<std::shared_ptr<Mesh>, kSpeciesCount>   m_animalMeshes;
+    std::vector<SceneObject>                           m_animalObjects;
+    std::unordered_map<std::uint64_t, glm::vec3>       m_prevAnimalPos;
     std::vector<SceneObject>           m_foodObjects;
 
     // Рельеф — независим от World в этом раунде (чисто визуальный/
@@ -119,7 +123,9 @@ private:
     // Осмотр существа: выбор кликом (сила "Осмотр") и панель состояния со своими нуждами и занятием.
     void drawInspector(const CameraData& cam);
     void drawBushInspector(const CameraData& cam);
+    void drawAnimalInspector(const CameraData& cam);
     std::uint64_t              m_inspectId = 0;
+    std::optional<std::uint64_t> m_inspectAnimal;  // "Осмотр" зверя (id)
     std::optional<glm::vec2>   m_inspectBush;   // "Осмотр" куста (если рядом не нашлось существа): его положение
     struct TimedHazard { Hazard hazard; float ttl; };
     std::vector<TimedHazard>   m_impactHazards;  // места свежих ударов валунов: существа какое-то время их боятся

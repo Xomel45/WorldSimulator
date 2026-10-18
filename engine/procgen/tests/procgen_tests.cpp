@@ -1,4 +1,5 @@
 #include "procgen/HouseGen.hpp"
+#include "procgen/AnimalGen.hpp"
 #include "procgen/TreeGen.hpp"
 
 #include "test_util.hpp"
@@ -153,6 +154,30 @@ int main() {
         std::size_t tris = 0;
         for (int v = 0; v < wsim::kTreeVariants; ++v) tris += buildTree(wsim::TreeSpecies::Oak, v).indices.size() / 3;
         std::printf("oak triangles over %d variants: %zu\n", wsim::kTreeVariants, tris);
+    }
+
+    // Животные: меши корректны, ноги на земле, длина по +Z, виды различаются, хищники не уступают размером добыче в "массе".
+    {
+        std::size_t verts[wsim::kSpeciesCount] = {};
+        for (int i = 0; i < wsim::kSpeciesCount; ++i) {
+            const auto sp = static_cast<wsim::Species>(i);
+            const MeshData m = buildAnimal(sp);
+            checkMesh(m);
+            float minY = 1e9f, maxY = -1e9f, minZ = 1e9f, maxZ = -1e9f, maxX = 0;
+            for (const auto& v : m.vertices) {
+                minY = std::min(minY, v.position.y); maxY = std::max(maxY, v.position.y);
+                minZ = std::min(minZ, v.position.z); maxZ = std::max(maxZ, v.position.z);
+                maxX = std::max(maxX, std::fabs(v.position.x));
+            }
+            WSIM_CHECK(minY > -0.02f && minY < 0.02f);          // стоит на земле
+            WSIM_CHECK(maxY > 0.35f && maxY < 2.2f);
+            WSIM_CHECK(maxZ - minZ > 0.5f && maxZ > 0.25f);     // вытянут вдоль Z, голова впереди (+Z)
+            WSIM_CHECK(maxX < 0.6f);
+            WSIM_CHECK(m.vertices.size() < 4500);
+            WSIM_CHECK(buildAnimal(sp).vertices.size() == m.vertices.size());  // детерминирован
+            verts[i] = m.vertices.size();
+        }
+        WSIM_CHECK(verts[static_cast<int>(wsim::Species::Hare)] != verts[static_cast<int>(wsim::Species::Lion)]);
     }
 
     std::puts("procgen_tests: OK");

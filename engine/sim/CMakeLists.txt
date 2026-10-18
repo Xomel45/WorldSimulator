@@ -9,6 +9,7 @@ add_library(engine_sim STATIC
     Behavior.cpp
     Trees.cpp
     Berries.cpp
+    Fauna.cpp
     SaveGame.cpp
 )
 
