@@ -155,14 +155,15 @@ std::int32_t wildCellIndex(float v, float cell) { return static_cast<std::int32_
 std::int64_t packWild(std::int32_t cx, std::int32_t cz) { return (static_cast<std::int64_t>(cx) << 32) | static_cast<std::uint32_t>(cz); }
 }  // namespace
 
-void Fauna::hurt(std::uint64_t id, float damage) {
+bool Fauna::hurt(std::uint64_t id, float damage) {
     for (Animal& a : m_animals) {
         if (a.id != id || !a.alive) continue;
         a.health -= damage;
-        if (a.health <= 0.0f) { a.alive = false; a.deathCause = 5; }
-        else { a.state = AnimalState::Flee; a.stateTimer = 6.0f; a.searchCooldown = 25.0f; a.targetIsCreature = false; }
-        return;
+        if (a.health <= 0.0f) { a.alive = false; a.deathCause = 5; return true; }
+        a.state = AnimalState::Flee; a.stateTimer = 6.0f; a.searchCooldown = 25.0f; a.targetIsCreature = false;
+        return false;
     }
+    return false;
 }
 
 Fauna::State Fauna::exportState() const { return {m_nextId, m_animals, m_immigrationTimer, m_explored}; }

@@ -63,6 +63,29 @@ MeshData buildShield() {
     return m;
 }
 
+MeshData buildStockpile() {
+    MeshData m;
+    addBox(m, {-1.4f, 0.0f, -1.0f}, {1.4f, 0.14f, 1.0f}, kDarkWood);   // помост
+    for (int row = 0; row < 3; ++row)                                   // штабель: три яруса брёвен вдоль X
+        for (int i = 0; i < 4 - row; ++i) {
+            const float z = -0.62f + 0.31f * static_cast<float>(i) + 0.155f * static_cast<float>(row), y = 0.14f + 0.28f * static_cast<float>(row);
+            addBox(m, {-1.1f, y, z - 0.14f}, {1.1f, y + 0.28f, z + 0.14f}, tint(kWood, 0.88f + 0.06f * static_cast<float>((i + row) % 3)));
+            addBox(m, {1.1f, y + 0.05f, z - 0.1f}, {1.14f, y + 0.23f, z + 0.1f}, kLightWood);
+        }
+    for (float x : {-1.3f, 1.3f}) addBox(m, {x - 0.08f, 0.14f, 0.78f}, {x + 0.08f, 1.6f, 0.94f}, kWood);   // столбы навеса
+    addBox(m, {-1.45f, 1.6f, 0.5f}, {1.45f, 1.72f, 1.2f}, tint(kLightWood, 0.95f));                      // кровля
+    return m;
+}
+
+MeshData buildBucket() {
+    MeshData m;
+    addBox(m, {-0.13f, 0.0f, -0.13f}, {0.13f, 0.28f, 0.13f}, kWood);
+    addBox(m, {-0.15f, 0.08f, -0.15f}, {0.15f, 0.12f, 0.15f}, kIron);   // обруч
+    addBox(m, {-0.15f, 0.2f, -0.15f}, {0.15f, 0.24f, 0.15f}, kIron);
+    addBox(m, {-0.015f, 0.28f, -0.14f}, {0.015f, 0.4f, 0.14f}, kIron);  // дужка
+    return m;
+}
+
 MeshData buildLogs(int count) {
     MeshData m;
     count = std::clamp(count, 1, 4);

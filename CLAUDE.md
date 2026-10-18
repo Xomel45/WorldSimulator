@@ -827,6 +827,23 @@ Creatures now cut trees down, carry logs, craft tools and fight predators with t
 - Not done: **stockpile/warehouse** (logs are carried and crafted in place), buckets and thirst, barricade durability (predators don't attack it), creatures don't avoid their own traps (traps only affect animals),
   bridges never decay and cannot be removed by powers, meat hunting, mods API, building sounds, creatures do not plan routes using bridges (they only build when blocked).
 
+### Stage 3: thirst, buckets, spear hunting, stockpile
+
+- **Thirst** (`Creature::thirst`, 0..1, **only in a world with terrain** — flat test worlds never get thirsty): +0.0022/s (~7.5 min to full from 0); at 1 health drains 0.006/s (`deathCause 6`, `WorldStats::deathsThirst`);
+  health regeneration pauses above 0.95. `Behavior::Drink` (score `0.5 + 2.6·thirst`, from 0.65, kept until 0.08 or a full bucket): `World::tick` finds the shore by 16 rays up to 44 units (cache `waterKnown/waterX/Z`, kept until
+  reached; the point is 1.5 units before the water), drinking within 2.2 units of it lowers thirst 0.3/s. Without known water a thirsty creature wanders more. Measured: nobody dies of thirst, populations stay in the old range
+  (an earlier 0.004/s rate caused an extinction on one seed — that is why it is slow).
+- **Bucket** (`kSkillBucket`, 2 logs, `Creature::hasBucket`, `water` 0..3 sips, filled while drinking or topping up when `thirst > 0.25`): a sip from the bucket anywhere when thirst > 0.5 (-0.45); while eating, a bucket with water pours on a bush
+  below 0.45 (+0.3, `bushesWatered`). Invented mostly while thirsty.
+- **Spear hunting** (`Behavior::Hunt`, score `1.2 + 1.6·hunger`, hunger > 0.5, spear, no bush within 10): the world gives the nearest herbivore within 22 (`SenseInputs::preyId/preyDist`); within 2 units a stab (cooldown 1.2 s, `Fauna::hurt` 0.55,
+  spear -0.06) — the second kills; a kill feeds 0.7 (`meatKills`). Animals still flee, so kills are rare (1-3 per 20 min on the probe seeds) — it is a supplement, not a food chain yet.
+- **Stockpile** (`StructureKind::Stockpile`, `Structure::stock` up to 40, `kSkillStockpile` needs the spear; 3 logs, built at the stand near home when none within 60 units; one per 25 units): holders of the skill chop spare logs while the pile is
+  below 24 and **deposit** what exceeds their goal (`Behavior::Haul`, `stockRequest` 1); anyone who wants wood and sees a stocked pile within 45 units **withdraws** instead of chopping (`stockRequest` 2). Counters: `logsStored/logsTaken`.
+- **Saves v9**: creature thirst/water/hunt timer/bucket/water cache; new `STR2` section (structures incl. `stock`, kinds 1-3; the older `STRC` is still read). `kAllSkills = 127`.
+- **Visible**: stockpile (platform + log stack + roof; height follows the stock), bucket in the creature's hand; inspector shows thirst, bucket and all seven recipes; debug window lists meat/buckets/watered/stock/thirst deaths.
+- Not done: houses/shelters (the stockpile is the only community building; creatures do not live in it), sharing meat, bucket-watering by plan (only while eating), thirst of animals, wells/irrigation, droughts, animals carrying
+  off stock, a second stockpile for a far-away group beyond the 25/60-unit rule being tuned, trade.
+
 ## Temporal upscaler and frame generation (`VulkanTemporal.cpp`, `taau.comp`, `framegen.comp`)
 
 Own implementation (not AMD's FSR 2/3): the official FidelityFX SDK builds with MSVC/`.bat` scripts, has HLSL shaders that
@@ -1238,7 +1255,8 @@ source of truth for the hex constants at the top of `MainMenu.cpp`.
 - [x] Creature intelligence v1: behavior layer, ecology (starvation, real mating), hazards, inspector
 - [x] Resources/tools stage 1: logging, spear, shield (see "Resources and tools")
 - [x] Civilization stage 2: bridges, barricades, traps, visible gear (see "Stage 2")
-- [ ] Civilization stage 3: stockpile, buckets + thirst, meat hunting, houses for creatures
+- [x] Civilization stage 3: stockpile, buckets + thirst, meat hunting (see "Stage 3")
+- [ ] Civilization stage 4: houses/shelters for creatures, day/night sleep, division of labour
 - [ ] More powers (fire, rain, disasters, food, smite individuals), undo
 - [x] Sound: procedural synth + miniaudio (see "Sound")
 - [ ] Day/night cycle (lantern and `WSIM_NIGHT` are the hooks; sound ambience has a hook too)

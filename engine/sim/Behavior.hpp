@@ -17,6 +17,9 @@ struct Decision {
     bool      pick   = false;  // у плохого куста: взять ягоды, чтобы подсунуть обидчику
     bool      serve  = false;  // рядом с обидчиком: подсунуть то, что несёт
     bool      chop   = false;  // у дерева: рубит
+    bool      drink  = false;  // у берега: пьёт
+    bool      hunt   = false;  // в пределах удара: бьёт добычу копьём
+    int       stock  = 0;      // у склада: 1 сдаёт брёвна, 2 берёт
     int       build  = 0;      // 1 мост, 2 баррикада, 3 ловушка: строит (стоя); где -- buildAt/buildYaw
     glm::vec2 buildAt{};
     float     buildYaw = 0.0f;

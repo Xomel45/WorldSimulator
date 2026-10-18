@@ -123,7 +123,7 @@ public:
               std::span<const glm::vec2> focus = {}, std::vector<Structure>* structures = nullptr);
 
     // Удар по животному (копьё существа): здоровье падает, раненый убегает; убитое снимается со следующим шагом (deathCause 5).
-    void hurt(std::uint64_t id, float damage);
+    bool hurt(std::uint64_t id, float damage);   // true -- животное погибло от удара
 
     // Сохранение.
     struct State {

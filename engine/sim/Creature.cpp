@@ -101,6 +101,9 @@ const char* behaviorName(Behavior b) noexcept {
         case Behavior::Chop:      return "Рубит дерево";
         case Behavior::Craft:     return "Мастерит";
         case Behavior::Build:     return "Строит";
+        case Behavior::Drink:     return "Пьёт";
+        case Behavior::Haul:      return "Носит брёвна";
+        case Behavior::Hunt:      return "Охотится";
         case Behavior::Count:     break;
     }
     return "?";
@@ -193,6 +196,8 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
             dec.eat   = dec.pick = dec.serve = dec.chop = false;
             dec.craft = 0;
             dec.build = 0;
+            dec.drink = dec.hunt = false;
+            dec.stock = 0;
             dec.alarm = std::max(dec.alarm, 0.8f);
             behavior  = Behavior::Flee;
         } else if (glm::length(dec.move) > 0.01f) {
@@ -205,16 +210,23 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
     serveRequest = dec.serve ? 1 : 0;
     buildRequest = 0;
     if (dec.build != 0) {
-        buildProgress += dt / (dec.build == 1 ? 1.2f : (dec.build == 2 ? 3.0f : 2.0f));
+        buildProgress += dt / (dec.build == 1 ? 1.2f : (dec.build == 2 ? 3.0f : (dec.build == 4 ? 3.0f : 2.0f)));
         if (buildProgress >= 1.0f) {
             buildProgress = 0.0f;
             buildRequest  = static_cast<std::uint8_t>(dec.build);
             buildAt       = dec.buildAt;
             buildYaw      = dec.buildYaw;
-            buildTimer    = dec.build == 1 ? 0.3f : (dec.build == 2 ? 25.0f : 40.0f);
+            buildTimer    = dec.build == 1 ? 0.3f : (dec.build == 2 ? 25.0f : (dec.build == 4 ? 60.0f : 40.0f));
         }
     } else {
         buildProgress = 0.0f;
+    }
+    huntRequest  = dec.hunt ? 1 : 0;
+    stockRequest = static_cast<std::uint8_t>(dec.stock);
+    huntTimer    = std::max(0.0f, huntTimer - dt);
+    if (dec.drink) {                   // пьёт у воды и набирает ведро
+        thirst = std::max(0.0f, thirst - 0.3f * dt);
+        if (hasBucket) water = std::min(kBucketCapacity, water + 1.2f * dt);
     }
     chopRequest  = dec.chop ? 1 : 0;   // мир срубит дерево, когда набежит время (World::tick)
     dangerMemory = senses.predatorSeen ? 120.0f : std::max(0.0f, dangerMemory - dt);
@@ -224,6 +236,7 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
             craftProgress = 0.0f;
             if (dec.craft == 1 && wood >= kSpearWood)       { wood -= kSpearWood;  spearDur = 1.0f; }
             else if (dec.craft == 2 && wood >= kShieldWood) { wood -= kShieldWood; shieldDur = 1.0f; }
+            else if (dec.craft == 3 && wood >= kBucketWood) { wood -= kBucketWood; hasBucket = true; }
         }
     } else {
         craftProgress = 0.0f;
@@ -348,7 +361,12 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
     matingCooldown = std::max(0.0f, matingCooldown - dt);
     if (needs.hunger >= 0.95f) health -= 0.03f * dt;
     if (needs.energy <= 0.02f) health -= 0.012f * dt;
-    if (needs.hunger < 0.6f && needs.energy > 0.2f) health = std::min(1.0f, health + 0.01f * dt);
+    if (terrain) {   // жажда (в плоском мире без воды -- тестовые миры -- не считается)
+        thirst = std::min(1.0f, thirst + 0.0022f * dt);
+        if (hasBucket && water >= 1.0f && thirst > 0.5f) { thirst = std::max(0.0f, thirst - 0.45f); water -= 1.0f; }   // глоток из ведра где угодно
+        if (thirst >= 1.0f) health -= 0.006f * dt;
+    }
+    if (needs.hunger < 0.6f && needs.energy > 0.2f && thirst < 0.95f) health = std::min(1.0f, health + 0.01f * dt);
     // Яд: пока он в крови, здоровье и силы тают, сам выводится. Вкус со временем тускнеет к нейтральному: через
     // четверть часа и ядовитая ягода "забывается" настолько, что её можно попробовать снова (иначе голодающий не мог бы
     // вернуться к кусту, о который когда-то обжёгся).
@@ -382,7 +400,7 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
     if (grudge > 0.0f && grudgeId == 0) grudge = 0.0f;
     for (std::size_t k = 0; k < taste.size(); ++k)
         if (tasteSamples[k] > 0) taste[k] += (0.5f - taste[k]) * 0.002f * dt;
-    if (health <= 0.0f && alive) { alive = false; deathCause = toxin > 0.05f ? 4 : (needs.hunger >= 0.95f ? 2 : 3); }
+    if (health <= 0.0f && alive) { alive = false; deathCause = toxin > 0.05f ? 4 : (needs.hunger >= 0.95f ? 2 : (thirst >= 1.0f ? 6 : 3)); }
 
     // Reward-modulated Hebbian: подкрепляем/ослабляем связи, которые только
     // что сработали, в зависимости от того, стало ли лучше или хуже за этот

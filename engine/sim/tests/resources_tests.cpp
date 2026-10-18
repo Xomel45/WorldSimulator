@@ -295,6 +295,136 @@ int main() {
         WSIM_CHECK(back.world.structures.size() == w.structures().size());
     }
 
+    // ── Этап 3: жажда, ведро, охота копьём, склад ──
+    {
+        Terrain t(World::kWorldHalfSize, 29);
+        // Место на суше, где вода в 6-14 единицах (по лучу +x).
+        glm::vec2 shore{0, 0};
+        bool found = false;
+        for (float z = -90; z <= 90 && !found; z += 2)
+            for (float x = -90; x <= 80 && !found; x += 2)
+                if (t.heightAt(x, z) > 0.8f && !t.isUnderwater(x + 5.0f, z) && t.isUnderwater(x + 10.0f, z) && t.heightAt(x - 3.0f, z) > 0.5f) { shore = {x, z}; found = true; }
+        WSIM_CHECK(found);
+
+        // Жажда растёт только в мире с рельефом; напиться можно у берега.
+        {
+            World flat = lone(21, {0.0f, 0.0f}, 0);
+            for (int i = 0; i < 60 * 60; ++i) flat.tick(kDt, nullptr);
+            WSIM_CHECK(flat.population()[0].creature.thirst == 0.2f);
+            World w = lone(21, shore, 0);
+            WorldState st = w.exportState();
+            st.population[0].creature.thirst = 0.9f;
+            WSIM_CHECK(w.importState(st));
+            float minThirst = 1.0f;
+            for (int i = 0; i < 60 * 40; ++i) { w.tick(kDt, &t); minThirst = std::min(minThirst, w.population()[0].creature.thirst); if (i % 300 == 299) feedAll(w); }
+            WSIM_CHECK(minThirst < 0.3f);
+        }
+        // Без воды рядом жажда губит: здоровье тает при thirst = 1 (мир без воды в досягаемости -- в плоском тесте через рельеф нельзя, проверяем формулой Creature).
+        {
+            Creature c;
+            Rng rng(1);
+            c.genome = Genome::random(rng);
+            c.age = c.lifespan() * 0.3f;
+            c.thirst = 1.0f;
+            SenseInputs si;
+            Terrain flatish(World::kWorldHalfSize, 29);
+            si.terrain = &flatish;
+            c.position = {0.0f, 0.0f, 0.0f};
+            const float h0 = c.health;
+            for (int i = 0; i < 60 * 20; ++i) { c.needs.hunger = 0.1f; c.needs.energy = 1.0f; c.tick(kDt, si); c.thirst = 1.0f; }
+            WSIM_CHECK(c.health < h0 - 0.05f);
+        }
+        // Ведро: знающий мастерит его, набирает воду и пьёт из него вдали от берега.
+        {
+            World w = lone(22, shore, kSkillBucket);
+            WorldState st = w.exportState();
+            st.population[0].creature.wood = 2.0f;
+            st.population[0].creature.thirst = 0.5f;
+            WSIM_CHECK(w.importState(st));
+            for (int i = 0; i < 60 * 90 && !(w.population()[0].creature.hasBucket && w.population()[0].creature.water >= 1.0f); ++i) {
+                w.tick(kDt, &t);
+                if (i % 300 == 299) feedAll(w);
+            }
+            WSIM_CHECK(w.stats().bucketsMade == 1 && w.population()[0].creature.hasBucket && w.population()[0].creature.water >= 1.0f);
+            WorldState st2 = w.exportState();
+            st2.population[0].creature.thirst = 0.8f;
+            WSIM_CHECK(w.importState(st2));
+            w.tick(kDt, &t);   // глоток из ведра
+            WSIM_CHECK(w.population()[0].creature.thirst < 0.5f);
+        }
+    }
+
+    // Охота: голодный с копьём бьёт обездвиженную добычу -- со второго удара (0.55 + 0.55 > 1) зверь убит, существо сыто.
+    {
+        World w = lone(23, {0.0f, 0.0f}, kSkillSpear);
+        WorldState st = w.exportState();
+        st.population[0].creature.spearDur = 1.0f;
+        st.population[0].creature.needs.hunger = 0.9f;
+        Animal deer;
+        deer.id = 1; deer.species = Species::Deer; deer.position = {4.0f, 0.0f, 0.0f}; deer.stun = 60.0f; deer.age = speciesDef(Species::Deer).maturity * 1.5f;
+        st.fauna.animals = {deer};
+        st.fauna.nextId = 10;
+        WSIM_CHECK(w.importState(st));
+        for (int i = 0; i < 60 * 20 && w.stats().meatKills == 0; ++i) w.tick(kDt, nullptr);
+        WSIM_CHECK(w.stats().meatKills == 1);
+        WSIM_CHECK(w.population()[0].creature.needs.hunger < 0.5f);
+        WSIM_CHECK(w.population()[0].creature.spearDur < 1.0f);
+    }
+
+    // Склад: знающий строит его на стойбище, сдаёт излишки; нуждающийся берёт оттуда, а не рубит.
+    {
+        Terrain t(World::kWorldHalfSize, 29);
+        glm::vec2 at{0, 0};
+        bool ok = false;
+        for (float z = -80; z <= 80 && !ok; z += 4)
+            for (float x = -80; x <= 80 && !ok; x += 4)
+                if (t.heightAt(x, z) > 1.5f && t.heightAt(x + 6, z) > 1.5f && t.heightAt(x - 6, z) > 1.5f && t.heightAt(x, z + 6) > 1.5f && t.heightAt(x, z - 6) > 1.5f) { at = {x, z}; ok = true; }
+        WSIM_CHECK(ok);
+        World w = lone(24, at, kSkillSpear | kSkillStockpile);
+        WorldState st = w.exportState();
+        st.population[0].creature.wood = 3.0f;
+        st.population[0].creature.spearDur = 1.0f;   // копьё есть -- лишнего не надо
+        WSIM_CHECK(w.importState(st));
+        for (int i = 0; i < 60 * 30 && w.stats().stockpilesBuilt == 0; ++i) { w.tick(kDt, &t); if (i % 300 == 299) feedAll(w); }
+        WSIM_CHECK(w.stats().stockpilesBuilt == 1);
+        WSIM_CHECK(w.structures().size() == 1 && w.structures()[0].kind == StructureKind::Stockpile);
+        // Второй стороной: один склад на стойбище (место рядом занято).
+        WSIM_CHECK(!w.placeStructure(&t, StructureKind::Stockpile, at.x + 10.0f, at.y, 0.0f));
+
+        // Сдача излишков: у существа 4 бревна, копьё есть, цель -- 0.
+        WorldState s2 = w.exportState();
+        s2.population[0].creature.wood = 4.0f;
+        s2.population[0].creature.needs.hunger = 0.1f;
+        WSIM_CHECK(w.importState(s2));
+        for (int i = 0; i < 60 * 40 && w.structures()[0].stock < 1.0f; ++i) { w.tick(kDt, &t); if (i % 300 == 299) feedAll(w); }
+        WSIM_CHECK(w.structures()[0].stock >= 1.0f && w.stats().logsStored >= 1);
+
+        // Берёт со склада: копьё потеряно, умеет копьё -- идёт за брёвнами на склад.
+        WorldState s3 = w.exportState();
+        s3.structures[0].stock = 6.0f;
+        s3.population[0].creature.wood = 0.0f;
+        s3.population[0].creature.spearDur = 0.0f;
+        s3.population[0].creature.skills = kSkillSpear;
+        WSIM_CHECK(w.importState(s3));
+        const auto felledBefore = w.stats().treesFelled;
+        for (int i = 0; i < 60 * 40 && w.stats().spearsMade == 0; ++i) { w.tick(kDt, &t); if (i % 300 == 299) feedAll(w); }
+        WSIM_CHECK(w.stats().logsTaken >= 2 && w.stats().spearsMade >= 1 && w.stats().treesFelled == felledBefore);
+
+        // Сохранение: склад с брёвнами, жажда и ведро.
+        WorldState s4 = w.exportState();
+        s4.population[0].creature.hasBucket = true;
+        s4.population[0].creature.water = 2.0f;
+        s4.population[0].creature.thirst = 0.7f;
+        WSIM_CHECK(w.importState(s4));
+        PhysicsWorld physics;
+        SaveGame back;
+        std::string err;
+        WSIM_CHECK(parseSave(serializeSave(captureSave("x", 0, 0.0f, t, w, physics, CameraState{})), back, err));
+        WSIM_CHECK(back.world.structures.size() == 1 && back.world.structures[0].kind == StructureKind::Stockpile && back.world.structures[0].stock == w.structures()[0].stock);
+        const Creature& c = back.world.population[0].creature;
+        WSIM_CHECK(c.hasBucket && std::fabs(c.water - 2.0f) < 1.0e-6f && std::fabs(c.thirst - 0.7f) < 1.0e-6f);
+    }
+
     std::puts("resources_tests: OK");
     return 0;
 }

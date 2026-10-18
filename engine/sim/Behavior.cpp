@@ -90,7 +90,7 @@ Decision decide(Creature& c, const SenseInputs& s, const BrainOutputs& raw, floa
     const bool mateVisible = s.mateDist < kNoTarget;
     const bool groupVisible = s.groupCount > 0;
 
-    const bool wasEating = c.behavior == Behavior::Eat, wasResting = c.behavior == Behavior::Rest;
+    const bool wasEating = c.behavior == Behavior::Eat, wasResting = c.behavior == Behavior::Rest, wasDrinking = c.behavior == Behavior::Drink;
 
     // ── Оценки занятий.
     std::array<float, kStates> score{};
@@ -135,7 +135,24 @@ Decision decide(Creature& c, const SenseInputs& s, const BrainOutputs& raw, floa
     const int   tool = c.nextTool();
     const bool  canCraft = tool != 0 && c.wood >= c.woodNeeded();
     if (canCraft && n.fear < 0.4f && n.hunger < 0.7f) S(Behavior::Craft) = 1.2f + 1.2f * danger01;
-    if (!canCraft && c.wantsWood() && treeSeen && n.fear < 0.4f && n.hunger < 0.6f && tired < 0.65f) S(Behavior::Chop) = 0.55f + 1.3f * danger01;
+    const bool stockSeen = s.stockDist < kNoTarget;
+    const bool forStock  = c.knows(kSkillStockpile) && stockSeen && s.stockAmount < 24.0f && c.wood < kMaxWood;   // рубит про запас общине
+    if (!canCraft && (c.wantsWood() || forStock) && treeSeen && n.fear < 0.4f && n.hunger < 0.6f && tired < 0.65f)
+        S(Behavior::Chop) = c.wantsWood() ? 0.55f + 1.3f * danger01 : 0.45f;
+    // Склад: берёт нужные брёвна оттуда (вместо рубки) и сдаёт излишки.
+    const bool withdrawNow = stockSeen && s.stockAmount >= 1.0f && c.wantsWood() && s.stockDist < 45.0f;
+    const bool depositNow  = c.knows(kSkillStockpile) && stockSeen && c.wood > c.woodGoal() + 0.99f;
+    if (n.fear < 0.4f && n.hunger < 0.7f) {
+        if (withdrawNow) S(Behavior::Haul) = 1.6f + 1.2f * danger01;
+        else if (depositNow) S(Behavior::Haul) = 1.3f;
+    }
+    // Жажда: идёт к берегу, пока не напьётся (и набирает ведро); не знает, где вода, -- ищет её.
+    const bool waterSeen = s.waterDist < kNoTarget;
+    if (s.terrain && waterSeen && (c.thirst > 0.65f || (wasDrinking && (c.thirst > 0.08f || (c.hasBucket && c.water < 2.9f))) || (c.hasBucket && c.water < 1.5f && c.thirst > 0.25f)))
+        S(Behavior::Drink) = 0.5f + 2.6f * c.thirst + (c.thirst > 0.85f ? 1.5f : 0.0f);
+    // Охота: голодный с копьём, добыча рядом, ягод поблизости нет.
+    if (c.hasSpear() && s.preyDist < kNoTarget && n.hunger > 0.5f && n.fear < 0.4f && !(foodVisible && s.foodDist < 10.0f))
+        S(Behavior::Hunt) = 1.2f + 1.6f * n.hunger;
 
     // Стройка. Мост: цель (еда/исследование) за водой, а за ней есть суша -- кладёт настил на первую клетку воды перед собой.
     // Баррикада: видит хищника на расстоянии -- ставит заслон между собой и ним. Ловушка: помнит хищника -- ставит на подходе.
@@ -171,11 +188,15 @@ Decision decide(Creature& c, const SenseInputs& s, const BrainOutputs& raw, floa
             buildKind = 3;
             buildAt   = here + th * 2.5f;
         }
-        if (buildKind) S(Behavior::Build) = buildKind == 1 ? 2.6f : 2.4f;
+        if (!buildKind && c.knows(kSkillStockpile) && c.wood >= kStockpileWood && s.stockDist >= kNoTarget && c.awayFromHome() < 0.35f && n.hunger < 0.6f && n.fear < 0.3f) {
+            buildKind = 4;
+            buildAt   = here + glm::vec2{std::cos(c.wanderHeading), std::sin(c.wanderHeading)} * 1.5f;
+        }
+        if (buildKind) S(Behavior::Build) = buildKind == 1 ? 2.6f : (buildKind == 4 ? 1.8f : 2.4f);
     }
 
     // Базовая линия: бродит, любопытные -- охотнее; идущий искать новые места не бросает это на полпути.
-    S(Behavior::Wander) = 0.3f + c.curiosity() * c.boredomLevel() * 0.8f + (c.exploreTimer > 0.0f ? 0.6f : 0.0f);
+    S(Behavior::Wander) = 0.3f + c.curiosity() * c.boredomLevel() * 0.8f + (c.exploreTimer > 0.0f ? 0.6f : 0.0f) + (s.terrain && !waterSeen && c.thirst > 0.6f ? 0.9f : 0.0f);
 
     // ── Выбор с гистерезисом: текущее занятие получает бонус и держится минимум 0.8 с (бегство прерывает сразу).
     c.behaviorTimer += dt;
@@ -256,6 +277,21 @@ Decision decide(Creature& c, const SenseInputs& s, const BrainOutputs& raw, floa
             break;
         case Behavior::Craft:     speed = 0.0f; d.craft = tool; break;
         case Behavior::Build:     speed = 0.0f; d.build = buildKind; d.buildAt = buildAt; d.buildYaw = buildYaw; break;
+        case Behavior::Drink:
+            dir = dirTo(c.position, s.waterPos);
+            if (s.waterDist <= 2.2f) { speed = 0.0f; d.drink = true; }
+            else speed = 0.8f * std::clamp(s.waterDist / 5.0f, 0.4f, 1.0f);
+            break;
+        case Behavior::Haul:
+            dir = dirTo(c.position, s.stockPos);
+            if (s.stockDist <= 2.4f) { speed = 0.0f; d.stock = withdrawNow ? 2 : 1; }
+            else speed = 0.7f * std::clamp(s.stockDist / 5.0f, 0.4f, 1.0f);
+            break;
+        case Behavior::Hunt:
+            dir = dirTo(c.position, s.preyPos);
+            speed = 1.0f;
+            d.hunt = s.preyDist <= 2.0f;
+            break;
         case Behavior::Count:     break;
     }
 

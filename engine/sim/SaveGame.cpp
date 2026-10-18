@@ -24,7 +24,7 @@ constexpr std::uint32_t tag(const char (&s)[5]) {
            static_cast<std::uint32_t>(s[3]) << 24;
 }
 constexpr std::uint32_t kTagTerrain = tag("TERR"), kTagWorld = tag("WRLD"), kTagPhysics = tag("PHYS"), kTagCamera = tag("CAMR"),
-                         kTagStream = tag("STRM"), kTagStructs = tag("STRC"),   // потоковые кусты: время, загруженные ячейки, записи о спящих, происхождение кустов
+                         kTagStream = tag("STRM"), kTagStructs = tag("STRC"), kTagStructs2 = tag("STR2"),   // потоковые кусты: время, загруженные ячейки, записи о спящих, происхождение кустов
                          kTagFauna = tag("FAUN"),    // дикие животные (старые сохранения без неё -- мир без зверей)
                          kTagBerries = tag("BRRY");  // вид ягод каждого куста (по порядку WRLD.food); старые сохранения -- без неё, все кусты малина
 
@@ -118,6 +118,10 @@ void writeCreature(ByteWriter& w, const Inhabitant& in, std::uint32_t version) {
     if (version < 8) return;
     w.f32(c.buildProgress);   // v8: стройка (запрос исполняется в тот же тик и не хранится)
     w.f32(c.buildTimer);
+    if (version < 9) return;
+    for (float v : {c.thirst, c.water, c.huntTimer, c.waterX, c.waterZ, c.waterSearch}) w.f32(v);   // v9
+    w.boolean(c.hasBucket);
+    w.boolean(c.waterKnown);
 }
 
 bool readCreature(ByteReader& r, Inhabitant& in, std::uint32_t version) {
@@ -210,6 +214,18 @@ bool readCreature(ByteReader& r, Inhabitant& in, std::uint32_t version) {
         auto level = [&](float hi) { const float v = r.f32(); return std::isfinite(v) ? std::clamp(v, 0.0f, hi) : 0.0f; };
         c.buildProgress = level(1.0f);
         c.buildTimer    = level(60.0f);
+    }
+    if (version >= 9) {
+        auto level = [&](float hi) { const float v = r.f32(); return std::isfinite(v) ? std::clamp(v, 0.0f, hi) : 0.0f; };
+        c.thirst = level(1.0f);
+        c.water  = level(kBucketCapacity);
+        c.huntTimer = level(10.0f);
+        const float wx = r.f32(), wz = r.f32();
+        c.waterX = std::isfinite(wx) ? wx : 0.0f;
+        c.waterZ = std::isfinite(wz) ? wz : 0.0f;
+        c.waterSearch = level(10.0f);
+        c.hasBucket   = r.boolean();
+        c.waterKnown  = r.boolean();
     }
     return r.ok();
 }
@@ -306,8 +322,8 @@ std::vector<std::uint8_t> serializeSave(const SaveGame& g, std::uint32_t version
     {
         ByteWriter b;
         b.u32(static_cast<std::uint32_t>(g.world.structures.size()));
-        for (const Structure& s : g.world.structures) { b.u8(static_cast<std::uint8_t>(s.kind)); b.f32(s.x); b.f32(s.z); b.f32(s.yaw); b.f32(s.hp); }
-        section(payload, kTagStructs, b);
+        for (const Structure& s : g.world.structures) { b.u8(static_cast<std::uint8_t>(s.kind)); b.f32(s.x); b.f32(s.z); b.f32(s.yaw); b.f32(s.hp); b.f32(s.stock); }
+        section(payload, kTagStructs2, b);
     }
     {
         ByteWriter b;
@@ -505,13 +521,15 @@ bool parseSave(std::span<const std::uint8_t> bytes, SaveGame& out, std::string& 
                 const std::uint32_t m = sr.count(500000, 8);
                 for (std::uint32_t i = 0; i < m && sr.ok(); ++i) f.explored.push_back(sr.i64());
             }
-        } else if (t == kTagStructs) {
-            const std::uint32_t m = sr.count(World::kMaxStructures, 17);
+        } else if (t == kTagStructs || t == kTagStructs2) {   // STRC (v8, без склада) и STR2
+            const bool v2 = t == kTagStructs2;
+            const std::uint32_t m = sr.count(World::kMaxStructures, v2 ? 21 : 17);
             for (std::uint32_t i = 0; i < m && sr.ok(); ++i) {
                 Structure st;
                 const std::uint8_t kind = sr.u8();
                 st.x = sr.f32(); st.z = sr.f32(); st.yaw = sr.f32(); st.hp = sr.f32();
-                if (kind != 1 && kind != 2) { error = "файл повреждён (постройка)"; return false; }
+                if (v2) { const float stock = sr.f32(); st.stock = std::isfinite(stock) ? std::clamp(stock, 0.0f, kStockpileCapacity) : 0.0f; }
+                if (kind < 1 || kind > 3) { error = "файл повреждён (постройка)"; return false; }
                 if (!std::isfinite(st.x) || !std::isfinite(st.z) || !std::isfinite(st.yaw) || !std::isfinite(st.hp)) { error = "файл повреждён (постройка)"; return false; }
                 st.kind = static_cast<StructureKind>(kind);
                 g.world.structures.push_back(st);

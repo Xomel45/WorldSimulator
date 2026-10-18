@@ -143,6 +143,7 @@ bool World::placeStructure(const Terrain* terrain, StructureKind kind, float x, 
     for (const Structure& s : m_structures) {
         const float d = std::hypot(s.x - x, s.z - z);
         if (d < 1.6f) return false;
+        if (kind == StructureKind::Stockpile && s.kind == StructureKind::Stockpile && d < 25.0f) return false;   // один склад на стойбище
         near += d < 8.0f && s.kind == kind;
     }
     if (near >= 3) return false;
@@ -579,8 +580,60 @@ void World::tick(float dt, Terrain* mutableTerrain) {
             senses.predatorSeen    = true;
         }
 
+        // Склад: ближайший в 60 единицах.
+        std::size_t stockIdx = m_structures.size();
+        {
+            float best = 60.0f;
+            for (std::size_t k = 0; k < m_structures.size(); ++k) {
+                const Structure& st = m_structures[k];
+                if (st.kind != StructureKind::Stockpile) continue;
+                const float d = std::hypot(st.x - selfPos.x, st.z - selfPos.z);
+                if (d < best) { best = d; stockIdx = k; }
+            }
+            if (stockIdx != m_structures.size()) {
+                senses.stockDist = best;
+                senses.stockPos = {m_structures[stockIdx].x, selfPos.y, m_structures[stockIdx].z};
+                senses.stockAmount = m_structures[stockIdx].stock;
+            }
+        }
+        // Вода: берег ищем лучами (редко, кэш в существе), когда хочется пить или пополнить ведро.
+        if (terrain && (self.thirst > 0.4f || self.behavior == Behavior::Drink || (self.hasBucket && self.water < 1.5f && self.thirst > 0.25f))) {
+            self.waterSearch -= dt;
+            if (!self.waterKnown && self.waterSearch <= 0.0f) {   // цель держим, пока не дойдёт: иначе метается между берегами
+                self.waterSearch = 2.0f;
+                self.waterKnown = false;
+                float best = 45.0f;
+                for (int a = 0; a < 16; ++a) {
+                    const float ang = static_cast<float>(a) * 0.3927f, cx = std::cos(ang), cz = std::sin(ang);
+                    for (float r = 2.0f; r <= 44.0f && r < best; r += 2.0f)
+                        if (terrain->isUnderwater(selfPos.x + cx * r, selfPos.z + cz * r)) {
+                            best = r;
+                            self.waterX = selfPos.x + cx * (r - 1.5f);
+                            self.waterZ = selfPos.z + cz * (r - 1.5f);
+                            self.waterKnown = true;
+                            break;
+                        }
+                }
+            }
+            if (self.waterKnown) {
+                const float d = std::hypot(self.waterX - selfPos.x, self.waterZ - selfPos.z);
+                if (d > 60.0f) self.waterKnown = false;
+                else { senses.waterDist = d; senses.waterPos = {self.waterX, selfPos.y, self.waterZ}; }
+            }
+        }
+        else self.waterKnown = false;
+        // Добыча для копья: ближайшее травоядное в 22 единицах.
+        if (self.hasSpear() && self.needs.hunger > 0.4f) {
+            float best = 22.0f;
+            for (const Animal& an : m_fauna.animals()) {
+                if (!an.alive || speciesDef(an.species).diet != Diet::Herbivore) continue;
+                const float d = std::hypot(an.position.x - selfPos.x, an.position.z - selfPos.z);
+                if (d < best) { best = d; senses.preyDist = d; senses.preyPos = an.position; senses.preyId = an.id; }
+            }
+        }
+
         // Дерево для рубки: ищем (редко, результат кэшируется в существе), только пока оно нужно.
-        if (terrain && self.wantsWood()) {
+        if (terrain && (self.wantsWood() || (self.knows(kSkillStockpile) && stockIdx != m_structures.size() && m_structures[stockIdx].stock < 24.0f && self.wood < kMaxWood))) {
             if (self.treeKnown && terrain->treeFelled(self.treeCx, self.treeCz)) self.treeKnown = false;   // срубил кто-то другой
             self.treeSearch -= dt;
             if (!self.treeKnown && self.treeSearch <= 0.0f) {
@@ -726,11 +779,30 @@ void World::tick(float dt, Terrain* mutableTerrain) {
             if (badBushK != liveFoodIdx.size()) { senses.badFoodDist = badBushDist; senses.badFoodPos = m_food[liveFoodIdx[badBushK]].position; }
         }
 
-        const bool hadSpear = self.hasSpear(), hadShield = self.hasShield();
+        const bool hadSpear = self.hasSpear(), hadShield = self.hasShield(), hadBucket = self.hasBucket;
         const BrainOutputs out = self.tick(dt, senses);
         freshOutputs[i]        = out;
         if (!hadSpear && self.hasSpear()) ++m_stats.spearsMade;
         if (!hadShield && self.hasShield()) ++m_stats.shieldsMade;
+        if (!hadBucket && self.hasBucket) ++m_stats.bucketsMade;
+
+        // Охота: удар копьём по добыче рядом; убитое кормит.
+        if (self.huntRequest && senses.preyId != 0 && senses.preyDist <= 2.4f && self.huntTimer <= 0.0f) {
+            self.huntTimer = 1.2f;
+            self.spearDur  = std::max(0.0f, self.spearDur - 0.06f);
+            if (m_fauna.hurt(senses.preyId, 0.55f)) { self.feed(0.7f); ++m_stats.meatKills; }
+        }
+        // Склад: сдать излишки / взять нужное.
+        if (self.stockRequest != 0 && stockIdx != m_structures.size() && senses.stockDist <= 2.8f) {
+            Structure& st = m_structures[stockIdx];
+            if (self.stockRequest == 1) {
+                const float give = std::min(std::floor(self.wood - self.woodGoal()), kStockpileCapacity - st.stock);
+                if (give >= 1.0f) { self.wood -= give; st.stock += give; m_stats.logsStored += static_cast<std::uint64_t>(give); }
+            } else {
+                const float take = std::min({std::floor(st.stock), std::ceil(self.woodGoal() - self.wood), kMaxWood - self.wood});
+                if (take >= 1.0f) { self.wood += take; st.stock -= take; m_stats.logsTaken += static_cast<std::uint64_t>(take); }
+            }
+        }
 
         // Рубка: пока стоит у дерева, набегает прогресс; срубленное исчезает (Terrain::fellTree), брёвна -- в руки.
         if (self.chopRequest && self.treeKnown && mutableTerrain && senses.treeDist <= 2.2f) {
@@ -757,6 +829,9 @@ void World::tick(float dt, Terrain* mutableTerrain) {
             } else if (self.buildRequest == 2 && self.wood >= kBarricadeWood && placeStructure(terrain, StructureKind::Barricade, self.buildAt.x, self.buildAt.y, self.buildYaw)) {
                 self.wood -= kBarricadeWood;
                 ++m_stats.barricadesBuilt;
+            } else if (self.buildRequest == 4 && self.wood >= kStockpileWood && placeStructure(terrain, StructureKind::Stockpile, self.buildAt.x, self.buildAt.y, 0.0f)) {
+                self.wood -= kStockpileWood;
+                ++m_stats.stockpilesBuilt;
             } else if (self.buildRequest == 3 && self.wood >= kTrapWood && placeStructure(terrain, StructureKind::Trap, self.buildAt.x, self.buildAt.y, 0.0f)) {
                 self.wood -= kTrapWood;
                 ++m_stats.trapsSet;
@@ -783,7 +858,9 @@ void World::tick(float dt, Terrain* mutableTerrain) {
                                     {kSkillShield, kSkillSpear, inspiration * 0.5f},
                                     {kSkillBarricade, kSkillSpear, inspiration * 0.4f},
                                     {kSkillTrap, kSkillSpear, inspiration * 0.4f},
-                                    {kSkillBridge, static_cast<Skill>(0), (0.0002f + (waterAhead ? 0.006f : 0.0f)) * curious}};
+                                    {kSkillBridge, static_cast<Skill>(0), (0.0002f + (waterAhead ? 0.006f : 0.0f)) * curious},
+                                    {kSkillBucket, static_cast<Skill>(0), (0.0002f + (self.thirst > 0.5f ? 0.006f : 0.0f)) * curious},
+                                    {kSkillStockpile, kSkillSpear, (0.0004f + (self.wood >= 3.0f ? 0.004f : 0.0f)) * curious}};
             for (const Learn& l : learns)
                 if (!self.knows(l.skill) && (l.needs == 0 || self.knows(l.needs)) && roll(l.skill, l.rate)) { self.skills |= l.skill; ++m_stats.skillsLearned; }
             if (self.skills != kAllSkills) {
@@ -840,6 +917,11 @@ void World::tick(float dt, Terrain* mutableTerrain) {
             ateLook[i] = static_cast<std::uint8_t>(lookOf(src.kind));
             ateValue[i] = def.nutrition;
             src.amount -= bite;
+            if (self.hasBucket && self.water >= 1.0f && src.amount < 0.45f) {   // ведро: поливает поникший куст
+                src.amount = std::min(1.0f, src.amount + 0.3f);
+                self.water -= 1.0f;
+                ++m_stats.bushesWatered;
+            }
         }
         if (out.restDesire > kRestDesireThreshold) self.rest(kRestRate * dt);
     }
@@ -936,6 +1018,7 @@ void World::tick(float dt, Terrain* mutableTerrain) {
             case 3: ++m_stats.deathsExhausted; break;
             case 4: ++m_stats.deathsPoison; break;
             case 5: ++m_stats.deathsPredation; break;
+            case 6: ++m_stats.deathsThirst; break;
             default: ++m_stats.deathsOther; break;
         }
         auto             ping = [this](std::uint64_t id) {

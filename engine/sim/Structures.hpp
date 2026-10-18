@@ -9,7 +9,8 @@ namespace wsim {
 
 // Постройки существ в мире (не путать с Building -- дома бога-декорации). Мосты живут в Terrain (проходимость воды), здесь --
 // баррикады (останавливают зверей) и ловушки (ранят и обездвиживают хищника). Данные без логики: решают World и Fauna.
-enum class StructureKind : std::uint8_t { Barricade = 1, Trap = 2 };
+enum class StructureKind : std::uint8_t { Barricade = 1, Trap = 2, Stockpile = 3 };
+inline constexpr float kStockpileCapacity = 40.0f;   // брёвен на складе
 
 inline constexpr float kBarricadeLength = 3.6f;   // вдоль оси yaw
 inline constexpr float kBarricadeHalfWidth = 0.55f;
@@ -20,6 +21,7 @@ struct Structure {
     float         x = 0.0f, z = 0.0f;
     float         yaw = 0.0f;   // радианы: ось баррикады (cos -> x, sin -> z)
     float         hp = 1.0f;    // ловушка при срабатывании -> 0 и исчезает
+    float         stock = 0.0f; // склад: сколько брёвен лежит
 };
 
 // Преграждает ли баррикада точку (x, z) с запасом margin (расстояние до отрезка оси).

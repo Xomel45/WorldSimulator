@@ -258,6 +258,8 @@ Application::Application(AppConfig config)
         m_trapMesh      = make(procgen::buildTrap());
         m_spearMesh     = make(procgen::buildSpear());
         m_shieldMesh    = make(procgen::buildShield());
+        m_stockMesh     = make(procgen::buildStockpile());
+        m_bucketMesh    = make(procgen::buildBucket());
         for (int n = 1; n <= 4; ++n) m_logMeshes[static_cast<std::size_t>(n - 1)] = make(procgen::buildLogs(n));
     }
     for (std::uint32_t i = 0; i < kHouseVariants; ++i) {
@@ -315,6 +317,7 @@ Application::Application(AppConfig config)
             c.spearDur = i % 2 == 0 ? 1.0f : 0.0f;
             c.shieldDur = i % 3 == 0 ? 1.0f : 0.0f;
             c.wood = static_cast<float>(i % 5);
+            c.hasBucket = i % 4 == 0;
             if (i < 12) { const float ang = static_cast<float>(i) * 0.52f; c.position = {std::cos(ang) * 5.0f, 0.0f, std::sin(ang) * 5.0f - 8.0f}; c.homePosition = c.position; }
         }
         (void)m_world.importState(st);
@@ -323,6 +326,7 @@ Application::Application(AppConfig config)
             (void)m_world.placeStructure(&m_terrain, StructureKind::Barricade, x, 4.0f + 2.0f * static_cast<float>(k % 2), 0.25f * static_cast<float>(k));
             (void)m_world.placeStructure(&m_terrain, StructureKind::Trap, x, -3.0f, 0.0f);
         }
+        (void)m_world.placeStructure(&m_terrain, StructureKind::Stockpile, 9.0f, 5.0f, 0.0f);
         for (float z = -90; z <= 90; z += 2)
             for (float x = -90; x <= 90; x += 2)
                 if (m_terrain.isUnderwater(x, z) && m_terrain.isUnderwater(x + 6, z) && m_terrain.isUnderwater(x, z + 6)) {
@@ -424,7 +428,7 @@ Application::~Application() {
         for (auto& mesh : m_animalMeshes)
             if (mesh) mesh->destroy(m_context->device());
         for (auto& mesh : m_houseMeshes) mesh->destroy(m_context->device());
-        for (auto* mesh : {&m_plankMesh, &m_barricadeMesh, &m_trapMesh, &m_spearMesh, &m_shieldMesh})
+        for (auto* mesh : {&m_plankMesh, &m_barricadeMesh, &m_trapMesh, &m_spearMesh, &m_shieldMesh, &m_stockMesh, &m_bucketMesh})
             if (*mesh) (*mesh)->destroy(m_context->device());
         for (auto& mesh : m_logMeshes)
             if (mesh) mesh->destroy(m_context->device());
@@ -637,6 +641,7 @@ void Application::update(float dt) {
             };
             if (c.hasSpear()) gear(m_spearMesh, {0.55f, 0.5f, 0.0f}, 0.0f);
             if (c.hasShield()) gear(m_shieldMesh, {-0.55f, 0.1f, 0.15f}, 0.0f);
+            if (c.hasBucket) gear(m_bucketMesh, {0.4f, 0.0f, 0.55f}, 0.0f);
             if (c.wood >= 1.0f) gear(m_logMeshes[static_cast<std::size_t>(std::clamp(static_cast<int>(c.wood), 1, 4) - 1)], {0.0f, 0.95f, -0.35f}, 0.0f);
         }
     }
@@ -682,7 +687,8 @@ void Application::update(float dt) {
             Transform t;
             t.position = {s.x, m_terrain.heightAt(s.x, s.z), s.z};
             if (s.kind == StructureKind::Barricade) t.rotation.y = -glm::degrees(s.yaw);
-            m_structObjects.push_back({s.kind == StructureKind::Barricade ? m_barricadeMesh : m_trapMesh, t, /*solid=*/false});
+            if (s.kind == StructureKind::Stockpile) t.scale = glm::vec3(1.0f, 0.55f + 0.45f * std::min(1.0f, s.stock / 20.0f), 1.0f);   // растёт с запасом
+            m_structObjects.push_back({s.kind == StructureKind::Barricade ? m_barricadeMesh : (s.kind == StructureKind::Stockpile ? m_stockMesh : m_trapMesh), t, /*solid=*/false});
         }
     }
 
@@ -1365,12 +1371,13 @@ void Application::drawInspector(const CameraData& cam) {
     dl->AddText(font, fs, {x0 + pad, y}, style::rgba(style::kDim), buf);
     y += fs * 1.35f;
     {   // Ресурсы и орудия.
-        std::string kit = "Брёвен " + std::to_string(static_cast<int>(cr->wood));
+        std::string kit = "Брёвен " + std::to_string(static_cast<int>(cr->wood)) + " · жажда " + std::to_string(static_cast<int>(cr->thirst * 100.0f)) + "%";
+        if (cr->hasBucket) kit += " · ведро " + std::to_string(static_cast<int>(cr->water));
         if (cr->hasSpear()) kit += " · копьё";
         if (cr->hasShield()) kit += " · щит";
         {
             std::string know;
-            for (auto [sk, nm] : {std::pair{kSkillSpear, "копьё"}, {kSkillShield, "щит"}, {kSkillBridge, "мост"}, {kSkillBarricade, "баррикада"}, {kSkillTrap, "ловушка"}})
+            for (auto [sk, nm] : {std::pair{kSkillSpear, "копьё"}, {kSkillShield, "щит"}, {kSkillBridge, "мост"}, {kSkillBarricade, "баррикада"}, {kSkillTrap, "ловушка"}, {kSkillBucket, "ведро"}, {kSkillStockpile, "склад"}})
                 if (cr->knows(sk)) { know += know.empty() ? "" : ", "; know += nm; }
             if (!know.empty()) kit += " · умеет: " + know;
         }
@@ -1620,6 +1627,9 @@ void Application::renderDebugUI() {
         std::size_t herb = 0, pred = 0;
         for (const Animal& a : m_world.fauna().animals()) (isPredator(a.species) ? pred : herb)++;
         const FaunaStats& fs = m_world.fauna().stats();
+        ImGui::Text("Meat kills %llu, buckets %llu, bushes watered %llu, stockpiles %llu (stored %llu, taken %llu), thirst deaths %llu", static_cast<unsigned long long>(m_world.stats().meatKills),
+                    static_cast<unsigned long long>(m_world.stats().bucketsMade), static_cast<unsigned long long>(m_world.stats().bushesWatered), static_cast<unsigned long long>(m_world.stats().stockpilesBuilt),
+                    static_cast<unsigned long long>(m_world.stats().logsStored), static_cast<unsigned long long>(m_world.stats().logsTaken), static_cast<unsigned long long>(m_world.stats().deathsThirst));
         ImGui::Text("Planks %llu (bridge cells %zu), barricades %llu, traps set %llu / sprung %llu", static_cast<unsigned long long>(m_world.stats().planksLaid), m_terrain.bridgeCount(),
                     static_cast<unsigned long long>(m_world.stats().barricadesBuilt), static_cast<unsigned long long>(m_world.stats().trapsSet),
                     static_cast<unsigned long long>(m_world.fauna().stats().trapsTriggered));

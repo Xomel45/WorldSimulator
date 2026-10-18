@@ -19,12 +19,13 @@ inline constexpr float kNoTarget       = 1.0e9f; // "цели нет" в пол�
 
 // Чем занято существо. Выбирается слоем поведения (Behavior.cpp) из потребностей, ощущений, черт
 // и выходов мозга; видно в инспекторе и нужно для озвучки/отладки.
-enum class Behavior : std::uint8_t { Wander, SeekFood, Eat, Rest, Flee, SeekMate, Socialize, GoHome, Sick, Sabotage, Chop, Craft, Build, Count };
+enum class Behavior : std::uint8_t { Wander, SeekFood, Eat, Rest, Flee, SeekMate, Socialize, GoHome, Sick, Sabotage, Chop, Craft, Build, Drink, Haul, Hunt, Count };
 
 // Умения (маска Creature::skills). Рубить деревья умеют все (врождённо); изготовление орудий -- знание: открывается в опасности или
 // от случая и передаётся соседям и потомству по наблюдению (World::tick), как вкус ягод -- но у знания нет "забывания".
-enum Skill : std::uint8_t { kSkillSpear = 1, kSkillShield = 2, kSkillBridge = 4, kSkillBarricade = 8, kSkillTrap = 16 };
-inline constexpr std::uint8_t kAllSkills = 31;
+enum Skill : std::uint8_t { kSkillSpear = 1, kSkillShield = 2, kSkillBridge = 4, kSkillBarricade = 8, kSkillTrap = 16, kSkillBucket = 32, kSkillStockpile = 64 };
+inline constexpr std::uint8_t kAllSkills = 127;
+inline constexpr float kBucketWood = 2.0f, kStockpileWood = 3.0f, kBucketCapacity = 3.0f;   // ведро: цена, глотков воды
 inline constexpr float kBridgeWood = 1.0f, kBarricadeWood = 3.0f, kTrapWood = 2.0f;   // досок на настил / баррикаду / ловушку
 inline constexpr float kSpearWood = 2.0f, kShieldWood = 3.0f, kMaxWood = 4.0f;   // цена орудий и сколько можно нести
 [[nodiscard]] const char* behaviorName(Behavior b) noexcept;  // по-русски
@@ -95,6 +96,10 @@ struct SenseInputs {
     // Ресурсы: ближайшее дерево для рубки (ищет мир, только если существу нужно дерево) и "видит ли хищника" (запоминается как опасность).
     float     treeDist = kNoTarget;  glm::vec3 treePos{};
     bool      predatorSeen = false;
+    // Жажда и вода: ближайший берег (точка на суше у воды), добыча для копья (травоядное), склад.
+    float     waterDist = kNoTarget;  glm::vec3 waterPos{};
+    float     preyDist = kNoTarget;   glm::vec3 preyPos{};  std::uint64_t preyId = 0;
+    float     stockDist = kNoTarget;  glm::vec3 stockPos{};  float stockAmount = 0.0f;
 };
 
 class Creature {
@@ -156,6 +161,11 @@ public:
     std::uint8_t skills = 0;
     float        wood = 0.0f, spearDur = 0.0f, shieldDur = 0.0f, dangerMemory = 0.0f, chopProgress = 0.0f, craftProgress = 0.0f;
     std::uint8_t chopRequest = 0;
+    // Жажда (только в мире с рельефом), ведро с водой, охота и склад. thirst 0..1 (1 -- здоровье тает); water -- глотков в ведре;
+    // huntRequest/stockRequest (1 сдать, 2 взять) исполняет мир; waterKnown/waterX/Z/waterSearch -- кэш поиска берега.
+    float        thirst = 0.2f, water = 0.0f, huntTimer = 0.0f, waterX = 0.0f, waterZ = 0.0f, waterSearch = 0.0f;
+    bool         hasBucket = false, waterKnown = false;
+    std::uint8_t huntRequest = 0, stockRequest = 0;
     // Стройка (мост/баррикада/ловушка): buildRequest -- 1 мост, 2 баррикада, 3 ловушка, ставится на ТОТ тик, когда работа закончена
     // (мир исполняет); buildProgress -- работа идёт; buildTimer -- пауза до следующей.
     std::uint8_t buildRequest = 0;
@@ -168,8 +178,12 @@ public:
     [[nodiscard]] bool  hasSpear() const noexcept { return spearDur > 0.0f; }
     [[nodiscard]] bool  hasShield() const noexcept { return shieldDur > 0.0f; }
     // Сколько брёвен нужно на следующее орудие, которое существо умеет, но не имеет (0 -- нечего мастерить); какое именно (1 копьё, 2 щит).
-    [[nodiscard]] float woodNeeded() const noexcept { return nextTool() == 1 ? kSpearWood : (nextTool() == 2 ? kShieldWood : 0.0f); }
-    [[nodiscard]] int   nextTool() const noexcept { return (knows(kSkillSpear) && !hasSpear()) ? 1 : ((knows(kSkillShield) && !hasShield()) ? 2 : 0); }
+    [[nodiscard]] float woodNeeded() const noexcept { const int t = nextTool(); return t == 1 ? kSpearWood : (t == 2 ? kShieldWood : (t == 3 ? kBucketWood : 0.0f)); }
+    [[nodiscard]] int   nextTool() const noexcept {
+        if (knows(kSkillSpear) && !hasSpear()) return 1;
+        if (knows(kSkillShield) && !hasShield()) return 2;
+        return (knows(kSkillBucket) && !hasBucket) ? 3 : 0;
+    }
     // Сколько брёвен хочется иметь: на следующее орудие, на пару настилов моста, на баррикаду/ловушку, пока помнит хищника.
     [[nodiscard]] float woodGoal() const noexcept {
         float goal = woodNeeded();

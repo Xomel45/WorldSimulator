@@ -11,6 +11,8 @@ namespace wsim::procgen {
 [[nodiscard]] MeshData buildTrap();            // ловушка: плита с шипами, радиус ~0.7
 [[nodiscard]] MeshData buildSpear();           // копьё вдоль +Z
 [[nodiscard]] MeshData buildShield();          // щит в плоскости YZ (носится сбоку)
+[[nodiscard]] MeshData buildStockpile();       // склад: помост, штабель брёвен и навес на столбах
+[[nodiscard]] MeshData buildBucket();          // ведро с дужкой (носится сбоку)
 [[nodiscard]] MeshData buildLogs(int count);   // связка брёвен count = 1..4 (на спине, вдоль X)
 
 }  // namespace wsim::procgen
