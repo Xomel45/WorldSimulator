@@ -672,9 +672,28 @@ Food bushes are now biome-aware and come in eleven berry kinds (six safe ones, f
     effect states; v2/v3 files load with the new fields zeroed (tested). Tests: `creature_tests` (profiles, mimic learning, each effect,
     non-inheritance), `intelligence_tests` (poison-only bush, poison+cloudberry, each harmful kind's effect and survival, hallucination
     panic spreading), `save_tests`, `berries_tests`.
-  - Not done: creatures know the *look*, not the plant, but cannot learn to tell mimics apart (no smell/precision), no social
-    learning (warning others, copying a creature that ate fine), no deliberate poisoning/revenge, no antidotes or healing herbs,
-    hallucinations have no visual effect on the creature model, taste is not passed on, diarrhea doesn't leave anything behind.
+  - **Social learning** (`World::tick` pass 3b; `Creature::observeLook`, `mealLook/sinceBite/sickEvent`): a creature remembers the look
+    and time of its last meal. A *sick event* — toxin > 0.3, diarrhea > 0.4, hallucination > 0.4 (crossing, in `ingestBerry`), a
+    vomiting fit, or **recoiling** (its own taste for the look dropping below `kMinAppeal`) within 25 s of the meal — makes every
+    creature within 12 units (not itself) learn that LOOK is bad: `observeLook(look, -1, 0.9·w)` with
+    `w = (kin/partner/parent/child ? 1 : 0.35) · (0.5+sociability)/1.5 · (1 - 0.5·dist/12)`; strangers are believed less, kin more,
+    sociable ones more. Watching someone eat calmly within 8 units nudges **unknown** looks (or mildly liked ones, until 150 ticks)
+    toward the nutrition value (`0.06·w` per tick; a bad opinion is never flipped by watching). Tested: watcher who never ate
+    distrusts the look, far creature knows nothing, stranger trusts less than kin, calm eating raises appeal.
+  - **Grudge and revenge** (the "revenge" satisfier the resentment need was missing): an envious creature (`envy > 0.35`, `resentment > 0.3`) takes
+    the neighbour with the most visible `dominanceDisplay` (> 0.55) as `grudgeId`; `grudge` grows `0.05·resentment/s` while the display goes on,
+    fades 0.003/s otherwise, and clears when the target dies. `Behavior::Sabotage` ("Мстит", score `2.4·(grudge-0.25)·max(0.1,1.3-empathy)`,
+    needs grudge > 0.5, health > 0.5, hunger < 0.6): go to the nearest bush whose LOOK it knows as bad (taste < -0.3 — by look, so it can
+    pick a harmless mimic), **pick** 0.12 of its berries (`carryKind/carryAmount`, lost after 45 s), walk to the grudge target and **serve**
+    within 2.6 units: the victim gets `ingestBerry` with that dose and learns the taste (and observers see it), the avenger's grudge -0.6
+    and resentment -0.6, `WorldStats::sabotages++`. Pick/serve are requested by `Creature::tick` (`pickRequest/serveRequest`) and executed by
+    the world, like eating. Empathic creatures (empathy → 1) essentially never do it (tested). It is **rare**: 1 act in 6 × 20 simulated
+    minutes on the probe seeds — it needs an envious creature, a visible rival and a learned bad look — so expect it as an occasional story,
+    not a mechanic that reshapes the ecology.
+  - **Inspector**: "Мстит" as behaviour, "Зуб на №N (x%) · несёт ягоды". **Saves v5** add last meal, grudge and carried berries after the v4 block
+    (v2-v4 files load with them zeroed; tested).
+  - Not done: creatures can't learn to tell mimics apart, no deliberate *lethal* planning (the dose is one pick), victims don't retaliate or
+    remember who poisoned them, no gossip beyond direct observation, no antidotes/healing herbs, hallucinations have no visual effect, taste is not passed on.
 - Not done: berries aren't tied to season, no bush-planting by creatures (seed dispersal), bushes don't care about moisture
   inside a biome, no bush sounds beyond a pop, trees/houses spacing from bushes is only the existing tree blocker.
 

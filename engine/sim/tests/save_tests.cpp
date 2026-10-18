@@ -106,6 +106,21 @@ int main() {
                    rc.visionTimer == 1.5f && rc.visionHeading == 2.0f);
         WSIM_CHECK(rc.knowsBerry(BerryKind::Blackberry) && rc.knowsBerry(BerryKind::Nightshade) && rc.knowsBerry(BerryKind::Henbane));  // группы
 
+        cr.mealLook = static_cast<std::uint8_t>(BerryLook::Dark);
+        cr.sinceBite = 7.5f;
+        cr.grudgeId = 99; cr.grudge = 0.7f;
+        cr.carryKind = static_cast<std::uint8_t>(BerryKind::Henbane);
+        cr.carryAmount = 0.12f; cr.carryAge = 3.0f;
+        SaveGame back5;
+        WSIM_CHECK(parseSave(serializeSave(withTaste), back5, e3));
+        const Creature& r5 = back5.world.population[0].creature;
+        WSIM_CHECK(r5.mealLook == static_cast<std::uint8_t>(BerryLook::Dark) && r5.sinceBite == 7.5f && r5.grudgeId == 99 && r5.grudge == 0.7f &&
+                   r5.carryKind == static_cast<std::uint8_t>(BerryKind::Henbane) && r5.carryAmount == 0.12f && r5.carryAge == 3.0f);
+        SaveGame v4back;  // v4: недомогания и вкус есть, зуба и трапезы нет
+        WSIM_CHECK(parseSave(serializeSave(withTaste, 4), v4back, e3));
+        const Creature& c4 = v4back.world.population[0].creature;
+        WSIM_CHECK(c4.hallucination == 1.25f && c4.knowsBerry(BerryKind::Blackberry) && c4.mealLook == 255 && c4.grudgeId == 0 && c4.carryAmount == 0.0f);
+
         SaveGame v3back;  // v3: яд есть, вкуса и недомоганий нет
         WSIM_CHECK(parseSave(serializeSave(withTaste, 3), v3back, e3));
         const Creature& c3 = v3back.world.population[0].creature;

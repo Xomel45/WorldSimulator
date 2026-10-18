@@ -430,6 +430,36 @@ int main() {
         WSIM_CHECK(berryDef(BerryKind::Baneberry).harm() > berryDef(BerryKind::Buckthorn).harm() * 0.9f);
         WSIM_CHECK(berryDef(BerryKind::Raspberry).harm() == 0.0f);
 
+        // Социальное обучение: сигнал "мне стало плохо" (sickEvent) -- при заметном отравлении и рвотном приступе; последняя
+        // трапеза помнится (внешний вид и когда); мнение по наблюдению сдвигает вкус группы, не трогая другие.
+        Creature wit = t;
+        WSIM_CHECK(wit.sickEvent == 0 && wit.mealLook == 255);
+        eat(wit, BerryKind::Raspberry, 30);
+        WSIM_CHECK(wit.mealLook == static_cast<std::uint8_t>(BerryLook::Red) && wit.sinceBite == 0.0f && wit.sickEvent == 0);  // безопасное -- без сигнала
+        for (int i = 0; i < 60; ++i) wit.tick(kDt, idle);
+        WSIM_CHECK(wit.sinceBite > 0.9f && wit.sinceBite < 1.1f);
+        Creature ill = t;
+        eat(ill, BerryKind::Nightshade, 30);                       // смертельная -- сигнал сразу, как только яд стал заметен
+        WSIM_CHECK(ill.sickEvent == 1);
+        Creature qq = t;
+        qq.nausea = 1.2f;
+        qq.tick(kDt, idle);                                         // порог тошноты -- приступ рвоты -- тоже сигнал
+        WSIM_CHECK(qq.sickEvent == 1 && qq.vomitStun > 0.0f);
+        Creature hear = t;
+        const float prior = hear.berryAppeal(BerryKind::Blackberry);
+        hear.observeLook(BerryLook::Dark, -1.0f, 0.9f);
+        WSIM_CHECK(hear.knowsBerry(BerryKind::Nightshade) && hear.berryAppeal(BerryKind::Blackberry) < prior - 1.0f);  // по наслышке: тёмные -- плохо
+        WSIM_CHECK(!hear.knowsBerry(BerryKind::Cloudberry));                                                              // остальные не тронуты
+        // Зуб и ягоды в руках: донести не успел -- через 45 с ягоды пропадают.
+        Creature carrier = t;
+        carrier.carryKind = static_cast<std::uint8_t>(BerryKind::Nightshade);
+        carrier.carryAmount = 0.12f;
+        carrier.needs.energy = 1.0f;
+        for (int i = 0; i < 60 * 50; ++i) { carrier.needs.hunger = 0.1f; carrier.needs.energy = 1.0f; carrier.tick(kDt, idle); }
+        WSIM_CHECK(carrier.carryAmount == 0.0f && carrier.carryKind == 255);
+        Creature fresh;
+        WSIM_CHECK(fresh.grudgeId == 0 && fresh.grudge == 0.0f && fresh.carryAmount == 0.0f && fresh.mealLook == 255);
+
         // Вкус и недомогания не наследуются: ребёнок чистый (дарвиновски, как learnedWeights).
         Rng rr(5);
         Creature pa = bad, pb = good;

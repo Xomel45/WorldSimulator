@@ -19,7 +19,7 @@ inline constexpr float kNoTarget       = 1.0e9f; // "цели нет" в пол�
 
 // Чем занято существо. Выбирается слоем поведения (Behavior.cpp) из потребностей, ощущений, черт
 // и выходов мозга; видно в инспекторе и нужно для озвучки/отладки.
-enum class Behavior : std::uint8_t { Wander, SeekFood, Eat, Rest, Flee, SeekMate, Socialize, GoHome, Sick, Count };
+enum class Behavior : std::uint8_t { Wander, SeekFood, Eat, Rest, Flee, SeekMate, Socialize, GoHome, Sick, Sabotage, Count };
 [[nodiscard]] const char* behaviorName(Behavior b) noexcept;  // по-русски
 
 struct Needs {
@@ -82,6 +82,9 @@ struct SenseInputs {
     glm::vec2 groupDir{};   int   groupCount = 0;  float groupDist = kNoTarget;  // к центру ближайшей группы, сколько в ней, как далеко центр
     glm::vec2 separation{};                                  // от тех, кто слишком близко (чтобы не сбиваться в кучу)
     float     worldHalfSize = 0.0f;                          // > 0 -- границы игровой области (мягко разворачиваемся)
+    // Для мести (Behavior::Sabotage): ближайший куст, чей внешний вид существо знает как плохой; и тот, на кого зуб.
+    float     badFoodDist = kNoTarget;  glm::vec3 badFoodPos{};
+    float     grudgeDist  = kNoTarget;  glm::vec3 grudgePos{};
 };
 
 class Creature {
@@ -122,6 +125,20 @@ public:
     // "тиков еды" это длилось (0 -- группа незнакома). Живёт всю жизнь, потомству не передаётся (как learnedWeights).
     std::array<float, kBerryLookCount>        taste{};
     std::array<std::uint8_t, kBerryLookCount> tasteSamples{};
+
+    // Социальное. mealLook/sinceBite -- что и когда ело в последний раз (внешний вид; 255 -- ничего): если вскоре станет плохо,
+    // соседи, видевшие трапезу, запомнят эту ягоду как плохую (sickEvent: мир читает и сбрасывает; см. World::tick).
+    // grudgeId/grudge -- на кого зуб (0 -- ни на кого) и насколько сильный: копится у завистливых рядом с чужой
+    // демонстрацией статуса (needs.resentment). carryKind/carryAmount/carryAge -- ягоды, которые несёт, чтобы
+    // подсунуть обидчику (Behavior::Sabotage). pickRequest/serveRequest -- что существо просит у мира в этом тике.
+    std::uint8_t  mealLook  = 255;
+    float         sinceBite = 1000.0f;
+    std::uint8_t  sickEvent = 0;
+    std::uint64_t grudgeId  = 0;
+    float         grudge    = 0.0f;
+    std::uint8_t  carryKind = 255;
+    float         carryAmount = 0.0f, carryAge = 0.0f;
+    std::uint8_t  pickRequest = 0, serveRequest = 0;
 
     // Поведение: текущая линия, сколько она держится (гистерезис против дёрганья), направление блуждания
     // и память о последнем месте с едой (место, где еду видели, -- туда идём, когда еды в поле зрения нет).
@@ -191,6 +208,8 @@ public:
     // Принять ягоду: bite -- съеденное за тик. Копит яд/понос/тошноту/галлюцинации по профилю вида.
     void ingestBerry(const BerryDef& def, float bite) noexcept;
     void addToxin(float amount) noexcept;
+    // Мнение по рассказу/наблюдению (не по собственной трапезе): сдвигает вкус группы к experience с силой weight.
+    void observeLook(BerryLook look, float experience, float weight) noexcept;
     // Насколько привлекает вид: незнакомый -- с авансом по любопытству (0.6..1.1), знакомый -- его вкус
     // (сытная ягода ~1+, ядовитая < 0). Мир берёт куст с лучшим привлечением на расстояние и обходит те, что < kMinAppeal.
     [[nodiscard]] float berryAppeal(BerryKind kind) const noexcept;

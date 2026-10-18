@@ -1146,7 +1146,7 @@ void Application::drawInspector(const CameraData& cam) {
         {"Общение", cr->needs.social, 0xb7a6ff, false},
         {"Яд", cr->toxin, 0xa6e06b, true},
     };
-    const float H = pad * 2 + fsTitle * 1.3f + fs * 1.5f + rowH * 7 + fs * 6.2f;
+    const float H = pad * 2 + fsTitle * 1.3f + fs * 1.5f + rowH * 7 + fs * (6.2f + (cr->grudge > 0.3f ? 1.35f : 0.0f));
     for (int g = 3; g >= 1; --g)
         dl->AddRect({x0 - 0.2f * u * g, y0 - 0.2f * u * g}, {x0 + W + 0.2f * u * g, y0 + H + 0.2f * u * g}, style::rgba(style::kGlow, 0.09f * (1.0f - 0.25f * (g - 1))), 1.0f * u + 0.2f * u * g, 0, 1.5f);
     dl->AddRectFilled({x0, y0}, {x0 + W, y0 + H}, style::rgba(style::kRightBg, 0.93f), 1.0f * u);
@@ -1189,6 +1189,12 @@ void Application::drawInspector(const CameraData& cam) {
         std::snprintf(buf, sizeof buf, "Самочувствие: %s", status.empty() ? "в порядке" : status.c_str());
         dl->AddText(font, fs, {x0 + pad, y}, status.empty() ? style::rgba(style::kDim) : style::rgba(0xa6e06b), buf);
         y += fs * 1.35f;
+        if (cr->grudge > 0.3f) {
+            std::snprintf(buf, sizeof buf, "Зуб на №%llu (%.0f%%)%s", static_cast<unsigned long long>(cr->grudgeId), cr->grudge * 100.0f,
+                          cr->carryAmount > 0.0f ? " · несёт ягоды" : "");
+            dl->AddText(font, fs, {x0 + pad, y}, style::rgba(0xff8f6b), buf);
+            y += fs * 1.35f;
+        }
         // Память о вкусе (по внешнему виду ягод): сколько групп пробовало, какие любит и какие обходит.
         int known = 0, best = -1, worst = -1;
         for (int k = 0; k < kBerryLookCount; ++k) {

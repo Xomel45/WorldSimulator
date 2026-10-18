@@ -267,6 +267,108 @@ int main() {
         WSIM_CHECK(maxNeighbourFear(2.0f) > maxNeighbourFear(0.0f) + 0.05f);
     }
     {
+        // Социальное обучение (плохое): сосед отравился на моих глазах -- запоминаю эту ягоду, сам не пробуя. Далёкий не видел.
+        auto observerAppeal = [&](float distance, bool kin) {
+            Creature eater = adult(3, {0.0f, 0.0f, 0.0f}), watcher = adult(4, {distance, 0.0f, 0.0f}), far = adult(5, {90.0f, 0.0f, 90.0f});
+            eater.id = 1; watcher.id = 2; far.id = 3;
+            eater.needs.hunger = 0.8f;
+            watcher.needs.hunger = far.needs.hunger = 0.05f;   // сытые: к кусту не пойдут
+            if (kin) watcher.parentIds[0] = 1;
+            World w = scenario(3, {eater, watcher, far}, {FoodSource{{2.0f, 0.0f, 1.0f}, 1.0f, BerryKind::Nightshade}});
+            for (int i = 0; i < static_cast<int>(20.0f / kDt); ++i) w.tick(kDt, nullptr);
+            struct R { float watcher, far, prior; bool watcherAte, farKnows; } r{};
+            r.prior = watcher.berryAppeal(BerryKind::Nightshade);
+            for (const auto& in : w.population()) {
+                if (in.creature.id == 2) { r.watcher = in.creature.berryAppeal(BerryKind::Nightshade); r.watcherAte = in.creature.sinceBite < 999.0f; }
+                if (in.creature.id == 3) { r.far = in.creature.berryAppeal(BerryKind::Nightshade); r.farKnows = in.creature.knowsBerry(BerryKind::Nightshade); }
+            }
+            return r;
+        };
+        const auto near = observerAppeal(6.0f, true);
+        WSIM_CHECK(!near.watcherAte);                       // сам ничего не ел
+        WSIM_CHECK(near.watcher < near.prior - 0.3f);       // но по чужой беде "тёмные" ягоды вызывают у него недоверие
+        WSIM_CHECK(!near.farKnows && near.far >= 0.6f - 1e-4f);  // далёкий ничего не знает
+        const auto stranger = observerAppeal(6.0f, false);
+        WSIM_CHECK(stranger.watcher > near.watcher && stranger.watcher < stranger.prior);  // чужому верят меньше, чем родне, но верят
+    }
+    {
+        // Социальное обучение (хорошее): спокойно ест морошку рядом -- незнакомая ягода меньше пугает, чем была.
+        Creature eater = adult(3, {0.0f, 0.0f, 0.0f}), watcher = adult(4, {5.0f, 0.0f, 0.0f});
+        eater.id = 1; watcher.id = 2;
+        eater.needs.hunger = 0.8f;
+        watcher.needs.hunger = 0.05f;
+        const float before = watcher.berryAppeal(BerryKind::Cloudberry);
+        World w = scenario(3, {eater, watcher}, {FoodSource{{2.0f, 0.0f, 1.0f}, 1.0f, BerryKind::Cloudberry}});
+        for (int i = 0; i < static_cast<int>(25.0f / kDt); ++i) w.tick(kDt, nullptr);
+        for (const auto& in : w.population())
+            if (in.creature.id == 2) {
+                WSIM_CHECK(in.creature.knowsBerry(BerryKind::Cloudberry) && in.creature.berryAppeal(BerryKind::Cloudberry) > before + 0.1f);
+                WSIM_CHECK(in.creature.sinceBite > 999.0f);  // сам не ел
+            }
+    }
+    {
+        // Зуб: завистливый с обидой замечает самую заметную демонстрацию статуса рядом и берёт на заметку.
+        Creature envious = adult(3, {0.0f, 0.0f, 0.0f}), show = adult(4, {6.0f, 0.0f, 0.0f});
+        envious.id = 1; show.id = 2;
+        envious.genome.setTrait(Genome::kEnvy, 1.0f);
+        envious.needs.resentment = 0.8f;
+        World w = scenario(3, {envious, show}, {});
+        WorldState st = w.exportState();
+        st.population[1].lastOutputs.dominanceDisplay = 0.9f;  // сосед выставляет себя напоказ
+        WSIM_CHECK(w.importState(st));
+        w.tick(kDt, nullptr);
+        const Creature& e = w.population()[0].creature;
+        WSIM_CHECK(e.grudgeId == 2 && e.grudge > 0.0f);
+        // Без обиды (envy = 0) зуба не бывает.
+        Creature meek = adult(3, {0.0f, 0.0f, 0.0f});
+        meek.id = 1;
+        meek.genome.setTrait(Genome::kEnvy, -1.0f);
+        meek.needs.resentment = 0.8f;
+        World w2 = scenario(3, {meek, show}, {});
+        WorldState st2 = w2.exportState();
+        st2.population[1].lastOutputs.dominanceDisplay = 0.9f;
+        WSIM_CHECK(w2.importState(st2));
+        for (int i = 0; i < 60; ++i) w2.tick(kDt, nullptr);
+        WSIM_CHECK(w2.population()[0].creature.grudgeId == 0);
+    }
+    {
+        // Месть: с зубом на соседа, зная, что "тёмные" ягоды плохие, идёт к такому кусту, берёт ягоды и подсовывает обидчику.
+        Creature avenger = adult(3, {0.0f, 0.0f, 0.0f}), victim = adult(4, {14.0f, 0.0f, 0.0f});
+        avenger.id = 1; victim.id = 2;
+        avenger.genome.setTrait(Genome::kEmpathy, -1.0f);
+        avenger.needs.hunger = 0.1f;
+        victim.needs.hunger = 0.05f;
+        avenger.grudgeId = 2;
+        avenger.grudge   = 0.95f;
+        const auto dark = static_cast<std::size_t>(BerryLook::Dark);
+        avenger.taste[dark] = -1.0f;
+        avenger.tasteSamples[dark] = 50;
+        World w = scenario(3, {avenger, victim}, {FoodSource{{6.0f, 0.0f, 2.0f}, 1.0f, BerryKind::Nightshade}});
+        float maxToxinVictim = 0.0f;
+        bool  sawSabotage = false;
+        for (int i = 0; i < static_cast<int>(40.0f / kDt); ++i) {
+            w.tick(kDt, nullptr);
+            for (const auto& in : w.population()) {
+                if (in.creature.id == 2) maxToxinVictim = std::max(maxToxinVictim, in.creature.toxin);
+                if (in.creature.id == 1) sawSabotage |= in.creature.behavior == Behavior::Sabotage;
+            }
+        }
+        WSIM_CHECK(sawSabotage);
+        WSIM_CHECK(w.stats().sabotages >= 1);          // подсунул
+        WSIM_CHECK(maxToxinVictim > 0.1f);             // жертва получила дозу волчьей ягоды
+        WSIM_CHECK(w.food()[0].amount < 0.95f || w.stats().sabotages >= 1);
+        for (const auto& in : w.population()) {
+            if (in.creature.id == 1) WSIM_CHECK(in.creature.grudge < 0.5f && in.creature.carryAmount == 0.0f);  // отомстил -- отпустило
+            if (in.creature.id == 2) WSIM_CHECK(in.creature.knowsBerry(BerryKind::Nightshade));                   // а жертва запомнила вкус
+        }
+        // Эмпатичный на такое не идёт.
+        Creature kind = avenger;
+        kind.genome.setTrait(Genome::kEmpathy, 1.0f);
+        World w3 = scenario(3, {kind, victim}, {FoodSource{{6.0f, 0.0f, 2.0f}, 1.0f, BerryKind::Nightshade}});
+        for (int i = 0; i < static_cast<int>(40.0f / kDt); ++i) w3.tick(kDt, nullptr);
+        WSIM_CHECK(w3.stats().sabotages == 0);
+    }
+    {
         // Статистика: смерть от яда считается отдельно.
         Creature c = adult(3, {0.0f, 0.0f, 0.0f});
         c.needs.hunger = 0.3f;

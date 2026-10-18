@@ -95,6 +95,15 @@ void writeCreature(ByteWriter& w, const Inhabitant& in, std::uint32_t version) {
     if (version < 4) return;
     // v4: понос, тошнота, галлюцинации, рвотный приступ.
     for (float v : {c.diarrhea, c.nausea, c.hallucination, c.vomitStun, c.visionTimer, c.visionHeading}) w.f32(v);
+    if (version < 5) return;
+    // v5: последняя трапеза, зуб на соседа, ягоды в руках.
+    w.u8(c.mealLook);
+    w.f32(c.sinceBite);
+    w.u64(c.grudgeId);
+    w.f32(c.grudge);
+    w.u8(c.carryKind);
+    w.f32(c.carryAmount);
+    w.f32(c.carryAge);
 }
 
 bool readCreature(ByteReader& r, Inhabitant& in, std::uint32_t version) {
@@ -148,6 +157,19 @@ bool readCreature(ByteReader& r, Inhabitant& in, std::uint32_t version) {
         c.vomitStun     = level(10.0f);
         c.visionTimer   = level(10.0f);
         c.visionHeading = r.f32();
+    }
+    if (version >= 5) {
+        auto level = [&](float hi) { const float v = r.f32(); return std::isfinite(v) ? std::clamp(v, 0.0f, hi) : 0.0f; };
+        const std::uint8_t meal = r.u8();
+        c.mealLook  = meal < kBerryLookCount ? meal : 255;
+        c.sinceBite = level(1000.0f);
+        c.grudgeId  = r.u64();
+        c.grudge    = level(1.0f);
+        const std::uint8_t carry = r.u8();
+        c.carryAmount = level(1.0f);
+        c.carryAge    = level(100.0f);
+        c.carryKind   = carry < kBerryKindCount ? carry : 255;
+        if (c.carryKind == 255) c.carryAmount = 0.0f;
     }
     return r.ok();
 }

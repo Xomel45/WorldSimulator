@@ -108,6 +108,16 @@ Decision decide(Creature& c, const SenseInputs& s, const BrainOutputs& raw, floa
     // Домосед: далеко от дома тянет обратно.
     if (c.awayFromHome() > 0.3f) S(Behavior::GoHome) = c.awayFromHome() * c.territorial() * 1.0f;
 
+    // Месть: есть зуб на конкретного соседа (копится у завистливых рядом с его демонстрацией статуса). Сытый и здоровый
+    // идёт к кусту, чей внешний вид знает как плохой, берёт ягоды и несёт обидчику; эмпатичные на такое не способны.
+    // Выбор здесь, шаги (взять/подсунуть) выполняет мир -- см. World::tick.
+    constexpr float kServeRadius = 2.2f;
+    const bool carrying  = c.carryAmount > 0.0f;
+    const bool targetSeen = s.grudgeDist < kNoTarget;
+    const bool badSeen    = s.badFoodDist < kNoTarget;
+    if (c.grudge > 0.5f && c.grudgeId != 0 && c.health > 0.5f && n.hunger < 0.6f && (carrying ? targetSeen : badSeen))
+        S(Behavior::Sabotage) = 2.4f * (c.grudge - 0.25f) * std::max(0.1f, 1.3f - c.empathy());
+
     // Базовая линия: бродит, любопытные -- охотнее.
     S(Behavior::Wander) = 0.3f + c.curiosity() * c.boredomLevel() * 0.8f;
 
@@ -159,6 +169,17 @@ Decision decide(Creature& c, const SenseInputs& s, const BrainOutputs& raw, floa
             break;
         case Behavior::Socialize: dir = safeNormalize(s.groupDir); speed = 0.5f; break;
         case Behavior::GoHome:    dir = dirTo(c.position, c.homePosition); speed = 0.5f; break;
+        case Behavior::Sabotage:
+            if (carrying) {
+                dir = dirTo(c.position, s.grudgePos);
+                if (s.grudgeDist <= kServeRadius) { speed = 0.0f; d.serve = true; }
+                else speed = 0.7f * std::clamp(s.grudgeDist / 4.0f, 0.35f, 1.0f);
+            } else {
+                dir = dirTo(c.position, s.badFoodPos);
+                if (s.badFoodDist <= kInteractRadius) { speed = 0.0f; d.pick = true; }
+                else speed = 0.6f * std::clamp(s.badFoodDist / 4.0f, 0.3f, 1.0f);
+            }
+            break;
         case Behavior::Count:     break;
     }
 

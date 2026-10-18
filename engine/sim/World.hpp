@@ -57,6 +57,7 @@ struct Hazard {
 struct WorldStats {
     std::uint64_t births = 0, matings = 0;
     std::uint64_t deathsOld = 0, deathsStarved = 0, deathsExhausted = 0, deathsPoison = 0, deathsOther = 0;
+    std::uint64_t sabotages = 0;  // сколько раз кто-то подсунул другому ягоды из мести
 };
 
 // Полное состояние мира для сохранения/загрузки (всё, что нужно, чтобы продолжить симуляцию

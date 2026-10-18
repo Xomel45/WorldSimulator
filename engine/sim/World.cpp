@@ -30,6 +30,9 @@ constexpr float kMotherEnergyCost    = 0.22f;   // роды и вынашива�
 constexpr float kFatherEnergyCost    = 0.08f;
 constexpr float kFoodRegrowRate      = 0.04f;   // единиц/сек восстановления источника еды
 constexpr float kFoodCap             = 1.0f;
+constexpr float kObserveRadius       = 12.0f;   // на таком расстоянии замечают, что соседу стало плохо после ягод (и учатся)
+constexpr float kWatchEatRadius      = 8.0f;    // ... и что сосед спокойно ест: незнакомые ягоды перестают пугать
+constexpr float kServeRange          = 2.6f;    // подсунуть ягоды обидчику можно не дальше
 constexpr float kFoodMinEdible       = 0.12f;   // меньше -- куст "пустой": его не видно как еду, пока не отрастёт (иначе все висят на огрызках)
 
 using Grid = std::unordered_map<std::int64_t, std::vector<std::size_t>>;
@@ -285,6 +288,8 @@ void World::tick(float dt, const Terrain* terrain) {
     // состояния идёт из сеток/lastOutputs, построенных до этого цикла --
     // порядок обработки i не влияет на корректность (см. World.hpp).
     std::vector<BrainOutputs> freshOutputs(n);
+    std::vector<std::uint8_t> ateLook(n, 255);  // что ели в этом тике (внешний вид; 255 -- ничего)
+    std::vector<float>        ateValue(n, 0.0f);
     for (std::size_t i = 0; i < n; ++i) {
         Creature&       self    = m_population[i].creature;
         const glm::vec3 selfPos = self.position;
@@ -350,6 +355,8 @@ void World::tick(float dt, const Terrain* terrain) {
         float       bestAlarmDist = std::numeric_limits<float>::max();
         glm::vec2   groupSum{0.0f}, separation{0.0f};
         int         groupCount = 0;
+        float         bestDomVal = 0.0f;  // у кого самая заметная демонстрация статуса рядом -- кандидат на зуб
+        std::uint64_t bestDomId  = 0;
         forEachNearby(
             creatureGrid, selfPos, kSenseRadius,
             [this](std::size_t j) { return m_population[j].creature.position; },
@@ -365,6 +372,7 @@ void World::tick(float dt, const Terrain* terrain) {
                 }
                 nearbyMatingCall = std::max(nearbyMatingCall, other.lastOutputs.matingCall);
                 nearbyDominance  = std::max(nearbyDominance, other.lastOutputs.dominanceDisplay);
+                if (other.lastOutputs.dominanceDisplay > bestDomVal) { bestDomVal = other.lastOutputs.dominanceDisplay; bestDomId = other.creature.id; }
                 if (other.creature.canMate() && dist < bestMateDist) {
                     bestMateDist = dist;
                     bestMateJ    = j;
@@ -429,9 +437,66 @@ void World::tick(float dt, const Terrain* terrain) {
         }
         senses.lovedOneDied = grief.count(self.id) > 0 ? 1.0f : 0.0f;
 
+        // Зуб: завистливый (envy), которого копит обида (resentment) рядом с чужой демонстрацией статуса, берёт самого
+        // заметного соседа на заметку. Зуб растёт, пока обида есть, и тихо проходит; на умершего -- сразу.
+        if (self.envy() > 0.35f && self.needs.resentment > 0.3f && bestDomVal > 0.55f && bestDomId != 0 && (self.grudgeId == 0 || self.grudge < 0.3f))
+            self.grudgeId = bestDomId;
+        if (self.grudgeId != 0 && idIndex.find(self.grudgeId) == idIndex.end()) { self.grudgeId = 0; self.grudge = 0.0f; }
+        if (self.grudgeId != 0) {
+            if (self.grudgeId == bestDomId && self.needs.resentment > 0.3f) self.grudge = std::min(1.0f, self.grudge + self.needs.resentment * 0.05f * dt);
+            else self.grudge = std::max(0.0f, self.grudge - 0.003f * dt);
+            if (self.grudge <= 0.0f) self.grudgeId = 0;
+        }
+        std::size_t grudgeIdx = n, badBushK = liveFoodIdx.size();
+        float       badBushDist = kSenseRadius;
+        if (self.grudgeId != 0) {
+            grudgeIdx = idIndex.find(self.grudgeId)->second;
+            const float d = glm::length(m_population[grudgeIdx].creature.position - selfPos);
+            if (d <= kSenseRadius) { senses.grudgeDist = d; senses.grudgePos = m_population[grudgeIdx].creature.position; }
+            // Готовится подсунуть: ищет куст, чей внешний вид знает как плохой (по мнению, а не по растению: может оказаться и безвредным).
+            if (self.grudge > 0.5f && self.carryAmount <= 0.0f)
+                forEachNearby(
+                    foodGrid, selfPos, kSenseRadius,
+                    [this, &liveFoodIdx](std::size_t k) { return m_food[liveFoodIdx[k]].position; },
+                    [&](std::size_t k, float dist) {
+                        const BerryLook look = lookOf(m_food[liveFoodIdx[k]].kind);
+                        if (self.knowsLook(look) && self.taste[static_cast<std::size_t>(look)] < -0.3f && dist < badBushDist) {
+                            badBushDist = dist;
+                            badBushK    = k;
+                        }
+                    });
+            if (badBushK != liveFoodIdx.size()) { senses.badFoodDist = badBushDist; senses.badFoodPos = m_food[liveFoodIdx[badBushK]].position; }
+        }
+
         const BrainOutputs out = self.tick(dt, senses);
         freshOutputs[i]        = out;
 
+        // Месть: взять ягоды у плохого куста / подсунуть обидчику (решение принял слой поведения, исполняет мир).
+        if (self.pickRequest && badBushK != liveFoodIdx.size() && badBushDist <= kInteractRadius) {
+            FoodSource& bush = m_food[liveFoodIdx[badBushK]];
+            const float take = std::min(bush.amount, 0.12f);
+            if (take > 0.04f) {
+                bush.amount -= take;
+                self.carryKind   = static_cast<std::uint8_t>(bush.kind);
+                self.carryAmount = take;
+                self.carryAge    = 0.0f;
+            }
+        }
+        if (self.serveRequest && self.carryAmount > 0.0f && grudgeIdx != n &&
+            glm::length(m_population[grudgeIdx].creature.position - self.position) <= kServeRange) {
+            Creature&       victim = m_population[grudgeIdx].creature;
+            const BerryKind kind   = static_cast<BerryKind>(self.carryKind);
+            const BerryDef& def    = berryDef(kind);
+            victim.ingestBerry(def, self.carryAmount);                       // "угощение": доза как за один присест
+            victim.tasteBerry(kind, def.nutrition, def.harm(), 0.3f);         // и жертва запомнила вкус
+            self.carryAmount = 0.0f;
+            self.carryKind   = 255;
+            self.grudge      = std::max(0.0f, self.grudge - 0.6f);            // отомстил -- полегчало
+            self.needs.resentment = std::max(0.0f, self.needs.resentment - 0.6f);
+            ++m_stats.sabotages;
+        }
+
+        ateLook[i] = 255;
         if (out.eatDesire > kEatDesireThreshold && foundFood && bestFoodDist <= kInteractRadius) {
             FoodSource& src  = m_food[liveFoodIdx[bestFoodK]];
             const float bite = std::min(src.amount, kEatRate * dt);
@@ -439,12 +504,39 @@ void World::tick(float dt, const Terrain* terrain) {
             self.feed(bite * def.nutrition);  // морошка сытнее черники при том же объёме
             self.ingestBerry(def, bite);                                  // яд/понос/тошнота/галлюцинации по профилю вида
             self.tasteBerry(src.kind, def.nutrition, def.harm(), dt);     // вкус запоминается, пока ест
+            ateLook[i] = static_cast<std::uint8_t>(lookOf(src.kind));
+            ateValue[i] = def.nutrition;
             src.amount -= bite;
         }
         if (out.restDesire > kRestDesireThreshold) self.rest(kRestRate * dt);
     }
     for (std::size_t i = 0; i < n; ++i)
         m_population[i].lastOutputs = freshOutputs[i];
+
+    // 3b. Социальное обучение: соседи учатся на том, что видят. Если существу стало плохо вскоре после ягод, видевшие
+    // трапезу запоминают этот ВИД ягод как плохой (свои и общительные -- убедительнее; чужим веришь меньше); если спокойно
+    // ест -- незнакомые ягоды для наблюдателей чуть менее подозрительны. Читает и сбрасывает sickEvent.
+    for (std::size_t i = 0; i < n; ++i) {
+        Creature& e = m_population[i].creature;
+        const bool sick = e.sickEvent != 0;
+        e.sickEvent = 0;
+        const bool badMeal = sick && e.mealLook != 255 && e.sinceBite < 25.0f;
+        if (!badMeal && ateLook[i] == 255) continue;
+        const auto look = static_cast<BerryLook>(badMeal ? e.mealLook : ateLook[i]);
+        forEachNearby(
+            creatureGrid, e.position, badMeal ? kObserveRadius : kWatchEatRadius,
+            [this](std::size_t j) { return m_population[j].creature.position; },
+            [&](std::size_t j, float dist) {
+                if (j == i) return;
+                Creature& o = m_population[j].creature;
+                if (!o.alive) return;
+                const float radius = badMeal ? kObserveRadius : kWatchEatRadius;
+                const float w = (isFamiliar(o, e.id) ? 1.0f : 0.35f) * (0.5f + o.sociability()) / 1.5f * (1.0f - 0.5f * dist / radius);
+                if (badMeal) o.observeLook(look, -1.0f, 0.9f * w);
+                else if (!o.knowsLook(look) || (o.taste[static_cast<std::size_t>(look)] > 0.0f && o.tasteSamples[static_cast<std::size_t>(look)] < 150))
+                    o.observeLook(look, 0.5f + 0.5f * ateValue[i], 0.06f * w);  // по тику: за пару секунд -- заметно; плохое мнение не переубеждает
+            });
+    }
 
     // 4. Pass 2: спаривание -- обе стороны должны решить "спариваюсь" (рядом с партнёром и в поведении
     // "ищет пару"), быть физически готовыми (canMate: зрелые, сытые, не вымотанные, перезарядка прошла)
