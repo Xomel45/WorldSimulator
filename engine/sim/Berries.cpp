@@ -1,6 +1,9 @@
 #include "sim/Berries.hpp"
 
+#include "sim/Terrain.hpp"
+
 #include <array>
+#include <cmath>
 #include <cstring>
 
 namespace wsim {
@@ -76,6 +79,53 @@ BerryKind pickBerryKind(Biome biome, float u) noexcept {
 
 bool berryGrowsIn(BerryKind kind, Biome biome) noexcept {
     return kWeights[static_cast<int>(biome)].w[static_cast<int>(kind)] > 0.0f;
+}
+
+namespace {
+
+std::uint64_t mix64(std::uint64_t h) {
+    h ^= h >> 30; h *= 0xBF58476D1CE4E5B9ull;
+    h ^= h >> 27; h *= 0x94D049BB133111EBull;
+    h ^= h >> 31;
+    return h;
+}
+// 0..1 по (сид, ячейка, соль): независимые "броски" для каждой ячейки.
+float cellUnit(std::uint32_t seed, std::int32_t cx, std::int32_t cz, std::uint64_t salt) {
+    const std::uint64_t h = mix64(mix64(static_cast<std::uint64_t>(seed) * 0x9E3779B97F4A7C15ull + 0x5D1B1Eull + salt * 0xD6E8FEB86659FD93ull) ^
+                                  (static_cast<std::uint64_t>(static_cast<std::uint32_t>(cx)) << 32 | static_cast<std::uint32_t>(cz)));
+    return static_cast<float>(h & 0xFFFFFF) / static_cast<float>(0x1000000);
+}
+
+}  // namespace
+
+std::vector<BushSpec> proceduralBushes(const Terrain& terrain, std::int32_t cx, std::int32_t cz) {
+    constexpr float kPatchRadius = 3.5f, kBaseChance = 0.26f;
+    const std::uint32_t seed = terrain.seed();
+    std::vector<BushSpec> out;
+
+    // Центр пятна и климат (без высоты: правки рельефа не должны менять, какой вид здесь растёт).
+    const float x0 = (static_cast<float>(cx) + 0.1f + 0.8f * cellUnit(seed, cx, cz, 1)) * kBushCell;
+    const float z0 = (static_cast<float>(cz) + 0.1f + 0.8f * cellUnit(seed, cx, cz, 2)) * kBushCell;
+    const Biome biome = classify(terrain.climateAt(x0, z0));
+    if (cellUnit(seed, cx, cz, 3) >= kBaseChance * bushDensity(biome)) return out;
+
+    // Вид пятна; ядовитые перевыбираются чаще, чем не перевыбираются (доля ядовитых кустов ~8%, а не ~20% весов).
+    BerryKind kind = pickBerryKind(biome, cellUnit(seed, cx, cz, 4));
+    if (isPoisonous(kind) && cellUnit(seed, cx, cz, 5) < 0.6f)
+        for (int tries = 0; tries < 8; ++tries) {
+            const BerryKind k = pickBerryKind(biome, cellUnit(seed, cx, cz, 6 + static_cast<std::uint64_t>(tries)));
+            if (!isPoisonous(k)) { kind = k; break; }
+        }
+
+    const int n = 1 + static_cast<int>(cellUnit(seed, cx, cz, 20) * 2.999f);  // пятно из 1-3 кустов
+    for (int k = 0; k < n; ++k) {
+        const float a = 6.2831853f * cellUnit(seed, cx, cz, 30 + 2 * static_cast<std::uint64_t>(k));
+        const float r = kPatchRadius * std::sqrt(cellUnit(seed, cx, cz, 31 + 2 * static_cast<std::uint64_t>(k)));
+        const float x = x0 + std::cos(a) * r, z = z0 + std::sin(a) * r;
+        if (terrain.heightAt(x, z) <= 0.4f) continue;  // вода и мокрый пляж: кандидата нет (номер k остаётся занятым)
+        out.push_back({x, z, kind, k});
+    }
+    return out;
 }
 
 float bushDensity(Biome biome) noexcept {

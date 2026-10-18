@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <span>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -32,6 +33,18 @@ struct FoodSource {
     glm::vec3 position{};
     float     amount = 0.0f;
     BerryKind kind   = BerryKind::Raspberry;  // вид ягод: сытность, скорость отрастания, цвет (sim/Berries)
+    // Откуда куст: процедурная ячейка (cellX, cellZ) и номер кандидата в ней (local >= 0), либо посаженный/старый куст
+    // (local < 0; ячейка -- по положению). По этому мир помнит состояние кустов, пока ячейка "спит" (см. World::streamBushes).
+    std::int32_t cellX = 0, cellZ = 0;
+    std::int16_t local = -1;
+};
+
+// Запись о "спящей" ячейке: чем она отличается от нетронутой процедурной (съеденные кусты, стёртые, посаженные).
+struct CellRecordData {
+    std::int64_t key = 0;
+    double       lastTime = 0.0;                                  // мировое время, когда ячейка уснула (на побудке куст отрастёт за разницу)
+    std::vector<std::pair<std::int16_t, float>> deltas;           // номер кандидата -> amount; amount < 0 -- куст стёрт
+    std::vector<FoodSource>                     planted;          // посаженные игроком
 };
 
 // Population + еда + пространственный индекс для соседских запросов.
@@ -72,6 +85,11 @@ struct WorldState {
     std::vector<Building>                                buildings;
     std::vector<std::pair<std::uint64_t, float>>         pendingGrief;  // по возрастанию id
     Fauna::State                                         fauna;         // дикие животные
+    // Потоковая подгрузка кустов: мировое время, материализованные ячейки и записи о спящих (старые сохранения -- пусто).
+    bool                                                 streaming = false;
+    double                                               time = 0.0;
+    std::vector<std::int64_t>                            loadedCells;
+    std::vector<CellRecordData>                          cellRecords;
 };
 
 class World {
@@ -98,10 +116,18 @@ public:
 
     // Переселяет существ и еду, оказавшихся в воде, на случайную сушу в границах мира.
     void settleOnLand(const Terrain& terrain);
-    // Заново сажает ягодные кусты по рельефу: пятна по 1-3 куста на суше, густота и виды -- по биому
-    // (sim/Berries). Заменяет прежнюю еду (при создании мира и в "Новом мире"); ГСЧ -- мировой, так что результат
-    // воспроизводим и после загрузки сохранения продолжается тем же.
+    // Включает процедурные ягоды: заменяет прежнюю еду, материализует кусты стартовой области (при создании мира и в
+    // "Новом мире"). Дальше мир сам подгружает ячейки там, где есть существа и точки интереса (setFocus), и усыпляет
+    // остальные, запоминая съеденное/посаженное/стёртое (streamBushes).
     void growBerryBushes(const Terrain& terrain);
+    // Точки интереса помимо существ (камера): вокруг них тоже "просыпаются" кусты. Задаются снаружи каждый кадр.
+    void setFocus(std::span<const glm::vec2> points) { m_focus.assign(points.begin(), points.end()); }
+    // Материализует ячейки вокруг (x, z) (нужно перед посадкой куста в ещё не загруженном месте).
+    void ensureBushesAt(const Terrain& terrain, float x, float z);
+    // Есть ли поблизости процедурный или посаженный куст: для запретной зоны деревьев (кусты спящих ячеек тоже блокируют).
+    [[nodiscard]] bool bushNear(const Terrain& terrain, float x, float z, float radius) const;
+    [[nodiscard]] std::size_t loadedBushCells() const noexcept { return m_loadedCells.size(); }
+    [[nodiscard]] double      time() const noexcept { return m_time; }
 
     [[nodiscard]] std::span<const Inhabitant>  population() const noexcept { return m_population; }
     [[nodiscard]] std::span<const FoodSource>  food() const noexcept { return m_food; }
@@ -131,7 +157,7 @@ public:
     bool spawnNaturalAnimal(const Terrain& terrain, float x, float z) { return m_fauna.spawnNatural(terrain, x, z, m_rng); }
     std::size_t removeAnimals(float x, float z, float radius) { return m_fauna.removeInCircle(x, z, radius); }
 
-    static constexpr std::size_t kMaxFood      = 150;
+    static constexpr std::size_t kMaxFood      = 8000;   // потолок материализованных кустов
     static constexpr float       kBushSpacing  = 1.6f;   // ближе центры не сажаем
     // Куст в (x, z) данного вида, полный. false -- слишком близко к другому кусту или их уже kMaxFood.
     bool plantBush(float x, float z, BerryKind kind);
@@ -151,6 +177,18 @@ private:
     std::vector<Hazard>      m_hazards;
     WorldStats               m_stats;
     Fauna                    m_fauna;
+
+    // Потоковая подгрузка кустов (см. growBerryBushes/streamBushes в World.cpp).
+    bool                          m_streaming = false;
+    double                        m_time = 0.0;
+    float                         m_streamTimer = 100.0f;
+    std::vector<glm::vec2>        m_focus;
+    std::unordered_set<std::int64_t>                     m_loadedCells;
+    std::unordered_map<std::int64_t, CellRecordData>     m_cellRecords;
+    mutable std::unordered_map<std::int64_t, std::vector<BushSpec>> m_specCache;   // кэш процедурных ячеек для bushNear
+    void loadCell(const Terrain& terrain, std::int32_t cx, std::int32_t cz);
+    void unloadCells(const Terrain& terrain, const std::vector<std::int64_t>& keys);
+    void streamBushes(const Terrain& terrain, float dt);
 
     // id выжившего родственника только что умершего существа -> ping на
     // ровно следующий тик (см. SenseInputs::lovedOneDied -- тот же

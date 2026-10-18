@@ -24,6 +24,7 @@ constexpr std::uint32_t tag(const char (&s)[5]) {
            static_cast<std::uint32_t>(s[3]) << 24;
 }
 constexpr std::uint32_t kTagTerrain = tag("TERR"), kTagWorld = tag("WRLD"), kTagPhysics = tag("PHYS"), kTagCamera = tag("CAMR"),
+                         kTagStream = tag("STRM"),   // потоковые кусты: время, загруженные ячейки, записи о спящих, происхождение кустов
                          kTagFauna = tag("FAUN"),    // дикие животные (старые сохранения без неё -- мир без зверей)
                          kTagBerries = tag("BRRY");  // вид ягод каждого куста (по порядку WRLD.food); старые сохранения -- без неё, все кусты малина
 
@@ -260,7 +261,32 @@ std::vector<std::uint8_t> serializeSave(const SaveGame& g, std::uint32_t version
             b.boolean(a.alive);
             b.u8(a.deathCause);
         }
+        b.u32(static_cast<std::uint32_t>(f.explored.size()));   // заселённые ячейки мира без границ (в конце: старые файлы без них читаются)
+        for (std::int64_t k : f.explored) b.i64(k);
         section(payload, kTagFauna, b);
+    }
+    {
+        ByteWriter b;
+        const WorldState& w = g.world;
+        b.boolean(w.streaming);
+        std::uint64_t bits;
+        std::memcpy(&bits, &w.time, 8);
+        b.u64(bits);
+        b.u32(static_cast<std::uint32_t>(w.loadedCells.size()));
+        for (std::int64_t k : w.loadedCells) b.i64(k);
+        b.u32(static_cast<std::uint32_t>(w.cellRecords.size()));
+        for (const CellRecordData& r : w.cellRecords) {
+            b.i64(r.key);
+            std::memcpy(&bits, &r.lastTime, 8);
+            b.u64(bits);
+            b.u32(static_cast<std::uint32_t>(r.deltas.size()));
+            for (const auto& [local, amount] : r.deltas) { b.u32(static_cast<std::uint32_t>(local)); b.f32(amount); }
+            b.u32(static_cast<std::uint32_t>(r.planted.size()));
+            for (const FoodSource& f : r.planted) { b.vec3(f.position); b.f32(f.amount); b.u8(static_cast<std::uint8_t>(f.kind)); }
+        }
+        b.u32(static_cast<std::uint32_t>(w.food.size()));   // происхождение каждого материализованного куста (в порядке WRLD.food)
+        for (const FoodSource& f : w.food) { b.u32(static_cast<std::uint32_t>(f.cellX)); b.u32(static_cast<std::uint32_t>(f.cellZ)); b.u32(static_cast<std::uint32_t>(static_cast<std::int32_t>(f.local))); }
+        section(payload, kTagStream, b);
     }
     {
         ByteWriter b;
@@ -340,6 +366,8 @@ bool parseSave(std::span<const std::uint8_t> bytes, SaveGame& out, std::string& 
 
     bool haveTerrain = false, haveWorld = false;
     std::vector<std::uint8_t> berryKinds;
+    struct FoodOrigin { std::int32_t cx, cz, local; };
+    std::vector<FoodOrigin> streamFood;   // происхождение кустов из STRM (применяется после чтения всех секций)
     ByteReader pr(payload);
     while (pr.remaining() >= 8) {
         const std::uint32_t t = pr.u32(), len = pr.u32();
@@ -421,6 +449,49 @@ bool parseSave(std::span<const std::uint8_t> bytes, SaveGame& out, std::string& 
                 if (!std::isfinite(a.position.x) || !std::isfinite(a.position.z)) { error = "файл повреждён (животное)"; return false; }
                 f.animals.push_back(a);
             }
+            if (sr.remaining() >= 4) {   // исследованные ячейки (добавлены позже секции)
+                const std::uint32_t m = sr.count(500000, 8);
+                for (std::uint32_t i = 0; i < m && sr.ok(); ++i) f.explored.push_back(sr.i64());
+            }
+        } else if (t == kTagStream) {
+            WorldState& w = g.world;
+            w.streaming = sr.boolean();
+            std::uint64_t bits = sr.u64();
+            std::memcpy(&w.time, &bits, 8);
+            if (!std::isfinite(w.time)) w.time = 0.0;
+            const std::uint32_t cells = sr.count(500000, 8);
+            for (std::uint32_t i = 0; i < cells && sr.ok(); ++i) w.loadedCells.push_back(sr.i64());
+            const std::uint32_t recs = sr.count(500000, 24);
+            for (std::uint32_t i = 0; i < recs && sr.ok(); ++i) {
+                CellRecordData r;
+                r.key = sr.i64();
+                bits = sr.u64();
+                std::memcpy(&r.lastTime, &bits, 8);
+                if (!std::isfinite(r.lastTime)) r.lastTime = 0.0;
+                const std::uint32_t nd = sr.count(256, 8);
+                for (std::uint32_t k = 0; k < nd && sr.ok(); ++k) {
+                    const auto local = static_cast<std::int16_t>(sr.u32());
+                    const float amount = sr.f32();
+                    r.deltas.emplace_back(local, std::isfinite(amount) ? std::clamp(amount, -1.0f, 1.0f) : -1.0f);
+                }
+                const std::uint32_t np = sr.count(4000, 17);
+                for (std::uint32_t k = 0; k < np && sr.ok(); ++k) {
+                    FoodSource f;
+                    f.position = sr.vec3();
+                    f.amount   = std::clamp(sr.f32(), 0.0f, 1.0f);
+                    const std::uint8_t kind = sr.u8();
+                    f.kind = kind < kBerryKindCount ? static_cast<BerryKind>(kind) : BerryKind::Raspberry;
+                    f.local = -1;
+                    f.cellX = static_cast<std::int32_t>(std::floor(f.position.x / kBushCell));
+                    f.cellZ = static_cast<std::int32_t>(std::floor(f.position.z / kBushCell));
+                    r.planted.push_back(f);
+                }
+                w.cellRecords.push_back(std::move(r));
+            }
+            const std::uint32_t nf = sr.count(kMaxFood, 12);
+            for (std::uint32_t i = 0; i < nf && sr.ok(); ++i) {
+                streamFood.push_back({static_cast<std::int32_t>(sr.u32()), static_cast<std::int32_t>(sr.u32()), static_cast<std::int32_t>(sr.u32())});
+            }
         } else if (t == kTagBerries) {
             const std::uint32_t n = sr.count(kMaxFood, 1);
             for (std::uint32_t i = 0; i < n && sr.ok(); ++i) berryKinds.push_back(sr.u8());
@@ -433,6 +504,14 @@ bool parseSave(std::span<const std::uint8_t> bytes, SaveGame& out, std::string& 
         if (!sr.ok()) { error = "файл повреждён (данные секции)"; return false; }
     }
     if (!haveTerrain || !haveWorld) { error = "в файле нет рельефа или мира"; return false; }
+    // Происхождение кустов (потоковый мир): секция должна сойтись по числу кустов, иначе считаем файл старым (кусты -- "посаженные").
+    if (g.world.streaming && streamFood.size() == g.world.food.size())
+        for (std::size_t i = 0; i < streamFood.size(); ++i) {
+            g.world.food[i].cellX = streamFood[i].cx;
+            g.world.food[i].cellZ = streamFood[i].cz;
+            g.world.food[i].local = static_cast<std::int16_t>(std::clamp(streamFood[i].local, -1, 32000));
+        }
+    else g.world.streaming = false;
     // Виды ягод: если секция есть и сходится по числу кустов -- применяем (неизвестный номер -- малина).
     if (berryKinds.size() == g.world.food.size())
         for (std::size_t i = 0; i < berryKinds.size(); ++i)

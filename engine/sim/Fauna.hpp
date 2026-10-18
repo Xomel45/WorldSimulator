@@ -101,7 +101,8 @@ public:
     [[nodiscard]] std::size_t count(Species s) const noexcept;
     [[nodiscard]] const FaunaStats& stats() const noexcept { return m_stats; }
 
-    // Заселение игровой области по биомам: группы травоядных и редкие хищники (если для них есть добыча).
+    // Заселение стартовой области [-halfSize, halfSize]^2 по биомам: группы травоядных и редкие хищники (если для них есть добыча).
+    // Её ячейки считаются исследованными; остальной мир заселяется по мере появления там существ и камеры (см. tick, halfSize <= 0).
     void populate(const Terrain& terrain, Rng& rng, float halfSize);
     // Животное данного вида в (x, z) (взрослое; при adult=false -- детёныш). false -- потолок или вид не уживается рядом с другим животным.
     bool spawn(Species s, float x, float z, Rng& rng, bool adult = true);
@@ -112,23 +113,34 @@ public:
     [[nodiscard]] bool nearest(float x, float z, float radius, std::size_t& index) const;
 
     // Один шаг. terrain может быть nullptr (плоский мир без воды -- тесты). creatures -- позиции существ (для страха и охоты).
-    // Укусы по существам дописываются в bites; игровая область -- квадрат [-halfSize, halfSize].
-    void tick(float dt, const Terrain* terrain, std::span<const CreatureView> creatures, Rng& rng, float halfSize, std::vector<Bite>& bites);
+    // Укусы по существам дописываются в bites. halfSize > 0 -- игровая область квадрат [-halfSize, halfSize] (мягкие границы, миграция
+    // с краёв); halfSize <= 0 -- мир без границ: вокруг существ и точек интереса focus впервые попавшие в поле ячейки заселяются
+    // (раз и навсегда -- ячейка запоминается как исследованная), а вымирающие виды пополняются кольцом вокруг этих точек.
+    void tick(float dt, const Terrain* terrain, std::span<const CreatureView> creatures, Rng& rng, float halfSize, std::vector<Bite>& bites,
+              std::span<const glm::vec2> focus = {});
 
     // Сохранение.
     struct State {
         std::uint64_t       nextId = 1;
         std::vector<Animal> animals;
         float               immigrationTimer = 0.0f;
+        std::vector<std::int64_t> explored;   // заселённые ячейки мира без границ (по возрастанию)
     };
-    [[nodiscard]] State exportState() const { return {m_nextId, m_animals, m_immigrationTimer}; }
+    [[nodiscard]] State exportState() const;
     bool importState(const State& s);
 
 private:
     std::vector<Animal> m_animals;
     std::uint64_t       m_nextId = 1;
     float               m_immigrationTimer = 0.0f;
+    float               m_streamTimer = 100.0f;
+    std::vector<std::int64_t> m_explored;     // отсортирован
     FaunaStats          m_stats;
+
+    static constexpr float kWildCell = 48.0f;   // ячейка заселения мира без границ
+    void spawnGroupAt(Species s, glm::vec2 centre, const Terrain& terrain, Rng& rng, float halfSize);
+    void streamWildlife(float dt, const Terrain& terrain, std::span<const CreatureView> creatures, std::span<const glm::vec2> focus, Rng& rng);
+    bool markExplored(std::int32_t cx, std::int32_t cz);   // true -- ячейка была новой
 };
 
 }  // namespace wsim

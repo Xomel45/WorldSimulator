@@ -627,7 +627,7 @@ Food bushes are now biome-aware and come in eleven berry kinds (six safe ones, f
   plains raspberry/blackberry/blueberry, forest blackberry/raspberry/blueberry, savanna cactus fruit+tropical, desert cactus
   fruit, jungle tropical+blackberry. `bushDensity(biome)` scales how many (jungle 1.25×, forest 1.0, plains 0.85, taiga 0.7,
   savanna 0.5, tundra 0.35, desert 0.25).
-- **Generation** `World::growBerryBushes(terrain)` (called after `settleOnLand` at start and on "Новый мир"; replaces the old
+- **Generation (superseded by "Unbounded living world" below: bushes are now procedural per cell, streamed and unbounded; the text here describes the first version)** `World::growBerryBushes(terrain)` (called after `settleOnLand` at start and on "Новый мир"; replaces the old
   uniformly random 30): a jittered 18-unit grid over the playfield, each cell becomes a *patch* of 1-3 bushes of one kind (radius 3.5)
   with chance `0.24 * density(biome)`; land only (height > 0.4), spacing ≥ `kBushSpacing=1.6`, at least 18 bushes, cap
   `kMaxFood=150`. Uses the world RNG (reproducible, saved). Measured 26-46 bushes per seed (the old world had 30); a 20-minute
@@ -761,6 +761,33 @@ world-level cases in `intelligence_tests`, `save_tests` (FAUN section, bit-exact
 - Not done: **no animal sounds** (howls, bleats), no leg/head animation (models are rigid, only a bob), no sexes/antler growth, animals ignore berries, houses and
   boulders (no flee from hazards), creatures don't hunt, herd or domesticate animals, no corpses/scavengers, no fish/birds/swimming species except tapir and
   jaguar wading, predators don't coordinate as packs, no day/night rhythm for hunting.
+
+## Unbounded living world (streamed bushes, wildlife and creatures)
+
+Until this round everything "alive" (bushes, creatures, animals) lived in a bounded 200x200 start square (`World::kWorldHalfSize = 100`) while terrain and trees were
+infinite pure functions of the seed — so berries stopped at the square's edge and creatures were pushed back from it. Now the simulated world has no edge:
+- **Bushes are a pure function of the world** (`Berries::proceduralBushes(terrain, cx, cz)`, cell `kBushCell = 18`): per cell a hash-driven patch of 1-3 bushes of one kind
+  (chance `0.26·bushDensity(biome)`, biome from `classify(climateAt(centre))` — *without altitude*, so terrain edits never change which berry grows where; poisonous kinds
+  are re-rolled 60% of the time → ~8% of bushes, tests require < 15%). Each candidate has a `local` index (0-2) that does not depend on terrain edits; a candidate on water
+  just isn't materialized. Tests: determinism, land only, biome fit, density 0.12-1.0 bushes/cell, edit-robust indices.
+- **World materializes only awake cells** (`World::streamBushes`, every 0.5 s): cells within 54 units of any creature and 110 of the camera (`setFocus`, set by `Application` each
+  frame from the camera pivot) are loaded (`loadCell` → `FoodSource{cellX, cellZ, local}`); a cell asleep for good (beyond radius + 26) is unloaded (`unloadCells`) leaving only a
+  **`CellRecordData`**: eaten bushes (`local → amount`), erased ones (`amount < 0`), player-planted ones, and the world time it fell asleep. On waking an eaten bush regrows in closed
+  form (`regrownAmount`, the same `da/dt = r(0.25+0.75a)` law) for the time it slept; erased bushes stay erased; planted bushes return. `plantBush` makes `local = -1` bushes owned by the
+  cell of their position; `ensureBushesAt` wakes cells before planting at a far cursor. `kMaxFood` is now 8000 (materialized bushes). `bushNear(terrain, x, z, r)` answers the tree
+  blocker from the procedural list (small cache) so trees never grow where a sleeping cell's bush will be.
+- **Creatures** have no bounds in a streaming world (`senses.worldHalfSize = 0`; a World without terrain — unit tests — keeps the old soft edge). Measured (20 sim-min, 4 seeds):
+  creatures reach 120-230 units from the start, 40-140 alive, ~300-450 awake cells, 60-150 bushes, 60 animals, **0.17-0.5 ms per tick** at release.
+- **Wildlife** (`Fauna` with `halfSize <= 0`): the start square is populated as before and its 48-unit cells are marked *explored*; around creatures and the camera (reach 96) every
+  newly seen cell is populated once (80% a herbivore group by biome, 6% a predator pack if ≥ 3 prey animals within 90 units) and remembered (`State::explored`); a dying species is refilled
+  by a ring 80-110 units from a random focus point. Species caps grew (hare 20, deer 14, antelope 16, tapir 7, wolf 5, fox 4, lion 4, jaguar 3), animals far from everyone keep simulating.
+- **Saves**: new `STRM` section (streaming flag, world time, loaded cells, sleeping cell records, origin `(cell, local)` of every materialized bush, in `WRLD.food` order) and
+  `FAUN` now ends with the explored cells. An old save (no `STRM`, or counts that don't match) loads its bushes as player-planted and marks the start square loaded, so procedural
+  bushes don't duplicate there; elsewhere the world streams normally. Tested incl. bit-exact continuation (`save_tests`).
+- `growBerryBushes(terrain)` now means "switch to streamed bushes and wake the start area" (it replaces the old random 30/jittered grid; `kMinBushes` is gone — a barren start just
+  means the creatures explore). Debug window: "Food sources: N (awake cells M)".
+- Not done: creatures far from the camera still simulate every tick (no level of detail for the sim); animals have no sleep state and do not despawn far away; houses, boulders and
+  terrain edits are not streamed (they are global lists / sparse tiles); the creature `homePosition` pull keeps most of them near their birthplace (mean distance ~80-100).
 
 ## Temporal upscaler and frame generation (`VulkanTemporal.cpp`, `taau.comp`, `framegen.comp`)
 

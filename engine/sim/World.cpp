@@ -40,6 +40,8 @@ constexpr float kFoodMinEdible       = 0.12f;   // меньше -- куст "п�
 
 using Grid = std::unordered_map<std::int64_t, std::vector<std::size_t>>;
 
+std::int32_t cellIndex(float v) noexcept { return static_cast<std::int32_t>(std::floor(v / kBushCell)); }   // номер ячейки кустов по координате
+
 std::int64_t packCellKey(std::int64_t cx, std::int64_t cz) noexcept {
     return (static_cast<std::int64_t>(static_cast<std::uint32_t>(cx)) << 32) |
            static_cast<std::uint32_t>(static_cast<std::int32_t>(cz));
@@ -114,7 +116,10 @@ World::World(std::uint32_t seed) : m_rng(seed) {
 
     m_food.reserve(kFoodCount);
     for (std::size_t i = 0; i < kFoodCount; ++i)
-        m_food.push_back(FoodSource{randomPointInBounds(m_rng), kFoodCap});
+        {
+            const glm::vec3 p = randomPointInBounds(m_rng);
+            m_food.push_back(FoodSource{p, kFoodCap, BerryKind::Raspberry, cellIndex(p.x), cellIndex(p.z), -1});
+        }
 }
 
 bool World::spawnCreature(float x, float z, std::span<const std::pair<Genome::TraitIndex, float>> traits) {
@@ -168,12 +173,14 @@ bool World::plantBush(float x, float z, BerryKind kind) {
     if (m_food.size() >= kMaxFood) return false;
     for (const FoodSource& f : m_food)
         if (std::hypot(f.position.x - x, f.position.z - z) < kBushSpacing) return false;
-    m_food.push_back(FoodSource{{x, 0.0f, z}, kFoodCap, kind});
+    // Посаженный куст принадлежит ячейке по положению (спит и просыпается вместе с ней; процедурного номера у него нет).
+    m_food.push_back(FoodSource{{x, 0.0f, z}, kFoodCap, kind, cellIndex(x), cellIndex(z), -1});
     return true;
 }
 
 bool World::plantNaturalBush(const Terrain& terrain, float x, float z) {
     if (terrain.isUnderwater(x, z)) return false;
+    ensureBushesAt(terrain, x, z);
     const BerryKind kind = pickBerryKind(terrain.biomeAt(x, z), std::uniform_real_distribution<float>(0.0f, 1.0f)(m_rng));
     return plantBush(x, z, kind);
 }
@@ -194,49 +201,156 @@ bool World::nearestBush(float x, float z, float radius, std::size_t& index) cons
     return found;
 }
 
-void World::growBerryBushes(const Terrain& terrain) {
-    constexpr float       kCell = 18.0f, kPatchRadius = 3.5f, kBaseChance = 0.24f;
-    constexpr std::size_t kMinBushes = 18;  // даже в пустыне хоть что-то растёт
-    std::uniform_real_distribution<float> unit(0.0f, 1.0f);
-    m_food.clear();
+// ─── Потоковые ягоды ──────────────────────────────────────────────────────────
+// Кусты -- чистая функция мира (Berries::proceduralBushes), а World держит материализованными только те ячейки, возле которых
+// есть существа или камера. Ушла жизнь -- ячейка засыпает: из состояния помнится лишь отличие от нетронутой (съеденное,
+// стёртое, посаженное), на побудке куст отрастает за прошедшее время. Так мир бесконечен, а цена -- только за "живую" часть.
+namespace {
 
-    const float half = kWorldHalfSize;
-    auto land = [&](float x, float z) {
-        return std::fabs(x) <= half && std::fabs(z) <= half && terrain.heightAt(x, z) > 0.4f;  // не вода и не мокрый пляж
+constexpr float kLoadRadiusCreature = 54.0f;    // вокруг существа кусты нужны с запасом на радиус зрения
+constexpr float kLoadRadiusFocus    = 110.0f;   // вокруг камеры -- чтобы окрестность не была голой
+constexpr float kKeepMargin         = 26.0f;    // ячейка засыпает, когда ушла от всех на радиус + запас (иначе на границе мигала бы)
+constexpr float kStreamInterval     = 0.5f;
+constexpr std::size_t kMaxLoadsPerPass = 80;
+
+std::int64_t packCell(std::int32_t cx, std::int32_t cz) noexcept {
+    return (static_cast<std::int64_t>(cx) << 32) | static_cast<std::uint32_t>(cz);
+}
+std::int32_t cellX(std::int64_t key) noexcept { return static_cast<std::int32_t>(key >> 32); }
+std::int32_t cellZ(std::int64_t key) noexcept { return static_cast<std::int32_t>(static_cast<std::uint32_t>(key)); }
+
+// Куст, лежавший без присмотра t секунд, отрастает: da/dt = r (0.25 + 0.75 a) -- то же уравнение, что в World::tick, в замкнутом виде.
+float regrownAmount(float a0, float seconds, BerryKind kind) {
+    const float k = 0.75f * kFoodRegrowRate * berryDef(kind).regrow;
+    return std::min(kFoodCap, (a0 + 1.0f / 3.0f) * std::exp(k * seconds) - 1.0f / 3.0f);
+}
+
+}  // namespace
+
+void World::loadCell(const Terrain& terrain, std::int32_t cx, std::int32_t cz) {
+    const std::int64_t key = packCell(cx, cz);
+    if (!m_loadedCells.insert(key).second) return;
+    const auto rec = m_cellRecords.find(key);
+    const double asleep = rec != m_cellRecords.end() ? m_time - rec->second.lastTime : 0.0;
+    for (const BushSpec& spec : proceduralBushes(terrain, cx, cz)) {
+        float amount = kFoodCap;
+        if (rec != m_cellRecords.end())
+            for (const auto& [local, a] : rec->second.deltas)
+                if (local == spec.local) { amount = a; break; }
+        if (amount < 0.0f) continue;   // стёрт игроком
+        if (amount < kFoodCap) amount = regrownAmount(amount, static_cast<float>(asleep), spec.kind);
+        if (m_food.size() >= kMaxFood) break;
+        m_food.push_back(FoodSource{{spec.x, 0.0f, spec.z}, amount, spec.kind, cx, cz, static_cast<std::int16_t>(spec.local)});
+    }
+    if (rec != m_cellRecords.end()) {
+        for (FoodSource f : rec->second.planted) {
+            f.amount = regrownAmount(f.amount, static_cast<float>(asleep), f.kind);
+            if (m_food.size() < kMaxFood) m_food.push_back(f);
+        }
+        m_cellRecords.erase(rec);
+    }
+}
+
+void World::unloadCells(const Terrain& terrain, const std::vector<std::int64_t>& keys) {
+    if (keys.empty()) return;
+    const std::unordered_set<std::int64_t> going(keys.begin(), keys.end());
+    std::unordered_map<std::int64_t, std::vector<std::size_t>> byCell;
+    for (std::size_t i = 0; i < m_food.size(); ++i) {
+        const std::int64_t k = packCell(m_food[i].cellX, m_food[i].cellZ);
+        if (going.count(k)) byCell[k].push_back(i);
+    }
+    for (std::int64_t key : keys) {
+        CellRecordData rec;
+        rec.key      = key;
+        rec.lastTime = m_time;
+        const auto it = byCell.find(key);
+        const std::int32_t cx = cellX(key), cz = cellZ(key);
+        for (const BushSpec& spec : proceduralBushes(terrain, cx, cz)) {
+            const FoodSource* found = nullptr;
+            if (it != byCell.end())
+                for (std::size_t i : it->second)
+                    if (m_food[i].local == spec.local) { found = &m_food[i]; break; }
+            if (!found) rec.deltas.emplace_back(static_cast<std::int16_t>(spec.local), -1.0f);           // стёрт
+            else if (found->amount < kFoodCap - 1.0e-3f) rec.deltas.emplace_back(static_cast<std::int16_t>(spec.local), found->amount);
+        }
+        if (it != byCell.end())
+            for (std::size_t i : it->second)
+                if (m_food[i].local < 0) rec.planted.push_back(m_food[i]);
+        if (!rec.deltas.empty() || !rec.planted.empty()) m_cellRecords[key] = std::move(rec);
+        else m_cellRecords.erase(key);
+        m_loadedCells.erase(key);
+    }
+    std::erase_if(m_food, [&](const FoodSource& f) { return going.count(packCell(f.cellX, f.cellZ)) != 0; });
+}
+
+void World::streamBushes(const Terrain& terrain, float dt) {
+    m_streamTimer += dt;
+    if (m_streamTimer < kStreamInterval) return;
+    m_streamTimer = 0.0f;
+
+    std::unordered_set<std::int64_t> want, keep;
+    auto disc = [&](float x, float z, float radius, std::unordered_set<std::int64_t>& set) {
+        const std::int32_t x0 = cellIndex(x - radius), x1 = cellIndex(x + radius), z0 = cellIndex(z - radius), z1 = cellIndex(z + radius);
+        for (std::int32_t cz = z0; cz <= z1; ++cz)
+            for (std::int32_t cx = x0; cx <= x1; ++cx) set.insert(packCell(cx, cz));
     };
-    for (float cz = -half; cz < half; cz += kCell)
-        for (float cx = -half; cx < half; cx += kCell) {
-            const float x0 = cx + unit(m_rng) * kCell, z0 = cz + unit(m_rng) * kCell;
-            if (!land(x0, z0)) continue;
-            const Biome biome = terrain.biomeAt(x0, z0);
-            if (unit(m_rng) >= kBaseChance * bushDensity(biome)) continue;
-            const BerryKind kind = pickBerryKind(biome, unit(m_rng));
-            const int       n    = 1 + static_cast<int>(unit(m_rng) * 2.999f);  // пятно из 1-3 кустов
-            for (int k = 0; k < n; ++k) {
-                const float a = 6.2831853f * unit(m_rng), r = kPatchRadius * std::sqrt(unit(m_rng));
-                const float x = x0 + std::cos(a) * r, z = z0 + std::sin(a) * r;
-                if (land(x, z)) plantBush(x, z, kind);
-            }
+    for (const Inhabitant& in : m_population)
+        if (in.creature.alive) {
+            disc(in.creature.position.x, in.creature.position.z, kLoadRadiusCreature, want);
+            disc(in.creature.position.x, in.creature.position.z, kLoadRadiusCreature + kKeepMargin, keep);
         }
-    // Ядовитые пятна не должны съедать мир: бывало 10 ядовитых кустов из 22 -- существа вымирали голодом. Лишние ядовитые
-    // перевыбираются среди безопасных видов своего биома (доля ядовитых не выше четверти).
-    {
-        auto poisonous = [&]() { std::size_t k = 0; for (const FoodSource& f : m_food) k += isPoisonous(f.kind); return k; };
-        std::size_t bad = poisonous();
-        for (FoodSource& f : m_food) {
-            if (bad * 4 <= m_food.size()) break;
-            if (!isPoisonous(f.kind)) continue;
-            const Biome biome = terrain.biomeAt(f.position.x, f.position.z);
-            for (int tries = 0; tries < 12; ++tries) {
-                const BerryKind k = pickBerryKind(biome, unit(m_rng));
-                if (!isPoisonous(k)) { f.kind = k; --bad; break; }
+    for (const glm::vec2& f : m_focus) {
+        disc(f.x, f.y, kLoadRadiusFocus, want);
+        disc(f.x, f.y, kLoadRadiusFocus + kKeepMargin, keep);
+    }
+    std::size_t loads = 0;
+    for (std::int64_t key : want) {
+        if (m_loadedCells.count(key)) continue;
+        loadCell(terrain, cellX(key), cellZ(key));
+        if (++loads >= kMaxLoadsPerPass) break;
+    }
+    std::vector<std::int64_t> sleepers;
+    for (std::int64_t key : m_loadedCells)
+        if (!keep.count(key)) sleepers.push_back(key);
+    std::sort(sleepers.begin(), sleepers.end());   // порядок не зависит от хэш-таблицы: результат воспроизводим
+    unloadCells(terrain, sleepers);
+}
+
+void World::ensureBushesAt(const Terrain& terrain, float x, float z) {
+    if (!m_streaming) return;
+    for (std::int32_t dz = -1; dz <= 1; ++dz)
+        for (std::int32_t dx = -1; dx <= 1; ++dx) loadCell(terrain, cellIndex(x) + dx, cellIndex(z) + dz);
+}
+
+bool World::bushNear(const Terrain& terrain, float x, float z, float radius) const {
+    for (const FoodSource& f : m_food)
+        if (f.local < 0 && std::hypot(f.position.x - x, f.position.z - z) < radius) return true;   // посаженные
+    for (std::int32_t dz = -1; dz <= 1; ++dz)
+        for (std::int32_t dx = -1; dx <= 1; ++dx) {
+            const std::int32_t cx = cellIndex(x) + dx, cz = cellIndex(z) + dz;
+            const std::int64_t key = packCell(cx, cz);
+            auto it = m_specCache.find(key);
+            if (it == m_specCache.end()) {
+                if (m_specCache.size() > 4096) m_specCache.clear();
+                it = m_specCache.emplace(key, proceduralBushes(terrain, cx, cz)).first;
             }
+            for (const BushSpec& b : it->second)
+                if (std::hypot(b.x - x, b.z - z) < radius) return true;
         }
-    }
-    for (int attempt = 0; attempt < 400 && m_food.size() < kMinBushes; ++attempt) {
-        const glm::vec3 p = randomPointInBounds(m_rng);
-        if (land(p.x, p.z)) plantBush(p.x, p.z, pickBerryKind(terrain.biomeAt(p.x, p.z), unit(m_rng)));
-    }
+    return false;
+}
+
+void World::growBerryBushes(const Terrain& terrain) {
+    m_streaming = true;
+    m_food.clear();
+    m_loadedCells.clear();
+    m_cellRecords.clear();
+    m_specCache.clear();
+    m_time = 0.0;
+    m_streamTimer = 100.0f;   // первая же проверка в tick() подгрузит окрестности существ
+    const float reach = kWorldHalfSize + 14.0f;
+    for (std::int32_t cz = cellIndex(-reach); cz <= cellIndex(reach); ++cz)
+        for (std::int32_t cx = cellIndex(-reach); cx <= cellIndex(reach); ++cx) loadCell(terrain, cx, cz);
 }
 
 WorldState World::exportState() const {
@@ -249,6 +363,12 @@ WorldState World::exportState() const {
     st.food       = m_food;
     st.buildings  = m_buildings;
     st.fauna      = m_fauna.exportState();
+    st.streaming  = m_streaming;
+    st.time       = m_time;
+    st.loadedCells.assign(m_loadedCells.begin(), m_loadedCells.end());
+    std::sort(st.loadedCells.begin(), st.loadedCells.end());
+    for (const auto& [key, rec] : m_cellRecords) st.cellRecords.push_back(rec);
+    std::sort(st.cellRecords.begin(), st.cellRecords.end(), [](const CellRecordData& a, const CellRecordData& b) { return a.key < b.key; });
     st.pendingGrief.assign(m_pendingGrief.begin(), m_pendingGrief.end());
     std::sort(st.pendingGrief.begin(), st.pendingGrief.end());
     return st;
@@ -265,6 +385,24 @@ bool World::importState(const WorldState& st) {
     m_food       = st.food;
     m_buildings  = st.buildings;
     if (!m_fauna.importState(st.fauna)) return false;
+    m_streaming = st.streaming;
+    m_time      = std::isfinite(st.time) ? st.time : 0.0;
+    m_streamTimer = 100.0f;
+    m_specCache.clear();
+    m_loadedCells.clear();
+    m_cellRecords.clear();
+    if (st.streaming) {
+        m_loadedCells.insert(st.loadedCells.begin(), st.loadedCells.end());
+        for (const CellRecordData& rec : st.cellRecords) m_cellRecords[rec.key] = rec;
+    } else if (!m_food.empty()) {
+        // Старое сохранение (или мир из тестов): кусты были просто списком. Считаем их "посаженными" и объявляем стартовую
+        // область загруженной -- процедурные кусты поверх них не рождаются; за её пределами мир подгружает кусты сам.
+        m_streaming = true;
+        for (FoodSource& f : m_food) { f.cellX = cellIndex(f.position.x); f.cellZ = cellIndex(f.position.z); f.local = -1; }
+        const float reach = kWorldHalfSize + 14.0f;
+        for (std::int32_t cz = cellIndex(-reach); cz <= cellIndex(reach); ++cz)
+            for (std::int32_t cx = cellIndex(-reach); cx <= cellIndex(reach); ++cx) m_loadedCells.insert(packCell(cx, cz));
+    }
     m_pendingGrief.clear();
     for (const auto& [id, v] : st.pendingGrief) m_pendingGrief[id] = v;
     return true;
@@ -285,6 +423,9 @@ std::size_t World::removeBuildings(float x, float z, float radius) {
 }
 
 void World::tick(float dt, const Terrain* terrain) {
+    m_time += dt;
+    if (terrain && m_streaming) streamBushes(*terrain, dt);
+
     // 1. Прошлотиковые пинги горя -- одноразовые, читаются один раз и всё.
     const std::unordered_map<std::uint64_t, float> grief = std::move(m_pendingGrief);
     m_pendingGrief.clear();
@@ -304,7 +445,7 @@ void World::tick(float dt, const Terrain* terrain) {
         for (const Inhabitant& in : m_population)
             if (in.creature.alive) views.push_back({in.creature.id, in.creature.position});
         std::vector<Bite> bites;
-        m_fauna.tick(dt, terrain, views, m_rng, kWorldHalfSize, bites);
+        m_fauna.tick(dt, terrain, views, m_rng, m_streaming ? 0.0f : kWorldHalfSize, bites, m_focus);
         for (const Bite& b : bites) {
             const auto it = idIndex.find(b.creatureId);
             if (it == idIndex.end()) continue;
@@ -346,7 +487,7 @@ void World::tick(float dt, const Terrain* terrain) {
 
         SenseInputs senses{};
         senses.terrain       = terrain;
-        senses.worldHalfSize = kWorldHalfSize;
+        senses.worldHalfSize = m_streaming ? 0.0f : kWorldHalfSize;   // с потоковым миром границ нет: бегать можно куда угодно
 
         // Еда.
         // Куст выбирается не по одной близости: учитывается, какие ягоды существо знает и любит (вкус, см.

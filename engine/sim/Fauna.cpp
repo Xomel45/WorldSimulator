@@ -17,14 +17,14 @@ constexpr std::uint32_t bit(Species s) { return 1u << static_cast<unsigned>(s); 
 // Порядок биомов: Tundra, Taiga, Plains, Forest, Desert, Savanna, Jungle.
 constexpr std::array<SpeciesDef, kSpeciesCount> kDefs{{
     //  id          название        рацион                 размер скор. зрение паника группа          тундра тайга равн. лес  пуст. сав.  джун.   потолок взрослость размнож. жизнь  добыча                          на существ  плавает
-    {"hare",     "Заяц",        Diet::Herbivore, 0.45f, 7.0f, 22.0f, 16.0f, 1, 3, {{0.5f, 0.6f, 1.0f, 0.8f, 0.0f, 0.2f, 0.0f}},  14,  90.0f,  70.0f,  900.0f, 0,                               false, false},
-    {"deer",     "Олень",       Diet::Herbivore, 1.10f, 6.0f, 28.0f, 20.0f, 2, 5, {{0.3f, 0.7f, 0.8f, 1.0f, 0.0f, 0.0f, 0.0f}},  10, 140.0f, 130.0f, 1500.0f, 0,                               false, false},
-    {"antelope", "Антилопа",    Diet::Herbivore, 0.95f, 7.5f, 30.0f, 22.0f, 3, 7, {{0.0f, 0.0f, 0.3f, 0.0f, 0.3f, 1.0f, 0.0f}},  12, 130.0f, 110.0f, 1400.0f, 0,                               false, false},
-    {"tapir",    "Тапир",       Diet::Herbivore, 1.00f, 4.8f, 18.0f, 12.0f, 1, 2, {{0.0f, 0.0f, 0.0f, 0.1f, 0.0f, 0.0f, 1.0f}},  5, 150.0f, 160.0f, 1600.0f, 0,                               false, true },
-    {"wolf",     "Волк",        Diet::Predator,  0.95f, 7.0f, 32.0f,  0.0f, 2, 3, {{0.7f, 0.9f, 0.3f, 0.5f, 0.0f, 0.0f, 0.0f}},  4, 200.0f, 320.0f, 2000.0f, bit(Species::Hare) | bit(Species::Deer), true,  false},
-    {"fox",      "Лиса",        Diet::Predator,  0.55f, 6.2f, 24.0f,  0.0f, 1, 1, {{0.4f, 0.5f, 0.7f, 0.7f, 0.2f, 0.0f, 0.0f}},  3, 160.0f, 240.0f, 1500.0f, bit(Species::Hare),                false, false},
-    {"lion",     "Лев",         Diet::Predator,  1.15f, 7.5f, 34.0f,  0.0f, 1, 2, {{0.0f, 0.0f, 0.0f, 0.0f, 0.2f, 1.0f, 0.0f}},  3, 220.0f, 360.0f, 2200.0f, bit(Species::Antelope) | bit(Species::Deer), true,  false},
-    {"jaguar",   "Ягуар",       Diet::Predator,  0.90f, 7.0f, 28.0f,  0.0f, 1, 1, {{0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f}},  2, 200.0f, 360.0f, 1900.0f, bit(Species::Tapir) | bit(Species::Deer),   true,  true },
+    {"hare",     "Заяц",        Diet::Herbivore, 0.45f, 7.0f, 22.0f, 16.0f, 1, 3, {{0.5f, 0.6f, 1.0f, 0.8f, 0.0f, 0.2f, 0.0f}},  20,  90.0f,  70.0f,  900.0f, 0,                               false, false},
+    {"deer",     "Олень",       Diet::Herbivore, 1.10f, 6.0f, 28.0f, 20.0f, 2, 5, {{0.3f, 0.7f, 0.8f, 1.0f, 0.0f, 0.0f, 0.0f}},  14, 140.0f, 130.0f, 1500.0f, 0,                               false, false},
+    {"antelope", "Антилопа",    Diet::Herbivore, 0.95f, 7.5f, 30.0f, 22.0f, 3, 7, {{0.0f, 0.0f, 0.3f, 0.0f, 0.3f, 1.0f, 0.0f}},  16, 130.0f, 110.0f, 1400.0f, 0,                               false, false},
+    {"tapir",    "Тапир",       Diet::Herbivore, 1.00f, 4.8f, 18.0f, 12.0f, 1, 2, {{0.0f, 0.0f, 0.0f, 0.1f, 0.0f, 0.0f, 1.0f}},  7, 150.0f, 160.0f, 1600.0f, 0,                               false, true },
+    {"wolf",     "Волк",        Diet::Predator,  0.95f, 7.0f, 32.0f,  0.0f, 2, 3, {{0.7f, 0.9f, 0.3f, 0.5f, 0.0f, 0.0f, 0.0f}},  5, 200.0f, 320.0f, 2000.0f, bit(Species::Hare) | bit(Species::Deer), true,  false},
+    {"fox",      "Лиса",        Diet::Predator,  0.55f, 6.2f, 24.0f,  0.0f, 1, 1, {{0.4f, 0.5f, 0.7f, 0.7f, 0.2f, 0.0f, 0.0f}},  4, 160.0f, 240.0f, 1500.0f, bit(Species::Hare),                false, false},
+    {"lion",     "Лев",         Diet::Predator,  1.15f, 7.5f, 34.0f,  0.0f, 1, 2, {{0.0f, 0.0f, 0.0f, 0.0f, 0.2f, 1.0f, 0.0f}},  4, 220.0f, 360.0f, 2200.0f, bit(Species::Antelope) | bit(Species::Deer), true,  false},
+    {"jaguar",   "Ягуар",       Diet::Predator,  0.90f, 7.0f, 28.0f,  0.0f, 1, 1, {{0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f}},  3, 200.0f, 360.0f, 1900.0f, bit(Species::Tapir) | bit(Species::Deer),   true,  true },
 }};
 
 constexpr float kPredatorBiomeShare = 0.12f;  // хищники в выборе вида по биому в разы реже травоядных
@@ -143,11 +143,47 @@ bool Fauna::importState(const State& s) {
     m_animals          = s.animals;
     m_nextId           = std::max<std::uint64_t>(s.nextId, 1);
     m_immigrationTimer = std::isfinite(s.immigrationTimer) ? s.immigrationTimer : 0.0f;
+    m_explored         = s.explored;
+    std::sort(m_explored.begin(), m_explored.end());
+    m_explored.erase(std::unique(m_explored.begin(), m_explored.end()), m_explored.end());
+    m_streamTimer      = 100.0f;
     return true;
+}
+
+namespace {
+std::int32_t wildCellIndex(float v, float cell) { return static_cast<std::int32_t>(std::floor(v / cell)); }
+std::int64_t packWild(std::int32_t cx, std::int32_t cz) { return (static_cast<std::int64_t>(cx) << 32) | static_cast<std::uint32_t>(cz); }
+}  // namespace
+
+Fauna::State Fauna::exportState() const { return {m_nextId, m_animals, m_immigrationTimer, m_explored}; }
+
+bool Fauna::markExplored(std::int32_t cx, std::int32_t cz) {
+    const std::int64_t key = packWild(cx, cz);
+    const auto it = std::lower_bound(m_explored.begin(), m_explored.end(), key);
+    if (it != m_explored.end() && *it == key) return false;
+    m_explored.insert(it, key);
+    return true;
+}
+
+void Fauna::spawnGroupAt(Species s, glm::vec2 centre, const Terrain& terrain, Rng& rng, float halfSize) {
+    const SpeciesDef& d = speciesDef(s);
+    const int n = d.groupMin + static_cast<int>(unitRand(rng) * static_cast<float>(d.groupMax - d.groupMin + 1) * 0.9999f);
+    for (int k = 0; k < n; ++k) {
+        const float a = 2.0f * kPi * unitRand(rng), r = 4.0f * std::sqrt(unitRand(rng));
+        const float x = centre.x + std::cos(a) * r, z = centre.y + std::sin(a) * r;
+        if (halfSize > 0.0f && (std::fabs(x) > halfSize - 3.0f || std::fabs(z) > halfSize - 3.0f)) continue;
+        if (!d.swims && terrain.isUnderwater(x, z)) continue;
+        if (spawn(s, x, z, rng)) m_animals.back().position.y = terrain.heightAt(x, z);
+    }
 }
 
 void Fauna::populate(const Terrain& terrain, Rng& rng, float halfSize) {
     m_animals.clear();
+    m_explored.clear();
+    m_streamTimer = 100.0f;
+    // Стартовая область считается исследованной: дальше заселение идёт ячейками (streamWildlife).
+    for (std::int32_t cz = wildCellIndex(-halfSize, kWildCell); cz <= wildCellIndex(halfSize, kWildCell); ++cz)
+        for (std::int32_t cx = wildCellIndex(-halfSize, kWildCell); cx <= wildCellIndex(halfSize, kWildCell); ++cx) markExplored(cx, cz);
     auto landPoint = [&](glm::vec2& p, Species* forSpecies) {
         for (int attempt = 0; attempt < 80; ++attempt) {
             p = {(unitRand(rng) * 2.0f - 1.0f) * (halfSize - 6.0f), (unitRand(rng) * 2.0f - 1.0f) * (halfSize - 6.0f)};
@@ -157,24 +193,13 @@ void Fauna::populate(const Terrain& terrain, Rng& rng, float halfSize) {
         }
         return false;
     };
-    auto spawnGroup = [&](Species s, glm::vec2 centre) {
-        const SpeciesDef& d = speciesDef(s);
-        const int n = d.groupMin + static_cast<int>(unitRand(rng) * static_cast<float>(d.groupMax - d.groupMin + 1) * 0.9999f);
-        for (int k = 0; k < n; ++k) {
-            const float a = 2.0f * kPi * unitRand(rng), r = 4.0f * std::sqrt(unitRand(rng));
-            const float x = centre.x + std::cos(a) * r, z = centre.y + std::sin(a) * r;
-            if (std::fabs(x) > halfSize - 3.0f || std::fabs(z) > halfSize - 3.0f) continue;
-            if (!d.swims && terrain.isUnderwater(x, z)) continue;
-            if (spawn(s, x, z, rng)) m_animals.back().position.y = terrain.heightAt(x, z);
-        }
-    };
     // Травоядные: группы там, где им место (вид выбирается по биому точки, хищники в этом проходе не селятся).
     for (int g = 0; g < 14; ++g) {
         glm::vec2 p;
         if (!landPoint(p, nullptr)) break;
         Species s{};
         if (!pickSpeciesFor(terrain.biomeAt(p.x, p.y), unitRand(rng), s) || isPredator(s)) continue;
-        spawnGroup(s, p);
+        spawnGroupAt(s, p, terrain, rng, halfSize);
     }
     // Хищники: по одной стае там, где им место и есть кого есть (хотя бы три головы добычи).
     for (int i = 0; i < kSpeciesCount; ++i) {
@@ -186,11 +211,88 @@ void Fauna::populate(const Terrain& terrain, Rng& rng, float halfSize) {
         if (prey < 3 || unitRand(rng) > 0.85f) continue;
         glm::vec2 p;
         Species sp = s;
-        if (landPoint(p, &sp)) spawnGroup(s, p);
+        if (landPoint(p, &sp)) spawnGroupAt(s, p, terrain, rng, halfSize);
     }
 }
 
-void Fauna::tick(float dt, const Terrain* terrain, std::span<const CreatureView> creatures, Rng& rng, float halfSize, std::vector<Bite>& bites) {
+// Мир без границ: ячейки вокруг существ и точек интереса заселяются при первом попадании в поле зрения (раз и навсегда), а вымирающие
+// виды возвращаются кольцом вокруг этих точек. Дальних зверей мир не гасит -- он просто не рождает новых сверх потолков видов.
+void Fauna::streamWildlife(float dt, const Terrain& terrain, std::span<const CreatureView> creatures, std::span<const glm::vec2> focus, Rng& rng) {
+    m_streamTimer += dt;
+    if (m_streamTimer < 1.0f) return;
+    m_streamTimer = 0.0f;
+    constexpr float kReach = 96.0f;   // заселяем на такое расстояние от существ и камеры
+    std::vector<glm::vec2> anchors;
+    anchors.reserve(creatures.size() + focus.size());
+    for (const CreatureView& c : creatures) anchors.push_back({c.position.x, c.position.z});
+    for (const glm::vec2& f : focus) anchors.push_back(f);
+    if (anchors.empty()) return;
+
+    std::vector<std::int64_t> fresh;
+    for (const glm::vec2& a : anchors) {
+        const std::int32_t x0 = wildCellIndex(a.x - kReach, kWildCell), x1 = wildCellIndex(a.x + kReach, kWildCell);
+        const std::int32_t z0 = wildCellIndex(a.y - kReach, kWildCell), z1 = wildCellIndex(a.y + kReach, kWildCell);
+        for (std::int32_t cz = z0; cz <= z1; ++cz)
+            for (std::int32_t cx = x0; cx <= x1; ++cx)
+                if (markExplored(cx, cz)) fresh.push_back(packWild(cx, cz));
+    }
+    std::sort(fresh.begin(), fresh.end());   // порядок не зависит от порядка существ
+    for (std::int64_t key : fresh) {
+        const auto cx = static_cast<std::int32_t>(key >> 32), cz = static_cast<std::int32_t>(static_cast<std::uint32_t>(key));
+        const glm::vec2 p{(static_cast<float>(cx) + unitRand(rng)) * kWildCell, (static_cast<float>(cz) + unitRand(rng)) * kWildCell};
+        if (terrain.heightAt(p.x, p.y) <= 0.6f) continue;
+        const Biome biome = terrain.biomeAt(p.x, p.y);
+        if (unitRand(rng) < 0.8f) {   // группа травоядных (плотность как в стартовой области: ~14 групп на 200x200)
+            Species s{};
+            if (pickSpeciesFor(biome, unitRand(rng), s) && !isPredator(s)) spawnGroupAt(s, p, terrain, rng, 0.0f);
+        }
+        if (unitRand(rng) < 0.06f) {  // редкая стая хищников, если рядом есть кого есть
+            Species s{};
+            for (int i = 0; i < 8; ++i) {
+                if (!pickSpeciesFor(biome, unitRand(rng), s)) break;
+                if (isPredator(s)) break;
+            }
+            if (isPredator(s)) {
+                std::size_t prey = 0;
+                for (const Animal& a : m_animals)
+                    prey += a.alive && (speciesDef(s).prey & bit(a.species)) != 0 && std::hypot(a.position.x - p.x, a.position.z - p.y) < 90.0f;
+                if (prey >= 3) spawnGroupAt(s, p, terrain, rng, 0.0f);
+            }
+        }
+    }
+
+    // Пополнение: вымирающий вид приходит кольцом вокруг случайной точки интереса (травоядные -- охотнее, хищники -- редко и вслед за добычей).
+    m_immigrationTimer += 1.0f;
+    if (m_immigrationTimer >= 25.0f) {
+        m_immigrationTimer = 0.0f;
+        for (int si = 0; si < kSpeciesCount; ++si) {
+            const auto sp = static_cast<Species>(si);
+            const SpeciesDef& d = speciesDef(sp);
+            const std::size_t have = count(sp);
+            bool want = false;
+            if (d.diet == Diet::Herbivore) want = have < static_cast<std::size_t>(std::max(2, d.cap / 6)) && unitRand(rng) < 0.7f;
+            else if (have == 0) {
+                std::size_t prey = 0;
+                for (const Animal& o : m_animals) prey += o.alive && (d.prey & bit(o.species)) != 0;
+                want = prey >= 6 && unitRand(rng) < 0.1f;
+            }
+            if (!want) continue;
+            for (int attempt = 0; attempt < 14; ++attempt) {
+                const glm::vec2 a = anchors[static_cast<std::size_t>(unitRand(rng) * static_cast<float>(anchors.size()) * 0.9999f)];
+                const float ang = 2.0f * kPi * unitRand(rng), r = 80.0f + 30.0f * unitRand(rng);
+                const glm::vec2 p = a + glm::vec2{std::cos(ang), std::sin(ang)} * r;
+                if (terrain.heightAt(p.x, p.y) <= 0.6f || !speciesLivesIn(sp, terrain.biomeAt(p.x, p.y))) continue;
+                const std::size_t before = m_animals.size();
+                spawnGroupAt(sp, p, terrain, rng, 0.0f);
+                m_stats.immigrants += m_animals.size() - before;
+                break;
+            }
+        }
+    }
+}
+
+void Fauna::tick(float dt, const Terrain* terrain, std::span<const CreatureView> creatures, Rng& rng, float halfSize, std::vector<Bite>& bites,
+                 std::span<const glm::vec2> focus) {
     const std::size_t n = m_animals.size();
 
     auto idToAnimal = [&](std::uint64_t id) -> Animal* {
@@ -373,7 +475,7 @@ void Fauna::tick(float dt, const Terrain* terrain, std::span<const CreatureView>
                 if (dist < 1.4f * d.size && dist > 1.0e-3f && o.species == a.species) desired += (pos - glm::vec2{o.position.x, o.position.z}) / dist * 0.8f * (speedFrac > 0.0f ? 1.0f : 0.0f);
             }
         const float lim = halfSize - 5.0f;
-        if (speedFrac > 0.0f) {
+        if (speedFrac > 0.0f && halfSize > 0.0f) {
             if (std::fabs(pos.x) > lim) desired.x -= std::copysign(1.2f, pos.x);
             if (std::fabs(pos.y) > lim) desired.y -= std::copysign(1.2f, pos.y);
         }
@@ -405,8 +507,8 @@ void Fauna::tick(float dt, const Terrain* terrain, std::span<const CreatureView>
         a.speedNow = moveSpeed;
         if (moveSpeed > 0.0f) {
             const glm::vec2 step = headingVec(a.heading) * moveSpeed * dt;
-            const float nx = std::clamp(a.position.x + step.x, -halfSize + 1.0f, halfSize - 1.0f);
-            const float nz = std::clamp(a.position.z + step.y, -halfSize + 1.0f, halfSize - 1.0f);
+            const float nx = halfSize > 0.0f ? std::clamp(a.position.x + step.x, -halfSize + 1.0f, halfSize - 1.0f) : a.position.x + step.x;
+            const float nz = halfSize > 0.0f ? std::clamp(a.position.z + step.y, -halfSize + 1.0f, halfSize - 1.0f) : a.position.z + step.y;
             // Жёсткий запрет: в воду (кроме умеющих плавать) и в ствол не заходим, даже если луч вперёд ничего не заметил.
             const bool hardBlocked = terrain && ((!d.swims && terrain->isUnderwater(nx, nz)) || Trees::blocksPoint(*terrain, nx, nz, 0.4f));
             if (hardBlocked) {
@@ -439,7 +541,7 @@ void Fauna::tick(float dt, const Terrain* terrain, std::span<const CreatureView>
         for (int k = 0; k < litter; ++k) {
             const float ang = 2.0f * kPi * unitRand(rng);
             const float x = a.position.x + std::cos(ang) * 1.6f, z = a.position.z + std::sin(ang) * 1.6f;
-            if (std::fabs(x) > halfSize - 2.0f || std::fabs(z) > halfSize - 2.0f) continue;
+            if (halfSize > 0.0f && (std::fabs(x) > halfSize - 2.0f || std::fabs(z) > halfSize - 2.0f)) continue;
             if (terrain && !d.swims && terrain->isUnderwater(x, z)) continue;
             if (spawn(species, x, z, rng, /*adult=*/false)) {
                 m_animals.back().position.y = terrain ? terrain->heightAt(x, z) : 0.0f;
@@ -451,8 +553,9 @@ void Fauna::tick(float dt, const Terrain* terrain, std::span<const CreatureView>
     }
 
     // ── Миграция: вид почти вымер -- с края приходит новая группа (травоядные), хищники -- редко и только если есть добыча.
-    m_immigrationTimer += dt;
-    if (terrain && m_immigrationTimer >= 25.0f) {
+    if (terrain && halfSize <= 0.0f) streamWildlife(dt, *terrain, creatures, focus, rng);   // мир без границ: ячейки и пополнение
+    if (halfSize > 0.0f) m_immigrationTimer += dt;
+    if (terrain && halfSize > 0.0f && m_immigrationTimer >= 25.0f) {
         m_immigrationTimer = 0.0f;
         for (int si = 0; si < kSpeciesCount; ++si) {
             const auto s = static_cast<Species>(si);

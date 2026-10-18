@@ -206,9 +206,8 @@ Application::Application(AppConfig config)
     m_chunks->setTreeBlocker([this](float x, float z, float radius) {
         for (const Building& b : m_world.buildings())
             if (std::hypot(b.x - x, b.z - z) < radius + 4.2f) return true;
-        for (const FoodSource& f : m_world.food())
-            if (std::hypot(f.position.x - x, f.position.z - z) < radius + 0.6f) return true;
-        return false;
+        // Кусты и спящих ячеек (процедурные) тоже: дерево не должно вырасти на месте будущего куста.
+        return m_world.bushNear(m_terrain, x, z, radius + 0.6f);
     });
     m_world.settleOnLand(m_terrain);  // стартовые существа -- на суше, не в воде
     m_world.growBerryBushes(m_terrain);  // кусты по биомам (пятна, виды ягод)
@@ -554,6 +553,12 @@ void Application::update(float dt) {
     }
     applyPower(dt);
     stepPhysics(dt);
+    // Мир "живёт" не только вокруг существ: камера тоже якорь -- рядом с ней просыпаются кусты и заселяются звери.
+    {
+        const glm::vec3 cam = m_camera.target();
+        const glm::vec2 focus{cam.x, cam.z};
+        m_world.setFocus(std::span<const glm::vec2>(&focus, 1));
+    }
     m_world.tick(dt, &m_terrain);
 
     // Пересобираем визуальные объекты существ из текущей популяции -- дёшево:
@@ -1508,7 +1513,7 @@ void Application::renderDebugUI() {
                     static_cast<unsigned long long>(st.deathsOld), static_cast<unsigned long long>(st.deathsStarved),
                     static_cast<unsigned long long>(st.deathsPoison), static_cast<unsigned long long>(st.deathsExhausted + st.deathsOther));
     }
-    ImGui::Text("Food sources: %zu", m_world.foodCount());
+    ImGui::Text("Food sources: %zu (awake cells %zu)", m_world.foodCount(), m_world.loadedBushCells());
     {
         std::size_t herb = 0, pred = 0;
         for (const Animal& a : m_world.fauna().animals()) (isPredator(a.species) ? pred : herb)++;
