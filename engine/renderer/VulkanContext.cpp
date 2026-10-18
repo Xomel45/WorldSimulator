@@ -1738,26 +1738,48 @@ void VulkanContext::createShadowPipeline() {
 }
 
 // ─── Тени: проходы по каскадам ────────────────────────────────────────────────
+void VulkanContext::beginShadowPass(bool preserve) {
+    if (!m_frameValid || (m_pathTraced && m_pt.ready())) return;
+    auto cmd = m_cmdBuffers[m_currentFrame];
+    // Вся карта: ждём, пока прошлый кадр дочитает её в шейдере, и отдаём под запись. preserve -- каскады, которые в этом кадре не
+    // перерисовываются (кэш далёких), должны сохранить содержимое; иначе старое не нужно.
+    VkImageMemoryBarrier2 b{
+        .sType         = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+        .srcStageMask  = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+        .srcAccessMask = VK_ACCESS_2_NONE,
+        .dstStageMask  = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+        .dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+        .oldLayout     = preserve ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
+        .newLayout     = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+        .image         = m_shadowImage,
+        .subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, kShadowCascades},
+    };
+    VkDependencyInfo dep{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &b};
+    vkCmdPipelineBarrier2(cmd, &dep);
+}
+
+void VulkanContext::endShadowPass() {
+    if (!m_frameValid || (m_pathTraced && m_pt.ready())) return;
+    auto cmd = m_cmdBuffers[m_currentFrame];
+    // Все каскады готовы: отдаём карту на чтение в фрагментном шейдере сцены.
+    VkImageMemoryBarrier2 b{
+        .sType         = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+        .srcStageMask  = VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+        .srcAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+        .dstStageMask  = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+        .dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+        .oldLayout     = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+        .newLayout     = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+        .image         = m_shadowImage,
+        .subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, kShadowCascades},
+    };
+    VkDependencyInfo dep{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &b};
+    vkCmdPipelineBarrier2(cmd, &dep);
+}
+
 void VulkanContext::beginShadowCascade(int cascade, const glm::mat4& lightViewProj) {
     if (!m_frameValid || (m_pathTraced && m_pt.ready())) return;
     auto cmd = m_cmdBuffers[m_currentFrame];
-
-    if (cascade == 0) {
-        // Вся карта: ждём, пока прошлый кадр дочитает её в шейдере, и отдаём под запись (старое не нужно).
-        VkImageMemoryBarrier2 b{
-            .sType         = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-            .srcStageMask  = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-            .srcAccessMask = VK_ACCESS_2_NONE,
-            .dstStageMask  = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-            .dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-            .oldLayout     = VK_IMAGE_LAYOUT_UNDEFINED,
-            .newLayout     = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-            .image         = m_shadowImage,
-            .subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, kShadowCascades},
-        };
-        VkDependencyInfo dep{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &b};
-        vkCmdPipelineBarrier2(cmd, &dep);
-    }
 
     VkRenderingAttachmentInfo depthAttach{
         .sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
@@ -1795,26 +1817,9 @@ void VulkanContext::drawShadowMesh(VkBuffer vbo, VkBuffer ibo, uint32_t indexCou
     vkCmdDrawIndexed(cmd, indexCount, 1, 0, 0, 0);
 }
 
-void VulkanContext::endShadowCascade(int cascade) {
+void VulkanContext::endShadowCascade(int /*cascade*/) {
     if (!m_frameValid || (m_pathTraced && m_pt.ready())) return;
-    auto cmd = m_cmdBuffers[m_currentFrame];
-    vkCmdEndRendering(cmd);
-    if (cascade == kShadowCascades - 1) {
-        // Все каскады готовы: отдаём карту на чтение в фрагментном шейдере сцены.
-        VkImageMemoryBarrier2 b{
-            .sType         = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-            .srcStageMask  = VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-            .srcAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-            .dstStageMask  = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-            .dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
-            .oldLayout     = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-            .newLayout     = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
-            .image         = m_shadowImage,
-            .subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, kShadowCascades},
-        };
-        VkDependencyInfo dep{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &b};
-        vkCmdPipelineBarrier2(cmd, &dep);
-    }
+    vkCmdEndRendering(m_cmdBuffers[m_currentFrame]);
 }
 
 // ─── Image layout transition (synchronization2, core 1.3) ────────────────────

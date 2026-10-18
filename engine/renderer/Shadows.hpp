@@ -19,6 +19,8 @@ struct CascadeSet {
     std::array<glm::mat4, kShadowCascades> viewProj{};    // мировые координаты -> клип света
     std::array<float, kShadowCascades>     splitFar{};    // дальняя граница каскада по глубине вида (юниты)
     std::array<float, kShadowCascades>     texelWorld{};  // размер текселя карты в мировых юнитах (для смещения)
+    std::array<glm::vec3, kShadowCascades> center{};      // центр описанной сферы куска (для кэша далёких каскадов)
+    std::array<float, kShadowCascades>     radius{};      // её радиус (с учётом inflate)
 };
 
 // Границы каскадов по глубине вида подобраны под god-камеру: дистанция от
@@ -30,7 +32,8 @@ inline constexpr std::array<float, kShadowCascades> kCascadeFar = {25.0f, 80.0f,
 // из неё берём угол обзора и аспект); nearPlane -- ближняя плоскость камеры;
 // toSun -- нормализованное направление К солнцу; mapSize -- сторона карты в пикселях.
 [[nodiscard]] inline CascadeSet computeCascades(const glm::mat4& view, const glm::mat4& proj, float nearPlane,
-                                                const glm::vec3& toSun, int mapSize) {
+                                                const glm::vec3& toSun, int mapSize,
+                                                const std::array<float, kShadowCascades>& inflate = {1.0f, 1.0f, 1.0f, 1.0f}) {
     CascadeSet out;
     const glm::mat4 invView = glm::inverse(view);
     const glm::vec3 camPos  = glm::vec3(invView[3]);
@@ -61,7 +64,7 @@ inline constexpr std::array<float, kShadowCascades> kCascadeFar = {25.0f, 80.0f,
         center /= 8.0f;
         float radius = 0.0f;
         for (const auto& c : corners) radius = std::max(radius, glm::length(c - center));
-        radius = std::ceil(radius * 16.0f) / 16.0f;
+        radius = std::ceil(radius * inflate[static_cast<std::size_t>(i)] * 16.0f) / 16.0f;   // inflate > 1: запас для кэшированных каскадов
 
         // Свет смотрит из-за пределов сферы в сторону центра; ортобокс = сфера + дальность теней.
         const glm::vec3 lightUp = std::abs(toSun.y) > 0.99f ? glm::vec3(0, 0, 1) : glm::vec3(0, 1, 0);
@@ -78,6 +81,8 @@ inline constexpr std::array<float, kShadowCascades> kCascadeFar = {25.0f, 80.0f,
         out.viewProj[static_cast<std::size_t>(i)]   = lightProj * lightView;
         out.splitFar[static_cast<std::size_t>(i)]   = sliceFar;
         out.texelWorld[static_cast<std::size_t>(i)] = texel;
+        out.center[static_cast<std::size_t>(i)]     = center;
+        out.radius[static_cast<std::size_t>(i)]     = radius;
         sliceNear = sliceFar;
     }
     return out;

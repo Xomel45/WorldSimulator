@@ -113,6 +113,11 @@ private:
     std::array<std::shared_ptr<Mesh>, 4> m_logMeshes;
     std::vector<SceneObject>             m_bridgeObjects, m_structObjects, m_gearObjects;
     std::uint64_t                        m_bridgeSig = ~0ull;
+    // Кэш далёких каскадов теней (2 и 3): перерисовываются раз в kShadowInterval кадров, при сдвиге камеры/солнца или правках мира;
+    // между обновлениями карта и её матрица остаются прежними (запас радиуса kShadowInflate закрывает небольшой сдвиг камеры).
+    struct ShadowCache { glm::mat4 viewProj{1.0f}; glm::vec3 center{0.0f}; float radius = 0.0f, texel = 1.0f; glm::vec3 sun{0.0f, 1.0f, 0.0f}; int age = 1 << 20; bool valid = false; };
+    std::array<ShadowCache, 4>           m_shadowCache{};
+    bool                                 m_shadowForce = true;   // правки мира/сброс -- все каскады заново в этом кадре
     float                                m_leafPhase = 0.3f;   // фаза года для листвы
     float                                m_fogBoost = 1.0f;   // густота тумана: дождь и зима
     std::optional<float>                 m_timeOverride;   // WSIM_TIME=сек: свет по этому времени, а не мировому (проверка кадров)

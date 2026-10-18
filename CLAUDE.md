@@ -571,6 +571,10 @@ zero Vulkan/GLFW deps, same rule as `Genome`/`Brain`/`Creature`/`World`.
   ~44 degrees above the horizon (`m_lights.sunDir`).
 - **Debug screenshot**: `VulkanContext::requestSceneDump(path)` copies the offscreen target to a
   host buffer in `beginUIPass`, `endFrame` waits for the fence and writes the PPM.
+- **Far-cascade cache** (optimization, `Application::render`, `ShadowCache`): cascades 2 and 3 are re-rendered only every 4 / 8 frames (or when the camera sphere moved > 10% of its radius, the sun turned > ~1.4°, or the world changed —
+  `m_shadowForce` from terrain/tree edits and new worlds); in between the old depth maps and their matrices are reused (`VulkanContext::beginShadowPass(preserve)` keeps the image contents; barriers moved out of the cascade calls into
+  `begin/endShadowPass`). Cascades 2/3 get a 30% larger sphere (`computeCascades(..., inflate)`, results also expose `center/radius`) so a small camera drift stays covered. Measured (seed 11, camera at 120): shadow draws **704 → ~90-110**
+  per frame, CPU render 4.05 → 3.4 ms, pixel diff vs `WSIM_SHADOW_FULL=1` 0.03% of pixels > 8/255. `WSIM_SHADOW_FULL=1` disables both the culling and the cache.
 - **Shadow draw culling** (`Application::render`): far cascades skip what can't be seen there — cascade 2 drops terrain
   chunks whose top is below 2.5 units, cascade 3 below 7 and also trees/creatures/food (texel ~0.7). A caster missing
   from the depth map only loses its own shadow, so flat lowland is safe to skip. Trees are a separate list

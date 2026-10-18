@@ -628,7 +628,7 @@ void Application::update(float dt) {
         m_world.setFocus(std::span<const glm::vec2>(&focus, 1));
     }
     m_world.tick(dt, &m_terrain);
-    for (const auto& rect : m_world.takeDirty()) { if (m_chunks) m_chunks->invalidate(rect); }
+    for (const auto& rect : m_world.takeDirty()) { if (m_chunks) m_chunks->invalidate(rect); m_shadowForce = true; }
     { const auto events = m_world.takeEvents(); if (m_sound) m_sound->worldEvents(events); }   // срубленные деревья: чанки пересобираются
 
     // Пересобираем визуальные объекты существ из текущей популяции -- дёшево:
@@ -943,9 +943,28 @@ void Application::render() {
         m_lights.fogParams.x     = 0.015f;
         m_lights.fogParams.y     = static_cast<float>(ImGui::GetTime());
         CascadeSet cascades;
+        std::array<bool, kShadowCascades> cascadeDue{true, true, true, true};   // какие каскады перерисовать в этом кадре
         if (shadowsOn) {
-            cascades = computeCascades(camData.view, camData.proj, m_camera.nearPlane(),
-                                       glm::normalize(glm::vec3(m_lights.sunDir)), VulkanContext::kShadowMapSize);
+            // Далёкие каскады (2, 3) кэшируются: у них запас радиуса, а перерисовка -- по интервалу, сдвигу камеры/солнца или правке мира.
+            // WSIM_SHADOW_FULL=1 -- без кэша (эталон для сравнения картинок).
+            static const bool noCache = std::getenv("WSIM_SHADOW_FULL") != nullptr;
+            constexpr std::array<float, kShadowCascades> kInflate = {1.0f, 1.0f, 1.3f, 1.3f};
+            constexpr int kInterval[kShadowCascades] = {1, 1, 4, 8};
+            const glm::vec3 sun = glm::normalize(glm::vec3(m_lights.sunDir));
+            cascades = computeCascades(camData.view, camData.proj, m_camera.nearPlane(), sun, VulkanContext::kShadowMapSize,
+                                       noCache ? std::array<float, kShadowCascades>{1.0f, 1.0f, 1.0f, 1.0f} : kInflate);
+            if (!noCache) {
+                for (std::size_t i = 2; i < kShadowCascades; ++i) {
+                    ShadowCache& c = m_shadowCache[i];
+                    const bool moved = c.valid && (glm::length(cascades.center[i] - c.center) > 0.1f * c.radius || std::fabs(cascades.radius[i] - c.radius) > 0.1f * c.radius ||
+                                                   glm::dot(sun, c.sun) < 0.9997f);
+                    const bool due = m_shadowForce || !c.valid || moved || ++c.age >= kInterval[i];
+                    cascadeDue[i] = due;
+                    if (due) { c = {cascades.viewProj[i], cascades.center[i], cascades.radius[i], cascades.texelWorld[i], sun, 0, true}; }
+                    else { cascades.viewProj[i] = c.viewProj; cascades.texelWorld[i] = c.texel; }
+                }
+            }
+            m_shadowForce = false;
             for (std::size_t i = 0; i < kShadowCascades; ++i) {
                 m_lights.cascadeVP[i]  = cascades.viewProj[i];
                 m_lights.cascadeSplit[static_cast<int>(i)] = cascades.splitFar[i];
@@ -974,7 +993,9 @@ void Application::render() {
 
         // Тени: по проходу на каскад, в них рельеф (без воды) и существа.
         if (shadowsOn) {
+            m_context->beginShadowPass(/*preserve=*/!(cascadeDue[0] && cascadeDue[1] && cascadeDue[2] && cascadeDue[3]));
             for (int i = 0; i < kShadowCascades; ++i) {
+                if (!cascadeDue[static_cast<std::size_t>(i)]) continue;
                 g_perf.cascade = i;
                 m_context->beginShadowCascade(i, cascades.viewProj[static_cast<std::size_t>(i)]);
                 const Frustum lightFrustum = Frustum::fromMatrix(cascades.viewProj[static_cast<std::size_t>(i)]);
@@ -996,6 +1017,7 @@ void Application::render() {
                 if (!far3) drawShadowCasters(m_foodObjects, lightFrustum);
                 m_context->endShadowCascade(i);
             }
+            m_context->endShadowPass();
         }
         m_context->beginScenePass();
 
@@ -1131,6 +1153,7 @@ bool Application::loadFromSlot(const std::string& slot) {
         return false;
     }
     m_chunks->reset();  // рельеф другой (сид и правки) -- все чанки заново
+    m_shadowForce = true;
     m_context->resetTemporalHistory();
     m_creatureObjects.clear();
     m_boulderObjects.clear();
@@ -1255,7 +1278,7 @@ void Application::stepPhysics(float dt) {
             god.erase(b.pos.x, b.pos.z, b.radius * 1.1f);
             god.eraseBuildings(b.pos.x, b.pos.z, b.radius + 2.2f);
         }
-    for (const auto& rect : god.takeDirty()) m_chunks->invalidate(rect);
+    for (const auto& rect : god.takeDirty()) { m_chunks->invalidate(rect); m_shadowForce = true; }
 
     // Опасности для существ: катящиеся валуны и свежие места ударов -- от них бегут.
     for (auto& ih : m_impactHazards) ih.ttl -= dt;
@@ -1566,7 +1589,7 @@ void Application::applyPower(float dt) {
     const std::size_t housesBefore = m_world.buildings().size(), bushesBefore = m_world.foodCount();
     power.apply(god, PowerCall{hit->x, hit->z, m_brush, dt, m_toolFirst});
     m_toolFirst = false;
-    for (const auto& rect : god.takeDirty()) m_chunks->invalidate(rect);
+    for (const auto& rect : god.takeDirty()) { m_chunks->invalidate(rect); m_shadowForce = true; }
 
     // Звуки встроенных сил: стройка и спавн -- по факту, стирание -- на каждое применение.
     const glm::vec3 at{hit->x, hit->y, hit->z};

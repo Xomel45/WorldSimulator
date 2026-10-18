@@ -164,6 +164,10 @@ public:
     // drawMesh... -> beginUIPass -> endFrame. Если теней в кадре нет, каскады
     // можно пропустить целиком (в UBO shadowParams.x = 0).
     static constexpr int kShadowMapSize = 2048;
+    // beginShadowPass(preserve) -> [beginShadowCascade/draw/endShadowCascade для каждого перерисовываемого каскада] -> endShadowPass().
+    // preserve = true: нетронутые в этом кадре каскады (кэш далёких) сохраняют карту прошлого кадра; первый кадр и сброс -- false.
+    void beginShadowPass(bool preserve);
+    void endShadowPass();
     void beginShadowCascade(int cascade, const glm::mat4& lightViewProj);
     void drawShadowMesh(VkBuffer vbo, VkBuffer ibo, uint32_t indexCount, const glm::mat4& model);
     void endShadowCascade(int cascade);
