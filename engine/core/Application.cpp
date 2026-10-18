@@ -230,7 +230,7 @@ Application::Application(AppConfig config)
     {
         // Кусты с едой: лиственные "картошки" с ягодами своего цвета (по виду, см. sim/Berries); размер показывает,
         // сколько ягод ещё осталось. Черника -- с густыми мелкими ягодами, морошка -- с редкими крупными.
-        constexpr float kShare[kBerryKindCount] = {0.10f, 0.17f, 0.12f, 0.08f, 0.12f, 0.10f, 0.13f, 0.14f};
+        constexpr float kShare[kBerryKindCount] = {0.10f, 0.17f, 0.12f, 0.08f, 0.12f, 0.10f, 0.13f, 0.14f, 0.15f, 0.11f, 0.09f};
         for (int k = 0; k < kBerryKindCount; ++k) {
             const BerryDef& def = berryDef(static_cast<BerryKind>(k));
             auto [bushV, bushI] = buildBlobMesh(def.leafColor, 0.4f, true, def.berryColor, kShare[k]);
@@ -1070,7 +1070,7 @@ void Application::drawBushInspector(const CameraData& cam) {
     }
     const float W = 27.0f * u, x0 = screen.x - W - 2.0f * u, y0 = 5.0f * u, pad = 1.4f * u;
     const float fsTitle = std::max(15.0f, 1.55f * u), fs = std::max(11.5f, 1.05f * u), rowH = 2.1f * u;
-    const float H = pad * 2 + fsTitle * 1.3f + fs * 1.5f + rowH + fs * 1.6f;
+    const float H = pad * 2 + fsTitle * 1.3f + fs * 1.5f + rowH + fs * 3.0f;
     for (int g = 3; g >= 1; --g)
         dl->AddRect({x0 - 0.2f * u * g, y0 - 0.2f * u * g}, {x0 + W + 0.2f * u * g, y0 + H + 0.2f * u * g}, style::rgba(style::kGlow, 0.09f * (1.0f - 0.25f * (g - 1))), 1.0f * u + 0.2f * u * g, 0, 1.5f);
     dl->AddRectFilled({x0, y0}, {x0 + W, y0 + H}, style::rgba(style::kRightBg, 0.93f), 1.0f * u);
@@ -1092,6 +1092,17 @@ void Application::drawBushInspector(const CameraData& cam) {
     y += rowH;
     std::snprintf(buf, sizeof buf, "Сытность ×%.2f · отрастание ×%.2f", def.nutrition, def.regrow);
     dl->AddText(font, fs, {x0 + pad, y}, style::rgba(style::kDim), buf);
+    y += fs * 1.4f;
+    // Действие на едока (подсказка богу: существа различают ягоды только по внешнему виду).
+    std::string effects;
+    auto add = [&](const char* s) { effects += effects.empty() ? "" : " · "; effects += s; };
+    if (def.lethal > 0.0f) add("смертельна");
+    if (def.vomit > 0.0f) add("рвота");
+    if (def.diarrhea > 0.0f) add("понос");
+    if (def.hallucination > 0.0f) add("галлюцинации");
+    if (effects.empty()) effects = "безопасна";
+    std::snprintf(buf, sizeof buf, "%s", effects.c_str());
+    dl->AddText(font, fs, {x0 + pad, y}, effects == "безопасна" ? style::rgba(style::kDim) : style::rgba(0xa6e06b), buf);
 }
 
 // ─── drawInspector ────────────────────────────────────────────────────────────
@@ -1135,7 +1146,7 @@ void Application::drawInspector(const CameraData& cam) {
         {"Общение", cr->needs.social, 0xb7a6ff, false},
         {"Яд", cr->toxin, 0xa6e06b, true},
     };
-    const float H = pad * 2 + fsTitle * 1.3f + fs * 1.5f + rowH * 7 + fs * 4.8f;
+    const float H = pad * 2 + fsTitle * 1.3f + fs * 1.5f + rowH * 7 + fs * 6.2f;
     for (int g = 3; g >= 1; --g)
         dl->AddRect({x0 - 0.2f * u * g, y0 - 0.2f * u * g}, {x0 + W + 0.2f * u * g, y0 + H + 0.2f * u * g}, style::rgba(style::kGlow, 0.09f * (1.0f - 0.25f * (g - 1))), 1.0f * u + 0.2f * u * g, 0, 1.5f);
     dl->AddRectFilled({x0, y0}, {x0 + W, y0 + H}, style::rgba(style::kRightBg, 0.93f), 1.0f * u);
@@ -1167,17 +1178,29 @@ void Application::drawInspector(const CameraData& cam) {
     y += fs * 1.35f;
     // Что помнит о ягодах: сколько видов пробовало, какую любит больше всего и какую обходит.
     {
+        // Недомогания: то, что сейчас с существом (по их уровням).
+        std::string status;
+        auto add = [&](const char* s) { status += status.empty() ? "" : ", "; status += s; };
+        if (cr->toxin > 0.05f) add("яд");
+        if (cr->diarrhea > 0.05f) add("понос");
+        if (cr->vomitStun > 0.0f) add("рвота");
+        else if (cr->nausea > 0.3f) add("тошнит");
+        if (cr->hallucination > 0.05f) add("галлюцинации");
+        std::snprintf(buf, sizeof buf, "Самочувствие: %s", status.empty() ? "в порядке" : status.c_str());
+        dl->AddText(font, fs, {x0 + pad, y}, status.empty() ? style::rgba(style::kDim) : style::rgba(0xa6e06b), buf);
+        y += fs * 1.35f;
+        // Память о вкусе (по внешнему виду ягод): сколько групп пробовало, какие любит и какие обходит.
         int known = 0, best = -1, worst = -1;
-        for (int k = 0; k < kBerryKindCount; ++k) {
-            if (!cr->knowsBerry(static_cast<BerryKind>(k))) continue;
+        for (int k = 0; k < kBerryLookCount; ++k) {
+            if (!cr->knowsLook(static_cast<BerryLook>(k))) continue;
             ++known;
             if (best < 0 || cr->taste[static_cast<std::size_t>(k)] > cr->taste[static_cast<std::size_t>(best)]) best = k;
             if (worst < 0 || cr->taste[static_cast<std::size_t>(k)] < cr->taste[static_cast<std::size_t>(worst)]) worst = k;
         }
         if (known == 0) std::snprintf(buf, sizeof buf, "Ягод ещё не пробовало");
         else if (cr->taste[static_cast<std::size_t>(worst)] < Creature::kMinAppeal)
-            std::snprintf(buf, sizeof buf, "Знает %d · любит %s · обходит %s", known, berryName(static_cast<BerryKind>(best)), berryName(static_cast<BerryKind>(worst)));
-        else std::snprintf(buf, sizeof buf, "Знает %d · любит %s", known, berryName(static_cast<BerryKind>(best)));
+            std::snprintf(buf, sizeof buf, "Любит %s · обходит %s", lookName(static_cast<BerryLook>(best)), lookName(static_cast<BerryLook>(worst)));
+        else std::snprintf(buf, sizeof buf, "Любит %s ягоды", lookName(static_cast<BerryLook>(best)));
         dl->AddText(font, fs, {x0 + pad, y}, style::rgba(style::kDim), buf);
     }
 }

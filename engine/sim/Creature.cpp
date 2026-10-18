@@ -19,6 +19,13 @@ float lerpTrait(float gene, float lo, float hi) noexcept {
 // Детерминированный "шум" из возраста — без хранения RNG-состояния в Creature
 // и без внешнего Rng& в горячем tick(). Не криптографического качества, но и
 // не нужно: единственная цель — разрывать идеально симметричные решения мозга.
+// Детерминированный "случайный" 0..1 по существу, полусекундному отрезку возраста и соли (для галлюцинаций).
+float hash01(std::uint64_t id, float age, std::uint64_t salt) noexcept {
+    std::uint64_t h = id * 0x9E3779B97F4A7C15ull + static_cast<std::uint64_t>(std::floor(age * 2.0f)) * 0xBF58476D1CE4E5B9ull + salt * 0x94D049BB133111EBull;
+    h ^= h >> 31; h *= 0x94D049BB133111EBull; h ^= h >> 29; h *= 0xBF58476D1CE4E5B9ull; h ^= h >> 32;
+    return static_cast<float>(h & 0xFFFFFF) / static_cast<float>(0x1000000);
+}
+
 float noiseFromAge(float age) noexcept {
     std::uint32_t bits;
     std::memcpy(&bits, &age, sizeof(bits));
@@ -89,6 +96,7 @@ const char* behaviorName(Behavior b) noexcept {
         case Behavior::SeekMate:  return "Ищет пару";
         case Behavior::Socialize: return "Тянется к своим";
         case Behavior::GoHome:    return "Идёт домой";
+        case Behavior::Sick:      return "Тошнит";
         case Behavior::Count:     break;
     }
     return "?";
@@ -155,7 +163,38 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
     needs.hunger = std::clamp(needs.hunger + 0.01f * metab * dt, 0.0f, 1.0f);
 
     // Слой поведения решает, что делать (мозг -- модулятор приоритетов и источник личного уклона, см. Behavior.hpp).
-    const behavior::Decision dec = behavior::decide(*this, senses, out, dt);
+    behavior::Decision dec = behavior::decide(*this, senses, out, dt);
+
+    // Недомогание перебивает решения. Рвота: приступ -- стоит, не ест (мир видит это как "Тошнит"). Галлюцинации:
+    // порой мерещится угроза -- мчится прочь от несуществующего и зовёт на помощь (соседи пугаются по-настоящему),
+    // а в остальное время курс слегка "плывёт".
+    if (vomitStun > 0.0f) {
+        vomitStun = std::max(0.0f, vomitStun - dt);
+        dec.move = glm::vec2(0.0f);
+        dec.eat = dec.rest = dec.mate = false;
+        dec.matingCall = 0.0f;
+        behavior = Behavior::Sick;
+    } else if (hallucination > 0.05f) {
+        visionTimer = std::max(0.0f, visionTimer - dt);
+        if (visionTimer <= 0.0f) {
+            const float roll = hash01(id, age, 11);
+            if (roll < std::min(0.5f, hallucination * 0.6f)) {
+                visionTimer   = 1.0f + 1.5f * hash01(id, age, 12);
+                visionHeading = 6.2831853f * hash01(id, age, 13);
+                needs.fear    = std::max(needs.fear, 0.7f);
+            }
+        }
+        if (visionTimer > 0.0f) {
+            dec.move  = glm::vec2(std::cos(visionHeading), std::sin(visionHeading));
+            dec.eat   = false;
+            dec.alarm = std::max(dec.alarm, 0.8f);
+            behavior  = Behavior::Flee;
+        } else if (glm::length(dec.move) > 0.01f) {
+            const float a = (hash01(id, age, 14) - 0.5f) * 1.6f * std::min(hallucination, 1.0f);  // курс плывёт
+            const float c = std::cos(a), s = std::sin(a);
+            dec.move = {dec.move.x * c - dec.move.y * s, dec.move.x * s + dec.move.y * c};
+        }
+    }
     glm::vec2 moveDir = dec.move;
 
     // Рельеф: чем круче подъём в выбранную сторону, тем медленнее и тяжелее идти;
@@ -178,6 +217,7 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
     }
     if (inWater) { speedMul *= kWaterSpeed; effortMul *= kWaterEffort; }
     if (needs.energy < 0.1f) speedMul *= 0.5f;  // вымотан -- еле идёт
+    speedMul *= 1.0f - 0.3f * std::min(diarrhea, 1.0f);  // понос: идёт медленнее
     const float moveCost = glm::length(moveDir) * 0.01f * effortMul;
     needs.energy = std::clamp(needs.energy - (0.008f * metab + moveCost) * dt, 0.0f, 1.0f);
 
@@ -284,6 +324,25 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
         needs.energy = std::max(0.0f, needs.energy - toxin * 0.01f * dt);
         toxin        = std::max(0.0f, toxin - 0.03f * dt);
     }
+    // Понос: питательное не усваивается -- голод растёт, силы уходят. Тошнота копится от рвотных ягод; на пороге --
+    // приступ: стоит 1.6 с, желудок опустошён (голод +0.22), половина яда выведена, остаточная тошнота. Галлюцинации
+    // и всё остальное медленно проходят.
+    if (diarrhea > 0.0f) {
+        needs.hunger = std::clamp(needs.hunger + diarrhea * 0.03f * dt, 0.0f, 1.0f);
+        needs.energy = std::max(0.0f, needs.energy - diarrhea * 0.012f * dt);
+        diarrhea     = std::max(0.0f, diarrhea - 0.025f * dt);
+    }
+    if (nausea > 0.0f) {
+        if (nausea >= 1.0f && vomitStun <= 0.0f) {
+            vomitStun    = 1.6f;
+            needs.hunger = std::clamp(needs.hunger + 0.22f, 0.0f, 1.0f);
+            toxin       *= 0.5f;
+            nausea       = 0.25f;
+        } else {
+            nausea = std::max(0.0f, nausea - 0.04f * dt);
+        }
+    }
+    if (hallucination > 0.0f) hallucination = std::max(0.0f, hallucination - 0.02f * dt);
     for (std::size_t k = 0; k < taste.size(); ++k)
         if (tasteSamples[k] > 0) taste[k] += (0.5f - taste[k]) * 0.002f * dt;
     if (health <= 0.0f && alive) { alive = false; deathCause = toxin > 0.05f ? 4 : (needs.hunger >= 0.95f ? 2 : 3); }
@@ -312,17 +371,16 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
 void Creature::feed(float amount) noexcept { needs.hunger = std::clamp(needs.hunger - amount, 0.0f, 1.0f); }
 
 float Creature::berryAppeal(BerryKind kind) const noexcept {
-    const auto k = static_cast<std::size_t>(kind);
+    const auto k = static_cast<std::size_t>(lookOf(kind));
     if (tasteSamples[k] == 0) return 0.6f + 0.5f * curiosity();  // незнакомое: любопытные пробуют охотнее
     return taste[k];
 }
 
-void Creature::tasteBerry(BerryKind kind, float nutrition, float toxicity, float dt) noexcept {
-    constexpr float kHarmWeight = 2.0f;   // ядовитость в единицах сытности: волчья ягода 0.6 - 1.8 < 0
+void Creature::tasteBerry(BerryKind kind, float nutrition, float harm, float dt) noexcept {
     constexpr float kLearnRate  = 3.0f;   // 1/с: пара десятых секунды -- и мнение уже сложилось
-    const auto k = static_cast<std::size_t>(kind);
+    const auto k = static_cast<std::size_t>(lookOf(kind));  // мнение -- о внешнем виде: подделки неотличимы
     if (tasteSamples[k] == 0) taste[k] = berryAppeal(kind);  // начинаем с аванса, а не с нуля
-    const float experience = nutrition - kHarmWeight * toxicity;
+    const float experience = nutrition - harm;
     // Плохое запоминается втрое быстрее хорошего (как у настоящих животных): одной тошноты хватает на недели.
     constexpr float kBadnessBias = 3.0f;
     const float speed = kLearnRate * (0.6f + 0.8f * plasticity() / 0.05f) * (experience < taste[k] ? kBadnessBias : 1.0f);
@@ -331,6 +389,14 @@ void Creature::tasteBerry(BerryKind kind, float nutrition, float toxicity, float
 }
 
 void Creature::addToxin(float amount) noexcept { toxin = std::clamp(toxin + amount, 0.0f, 2.0f); }
+
+void Creature::ingestBerry(const BerryDef& def, float bite) noexcept {
+    constexpr float kDose = 4.0f;  // доза за единицу съеденного при полной силе: ~0.3 с -- ощутимо, секунда -- тяжело
+    if (def.lethal > 0.0f)        addToxin(bite * def.lethal * kDose);
+    if (def.diarrhea > 0.0f)      diarrhea      = std::clamp(diarrhea + bite * def.diarrhea * kDose, 0.0f, 2.0f);
+    if (def.vomit > 0.0f)         nausea        = std::clamp(nausea + bite * def.vomit * kDose, 0.0f, 2.0f);
+    if (def.hallucination > 0.0f) hallucination = std::clamp(hallucination + bite * def.hallucination * kDose, 0.0f, 2.0f);
+}
 void Creature::rest(float amount) noexcept { needs.energy = std::clamp(needs.energy + amount, 0.0f, 1.0f); }
 
 void Creature::mate(std::uint64_t partnerId) noexcept {

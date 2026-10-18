@@ -19,7 +19,7 @@ inline constexpr float kNoTarget       = 1.0e9f; // "цели нет" в пол�
 
 // Чем занято существо. Выбирается слоем поведения (Behavior.cpp) из потребностей, ощущений, черт
 // и выходов мозга; видно в инспекторе и нужно для озвучки/отладки.
-enum class Behavior : std::uint8_t { Wander, SeekFood, Eat, Rest, Flee, SeekMate, Socialize, GoHome, Count };
+enum class Behavior : std::uint8_t { Wander, SeekFood, Eat, Rest, Flee, SeekMate, Socialize, GoHome, Sick, Count };
 [[nodiscard]] const char* behaviorName(Behavior b) noexcept;  // по-русски
 
 struct Needs {
@@ -109,13 +109,19 @@ public:
     float     matingCooldown = 0.0f;
     std::uint8_t deathCause = 0;       // 0 жив, 1 старость, 2 голод, 3 истощение, 4 яд (для статистики мира)
 
-    // Яд и вкус ягод. toxin -- накопленный яд (0 -- здоров): бьёт по здоровью и силам и сам выводится.
-    // taste/tasteSamples -- память о вкусе каждого вида ягод: чем кончилась прошлая трапеза (сытность минус вред)
-    // и сколько "тиков еды" это длилось (0 -- вид незнаком). Живёт всю жизнь, потомству не передаётся
-    // (как learnedWeights: дарвиновски, не ламарковски).
-    float toxin = 0.0f;
-    std::array<float, kBerryKindCount>        taste{};
-    std::array<std::uint8_t, kBerryKindCount> tasteSamples{};
+    // Отравление ягодами (см. BerryDef: у каждого вида своё действие). Все уровни 0 -- здоров; сами выводятся.
+    //  toxin -- смертельный яд: бьёт по здоровью и силам (смерть: deathCause 4);
+    //  diarrhea -- понос: еда проскакивает (голод растёт), силы тают, идёт медленнее;
+    //  nausea -- тошнота: по достижении 1 приступ рвоты (vomitStun секунд стоит на месте, желудок пуст, часть яда выведена);
+    //  hallucination -- галлюцинации: мерещатся угрозы (visionTimer/visionHeading: бежит от несуществующего, зовёт на
+    //  помощь), курс неверный.
+    float toxin = 0.0f, diarrhea = 0.0f, nausea = 0.0f, hallucination = 0.0f;
+    float vomitStun = 0.0f, visionTimer = 0.0f, visionHeading = 0.0f;
+    // Память о вкусе ягод -- по ВНЕШНЕМУ ВИДУ (BerryLook), а не по растению: подделки под съедобные неотличимы, и мнение
+    // складывается о всей группе. taste -- чем кончались прошлые трапезы (сытность минус вред), tasteSamples -- сколько
+    // "тиков еды" это длилось (0 -- группа незнакома). Живёт всю жизнь, потомству не передаётся (как learnedWeights).
+    std::array<float, kBerryLookCount>        taste{};
+    std::array<std::uint8_t, kBerryLookCount> tasteSamples{};
 
     // Поведение: текущая линия, сколько она держится (гистерезис против дёрганья), направление блуждания
     // и память о последнем месте с едой (место, где еду видели, -- туда идём, когда еды в поле зрения нет).
@@ -181,12 +187,16 @@ public:
 
     // Ягоды (мир вызывает на каждом тике поедания куста). tasteBerry -- запомнить вкус: сытность `nutrition` против
     // вреда `toxicity` (скорость обучения -- от пластичности). addToxin -- принять яд (еда или чья-то "помощь").
-    void tasteBerry(BerryKind kind, float nutrition, float toxicity, float dt) noexcept;
+    void tasteBerry(BerryKind kind, float nutrition, float harm, float dt) noexcept;
+    // Принять ягоду: bite -- съеденное за тик. Копит яд/понос/тошноту/галлюцинации по профилю вида.
+    void ingestBerry(const BerryDef& def, float bite) noexcept;
     void addToxin(float amount) noexcept;
     // Насколько привлекает вид: незнакомый -- с авансом по любопытству (0.6..1.1), знакомый -- его вкус
     // (сытная ягода ~1+, ядовитая < 0). Мир берёт куст с лучшим привлечением на расстояние и обходит те, что < kMinAppeal.
     [[nodiscard]] float berryAppeal(BerryKind kind) const noexcept;
-    [[nodiscard]] bool  knowsBerry(BerryKind kind) const noexcept { return tasteSamples[static_cast<std::size_t>(kind)] > 0; }
+    [[nodiscard]] bool  knowsBerry(BerryKind kind) const noexcept { return knowsLook(lookOf(kind)); }
+    [[nodiscard]] bool  knowsLook(BerryLook look) const noexcept { return tasteSamples[static_cast<std::size_t>(look)] > 0; }
+    [[nodiscard]] bool  sick() const noexcept { return toxin > 0.05f || diarrhea > 0.05f || nausea > 0.05f || hallucination > 0.05f || vomitStun > 0.0f; }
     static constexpr float kMinAppeal = 0.15f;  // ниже -- обходит куст, пока не припёрло (см. World)
     void rest(float amount) noexcept;                     // мир вызывает при успешном отдыхе
     void mate(std::uint64_t partnerId) noexcept;           // мир вызывает при успешном спаривании: сбрасывает либидо, запоминает партнёра

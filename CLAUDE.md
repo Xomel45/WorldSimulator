@@ -616,9 +616,9 @@ new worlds just rebuild chunks; player terrain edits never move a biome border):
 
 ## Berry bushes (`engine/sim/Berries.*`, `World::growBerryBushes`, `Powers`, `Application`)
 
-Food bushes are now biome-aware and come in eight berry kinds (six safe ones, two poisonous — see "Poison and taste memory" below) (tests: `berries_tests`, plus bush cases in `powers_tests`,
+Food bushes are now biome-aware and come in eleven berry kinds (six safe ones, five with different harmful effects — see "Poison, effects and taste memory" below) (tests: `berries_tests`, plus bush cases in `powers_tests`,
 `save_tests`, `mods_tests`):
-- **Kinds** (`BerryKind`; the table below is the six safe ones): Raspberry (the baseline), Blueberry (0.85× nutrition, 1.35× regrow), Blackberry (1.3×, 0.75×),
+- **Kinds** (`BerryKind`; the list below is the six safe ones): Raspberry (the baseline), Blueberry (0.85× nutrition, 1.35× regrow), Blackberry (1.3×, 0.75×),
   Cloudberry (1.5×, 0.5× — richest and rarest), Tropical (1.15×, 1.2×), Cactus fruit (0.9×, 0.6×). `BerryDef` also has the
   berry/leaf colours and the mod id. `FoodSource::kind` (default Raspberry, so `World` without a terrain — tests, the menu
   colony — behaves exactly as before). **Nutrition** multiplies the hunger relief per bite (`self.feed(bite * nutrition)`),
@@ -642,27 +642,39 @@ Food bushes are now biome-aware and come in eight berry kinds (six safe ones, tw
   bush; an old game ignores it. Not covered by a test: loading a genuinely old file (we only write new ones).
 - **Rendering**: one mesh per kind (`buildBlobMesh` with the kind's leaf colour, berry colour and berry-face share —
   blueberries many small faces, cloudberry few), shrinks as it is eaten. Debug: `WSIM_CAM_BUSH=<kind id>`, `WSIM_INSPECT_BUSH=1`.
-- **Poison and taste memory** (`Creature::tasteBerry/berryAppeal/addToxin`, `World::tick` food choice, save v3):
-  - **Poisonous kinds** `Nightshade` (Волчья ягода: toxicity 0.9, nutrition 0.6, dark purple — deliberately close to blackberry's
-    colour, a mimic) and `Baneberry` (Вороний глаз: 0.5, 0.7, white). Rare (weights 0.04-0.13 of a biome: forest, taiga, jungle,
-    plains, tundra, savanna). `BerryDef::toxicity`, `isPoisonous()`. Eating adds `toxin += bite * toxicity * 4` (`kToxinPerAmount`).
-  - **Toxin** (`Creature::toxin`, 0..2): while >0 it drains health (`0.02/s` per unit) and energy (`0.01/s`) and decays `0.03/s`;
-    death with toxin > 0.05 is `deathCause 4` (`WorldStats::deathsPoison`, shown in the debug window). `addToxin` is public on
-    purpose: it is the hook for creatures (or gods/mods) poisoning others later — nothing calls it for that yet.
-  - **Taste memory**: `taste[kind]` + `tasteSamples[kind]` per creature (0 samples = unknown). Each eating tick moves the taste
-    toward `nutrition - 2·toxicity` (the experience of that mouthful); learning speed ~3/s scaled by plasticity, **bad news 3× faster**
-    (one or two bites of nightshade are enough); taste fades toward neutral 0.5 at 0.002/s (a poisoned bush can be retried after ~13
-    min). Unknown kinds attract with an advance `0.6 + 0.5·curiosity`. Not inherited (Darwinian, like `learnedWeights`).
-  - **Choice** (`World::tick`): the bush is no longer "the nearest" but `max appeal / (1 + dist/12)`; bushes with appeal below
-    `Creature::kMinAppeal=0.15` are ignored, except that a creature with hunger > 0.85 accepts anything above -0.4 (it never takes what
-    it knows kills). With a single kind in the world the old nearest-bush behaviour is unchanged (same appeal everywhere).
-  - Measured (20 min, 6 seeds, biome bushes with poison): populations 33-151, poison deaths 0-1 — creatures learn to avoid.
-  - **Inspector**: a "Яд" bar and a line "Знает N · любит X · обходит Y". **Saves v3** add toxin and per-kind taste after the v2
-    block (`kSaveVersion=3`; v1/v2 files load with them zeroed — tested). Tests: `creature_tests` (learning, bias, decay, death,
-    non-inheritance), `intelligence_tests` (poison-only bush, poison+cloudberry scenario, poison death stat), `save_tests`.
-  - Not done: creatures don't see colours (they know the kind itself, so the nightshade-looks-like-blackberry mimicry is not yet
-    a puzzle for them — it will be when perception gets fuzzy), no social learning (warning others, following a creature that
-    ate fine), no deliberate poisoning, no antidotes/herbs, taste is not shared between generations.
+- **Poison, effects and taste memory** (`Creature::ingestBerry/tasteBerry/berryAppeal`, `World::tick` food choice, save v4):
+  - **Eleven kinds** (`kBerryKindCount=11`): the six safe ones plus five harmful, each with its own *effect profile* in
+    `BerryDef` (`lethal`, `diarrhea`, `vomit`, `hallucination`, each a share of a full dose): **Nightshade** (Волчья ягода: death,
+    +0.15 hallucination), **Baneberry** (Вороний глаз: vomiting + diarrhea), **Buckthorn** (Крушина: diarrhea), **Honeysuckle**
+    (Жимолость: vomiting), **Henbane** (Белена: hallucinations). `BerryDef::harm()` = `2·lethal + 0.9·diarrhea + vomit +
+    0.6·hallucination` is how bad a kind tastes in memory. Harmful kinds are ~15-20% of a biome's weights (`Berries.cpp`).
+  - **Effects** (all in `Creature::tick`, dose per bite `bite·share·4`, levels 0..2, saved, never inherited):
+    `toxin` — health -0.02/s and energy -0.01/s per unit, decays 0.03/s, death with toxin>0.05 is `deathCause 4`
+    (`WorldStats::deathsPoison`); `diarrhea` — hunger +0.03/s and energy -0.012/s per unit, speed ×(1-0.3·level), decays 0.025/s,
+    never kills by itself; `nausea` — at level 1 a **vomiting fit**: `vomitStun` 1.6 s (stands still, `Behavior::Sick` "Тошнит", no eating/mating),
+    hunger +0.22 (empty stomach), toxin halved, nausea 0.25; a creature with nausea > 0.6 or in a fit ignores food;
+    `hallucination` — decays 0.02/s; with probability ≤0.5 per half-second `visionTimer` 1-2.5 s: it sprints in a random direction
+    from a phantom (`Behavior::Flee`), fear ≥ 0.7 and **alarm call 0.8 so neighbours panic for real**; otherwise the heading
+    drifts by up to ±0.8·level rad. `ingestBerry(def, bite)` applies a profile; `addToxin` stays public as the hook for future
+    deliberate poisoning (nothing uses it that way yet).
+  - **Taste memory is per LOOK, not per plant** (`BerryLook`: Red, Blue, Dark, Orange, Violet, Pink, White; `taste[7]`, `tasteSamples[7]`):
+    mimics share a look — blackberry/nightshade (dark), blueberry/buckthorn (blue), raspberry/honeysuckle (red), cloudberry/henbane
+    (orange) — so a creature that loved blackberries happily takes nightshade, then distrusts *all* dark berries (tested: `fan`).
+    Each eating tick moves the look's taste toward `nutrition - harm` (~3/s × plasticity factor, **bad news 3× faster**); taste fades
+    to neutral 0.5 at 0.002/s (~13 min); unknown look attracts with `0.6 + 0.5·curiosity`.
+  - **Choice** (`World::tick`): `max appeal / (1 + dist/12)`; look with appeal < `Creature::kMinAppeal=0.15` is ignored except by a
+    creature with hunger > 0.85, which accepts anything above -0.4 (never what it knows kills). One kind in the world → old
+    nearest-bush behaviour.
+  - Measured (20 min, 6 seeds, all kinds): populations 33-163, poison deaths 0-1.
+  - **UI**: creature inspector has a "Яд" bar, "Самочувствие: яд, понос, рвота/тошнит, галлюцинации" and "Любит <вид> · обходит <вид>"
+    (look names); bush inspector lists effects ("смертельна · рвота · понос · галлюцинации" / "безопасна"). **Saves v4**
+    (`kSaveVersion=4`): v3 = toxin only (v3 taste records were per plant and are ignored on load), v4 adds look-group taste and the
+    effect states; v2/v3 files load with the new fields zeroed (tested). Tests: `creature_tests` (profiles, mimic learning, each effect,
+    non-inheritance), `intelligence_tests` (poison-only bush, poison+cloudberry, each harmful kind's effect and survival, hallucination
+    panic spreading), `save_tests`, `berries_tests`.
+  - Not done: creatures know the *look*, not the plant, but cannot learn to tell mimics apart (no smell/precision), no social
+    learning (warning others, copying a creature that ate fine), no deliberate poisoning/revenge, no antidotes or healing herbs,
+    hallucinations have no visual effect on the creature model, taste is not passed on, diarrhea doesn't leave anything behind.
 - Not done: berries aren't tied to season, no bush-planting by creatures (seed dispersal), bushes don't care about moisture
   inside a biome, no bush sounds beyond a pop, trees/houses spacing from bushes is only the existing tree blocker.
 

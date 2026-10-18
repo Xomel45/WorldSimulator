@@ -30,7 +30,6 @@ constexpr float kMotherEnergyCost    = 0.22f;   // роды и вынашива�
 constexpr float kFatherEnergyCost    = 0.08f;
 constexpr float kFoodRegrowRate      = 0.04f;   // единиц/сек восстановления источника еды
 constexpr float kFoodCap             = 1.0f;
-constexpr float kToxinPerAmount      = 4.0f;    // яда за единицу съеденного при toxicity 1: до ~0.2 с волчьей ягоды -- терпимо, секунда -- почти конец
 constexpr float kFoodMinEdible       = 0.12f;   // меньше -- куст "пустой": его не видно как еду, пока не отрастёт (иначе все висят на огрызках)
 
 using Grid = std::unordered_map<std::int64_t, std::vector<std::size_t>>;
@@ -303,10 +302,12 @@ void World::tick(float dt, const Terrain* terrain) {
         float       bestFoodDist = kSenseRadius, bestScore = 0.0f;
         std::size_t bestFoodK    = liveFoodIdx.size();
         const bool  desperate    = self.needs.hunger > kDesperateHunger;
+        const bool  queasy       = self.nausea > 0.6f || self.vomitStun > 0.0f;  // тошнит -- на еду и смотреть не хочется
         forEachNearby(
             foodGrid, selfPos, kSenseRadius,
             [this, &liveFoodIdx](std::size_t k) { return m_food[liveFoodIdx[k]].position; },
             [&](std::size_t k, float dist) {
+                if (queasy) return;
                 const float appeal = self.berryAppeal(m_food[liveFoodIdx[k]].kind);
                 if (appeal < Creature::kMinAppeal && !(desperate && appeal > kDesperateFloor)) return;
                 const float score = std::max(appeal, 0.05f) / (1.0f + dist / kAppealDistScale);
@@ -436,8 +437,8 @@ void World::tick(float dt, const Terrain* terrain) {
             const float bite = std::min(src.amount, kEatRate * dt);
             const BerryDef& def = berryDef(src.kind);
             self.feed(bite * def.nutrition);  // морошка сытнее черники при том же объёме
-            if (def.toxicity > 0.0f) self.addToxin(bite * def.toxicity * kToxinPerAmount);
-            self.tasteBerry(src.kind, def.nutrition, def.toxicity, dt);  // вкус запоминается, пока ест
+            self.ingestBerry(def, bite);                                  // яд/понос/тошнота/галлюцинации по профилю вида
+            self.tasteBerry(src.kind, def.nutrition, def.harm(), dt);     // вкус запоминается, пока ест
             src.amount -= bite;
         }
         if (out.restDesire > kRestDesireThreshold) self.rest(kRestRate * dt);

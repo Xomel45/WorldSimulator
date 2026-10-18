@@ -80,13 +80,21 @@ void writeCreature(ByteWriter& w, const Inhabitant& in, std::uint32_t version) {
     w.vec3(c.foodMemory);
     w.f32(c.foodMemoryAge);
     if (version < 3) return;
-    // v3: яд и вкус ягод (число видов пишем явно -- новые виды добавятся без смены формата).
+    // v3: яд; вкус ягод (число записей пишем явно). В v3 вкус хранился по ВИДАМ растений -- от него отказались
+    // (теперь по внешнему виду, v4), так что при записи v3 (тесты совместимости) записей нет.
     w.f32(c.toxin);
-    w.u8(static_cast<std::uint8_t>(kBerryKindCount));
-    for (int k = 0; k < kBerryKindCount; ++k) {
-        w.f32(c.taste[static_cast<std::size_t>(k)]);
-        w.u8(c.tasteSamples[static_cast<std::size_t>(k)]);
+    if (version == 3) {
+        w.u8(0);
+    } else {
+        w.u8(static_cast<std::uint8_t>(kBerryLookCount));
+        for (int k = 0; k < kBerryLookCount; ++k) {
+            w.f32(c.taste[static_cast<std::size_t>(k)]);
+            w.u8(c.tasteSamples[static_cast<std::size_t>(k)]);
+        }
     }
+    if (version < 4) return;
+    // v4: понос, тошнота, галлюцинации, рвотный приступ.
+    for (float v : {c.diarrhea, c.nausea, c.hallucination, c.vomitStun, c.visionTimer, c.visionHeading}) w.f32(v);
 }
 
 bool readCreature(ByteReader& r, Inhabitant& in, std::uint32_t version) {
@@ -124,12 +132,22 @@ bool readCreature(ByteReader& r, Inhabitant& in, std::uint32_t version) {
     }
     if (version >= 3) {
         c.toxin = std::clamp(r.f32(), 0.0f, 2.0f);
-        const std::uint8_t kinds = r.u8();
-        for (std::uint8_t k = 0; k < kinds && r.ok(); ++k) {
+        const std::uint8_t entries = r.u8();
+        for (std::uint8_t k = 0; k < entries && r.ok(); ++k) {
             const float taste = r.f32();
             const std::uint8_t samples = r.u8();
-            if (k < kBerryKindCount) { c.taste[k] = std::isfinite(taste) ? std::clamp(taste, -3.0f, 3.0f) : 0.0f; c.tasteSamples[k] = samples; }
+            // v3 хранил вкус по видам растений (теперь по внешнему виду): записи читаем, но не применяем.
+            if (version >= 4 && k < kBerryLookCount) { c.taste[k] = std::isfinite(taste) ? std::clamp(taste, -3.0f, 3.0f) : 0.0f; c.tasteSamples[k] = samples; }
         }
+    }
+    if (version >= 4) {
+        auto level = [&](float hi) { const float v = r.f32(); return std::isfinite(v) ? std::clamp(v, 0.0f, hi) : 0.0f; };
+        c.diarrhea      = level(2.0f);
+        c.nausea        = level(2.0f);
+        c.hallucination = level(2.0f);
+        c.vomitStun     = level(10.0f);
+        c.visionTimer   = level(10.0f);
+        c.visionHeading = r.f32();
     }
     return r.ok();
 }

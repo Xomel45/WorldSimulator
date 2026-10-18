@@ -86,24 +86,30 @@ int main() {
         WSIM_CHECK(c.world.populationCount() > 0);
     }
 
-    // ── Формат v3: яд и вкус ягод переживают сохранение; v2 (без них) читается, поля нулевые ──
+    // ── Формат v4: яд, недомогания и вкус ягод (по внешнему виду) переживают сохранение; v3 хранит только яд, v2 -- ничего ──
     {
         SaveGame withTaste = parsed;
         WSIM_CHECK(!withTaste.world.population.empty());
         Creature& cr = withTaste.world.population[0].creature;
         cr.toxin = 0.37f;
-        cr.taste[static_cast<std::size_t>(BerryKind::Nightshade)] = -1.1f;
-        cr.tasteSamples[static_cast<std::size_t>(BerryKind::Nightshade)] = 42;
-        cr.taste[static_cast<std::size_t>(BerryKind::Cloudberry)] = 1.45f;
-        cr.tasteSamples[static_cast<std::size_t>(BerryKind::Cloudberry)] = 200;
+        cr.diarrhea = 0.5f; cr.nausea = 0.8f; cr.hallucination = 1.25f; cr.vomitStun = 0.9f; cr.visionTimer = 1.5f; cr.visionHeading = 2.0f;
+        const auto dark = static_cast<std::size_t>(BerryLook::Dark), orange = static_cast<std::size_t>(BerryLook::Orange);
+        cr.taste[dark] = -1.1f;   cr.tasteSamples[dark] = 42;
+        cr.taste[orange] = 1.45f; cr.tasteSamples[orange] = 200;
         SaveGame back;
         std::string e3;
         WSIM_CHECK(parseSave(serializeSave(withTaste), back, e3));
         const Creature& rc = back.world.population[0].creature;
-        WSIM_CHECK(rc.toxin == 0.37f && rc.taste[static_cast<std::size_t>(BerryKind::Nightshade)] == -1.1f &&
-                   rc.tasteSamples[static_cast<std::size_t>(BerryKind::Nightshade)] == 42 &&
-                   rc.taste[static_cast<std::size_t>(BerryKind::Cloudberry)] == 1.45f && rc.tasteSamples[static_cast<std::size_t>(BerryKind::Cloudberry)] == 200);
+        WSIM_CHECK(rc.toxin == 0.37f && rc.taste[dark] == -1.1f && rc.tasteSamples[dark] == 42 &&
+                   rc.taste[orange] == 1.45f && rc.tasteSamples[orange] == 200);
+        WSIM_CHECK(rc.diarrhea == 0.5f && rc.nausea == 0.8f && rc.hallucination == 1.25f && rc.vomitStun == 0.9f &&
+                   rc.visionTimer == 1.5f && rc.visionHeading == 2.0f);
+        WSIM_CHECK(rc.knowsBerry(BerryKind::Blackberry) && rc.knowsBerry(BerryKind::Nightshade) && rc.knowsBerry(BerryKind::Henbane));  // группы
 
+        SaveGame v3back;  // v3: яд есть, вкуса и недомоганий нет
+        WSIM_CHECK(parseSave(serializeSave(withTaste, 3), v3back, e3));
+        const Creature& c3 = v3back.world.population[0].creature;
+        WSIM_CHECK(c3.toxin == 0.37f && c3.diarrhea == 0.0f && c3.hallucination == 0.0f && !c3.knowsLook(BerryLook::Dark));
         SaveGame v2back;
         WSIM_CHECK(parseSave(serializeSave(withTaste, 2), v2back, e3));
         const Creature& oc = v2back.world.population[0].creature;

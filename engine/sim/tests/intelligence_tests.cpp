@@ -225,6 +225,48 @@ int main() {
         WSIM_CHECK(minCloud < 0.7f);                                      // морошку ели (потом куст отрастает)
     }
     {
+        // Недомогания по видам: каждый ядовитый куст вызывает именно своё и (кроме волчьей ягоды) не убивает.
+        for (BerryKind kind : {BerryKind::Buckthorn, BerryKind::Honeysuckle, BerryKind::Henbane, BerryKind::Baneberry}) {
+            const BerryDef& def = berryDef(kind);
+            Creature c = adult(3, {0.0f, 0.0f, 0.0f});
+            c.needs.hunger = 0.6f;
+            World w = scenario(3, {c}, {FoodSource{{3.0f, 0.0f, 2.0f}, 1.0f, kind}});
+            float maxDiarrhea = 0, maxNausea = 0, maxHallu = 0, maxToxin = 0;
+            bool  vomited = false;
+            for (int i = 0; i < static_cast<int>(40.0f / kDt) && w.populationCount() > 0; ++i) {
+                w.tick(kDt, nullptr);
+                const Creature& cr = w.population()[0].creature;
+                maxDiarrhea = std::max(maxDiarrhea, cr.diarrhea);
+                maxNausea   = std::max(maxNausea, cr.nausea);
+                maxHallu    = std::max(maxHallu, cr.hallucination);
+                maxToxin    = std::max(maxToxin, cr.toxin);
+                vomited |= cr.behavior == Behavior::Sick;
+            }
+            WSIM_CHECK(w.populationCount() == 1 && maxToxin == 0.0f);        // смертельного ничего нет
+            WSIM_CHECK((maxDiarrhea > 0.05f) == (def.diarrhea > 0.0f));       // понос -- только у тех, у кого он есть
+            WSIM_CHECK((maxHallu > 0.05f) == (def.hallucination > 0.0f));
+            WSIM_CHECK((maxNausea > 0.05f) == (def.vomit > 0.0f));
+            if (def.vomit > 0.0f) WSIM_CHECK(vomited || maxNausea < 1.0f);    // тошнота, дойдя до порога, кончается рвотой
+        }
+    }
+    {
+        // Галлюцинирующий зовёт на помощь без причины -- и соседи пугаются по-настоящему (паника по стае).
+        auto maxNeighbourFear = [&](float hallu) {
+            Creature a = adult(3, {0.0f, 0.0f, 0.0f}), b = adult(4, {5.0f, 0.0f, 0.0f});
+            a.needs.hunger = b.needs.hunger = 0.1f;
+            a.hallucination = hallu;
+            World w = scenario(3, {a, b}, {});
+            float maxFear = 0.0f;
+            for (int i = 0; i < static_cast<int>(30.0f / kDt); ++i) {
+                w.tick(kDt, nullptr);
+                for (const auto& in : w.population())
+                    if (in.creature.id == 2) maxFear = std::max(maxFear, in.creature.needs.fear);
+            }
+            return maxFear;
+        };
+        WSIM_CHECK(maxNeighbourFear(2.0f) > maxNeighbourFear(0.0f) + 0.05f);
+    }
+    {
         // Статистика: смерть от яда считается отдельно.
         Creature c = adult(3, {0.0f, 0.0f, 0.0f});
         c.needs.hunger = 0.3f;
