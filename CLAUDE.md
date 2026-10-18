@@ -883,6 +883,21 @@ Creatures now cut trees down, carry logs, craft tools and fight predators with t
   `AudioEngine` now has 6 loops; `SoundDirector::ambient` takes the `World`.
 - Not done: seasons/weather, nocturnal animals, sounds for building/chopping/animals, a systematic balance harness in CI (the probes live in the session scratchpad only; the numbers above are from them).
 
+### Stage 7: seasons, weather, night predators, ecology regression test
+
+- **Seasons and weather are pure functions of the world time** (nothing stored or saved): `kYearLength = 4 days = 1200 s`, world starts in spring (`season` by year phase: <0.2 spring, <0.5 summer, <0.7 autumn, else winter);
+  `coldness` (cosine peaking at phase 0.8, smoothstep → 0 in summer, ~1 deep in winter), `foodFactor = 1 + 0.3·summer − 0.4·cold` (bush regrowth multiplier, also applied to the closed-form regrowth of sleeping cells), `rain(t)`
+  (smooth hashed noise over ~90 s windows, ≈27% of the time rainy, dry for the first 200 s). **All of it applies only in a world with terrain** (flat test worlds are unchanged).
+- **Effects**: bushes regrow ×`foodFactor`×`(1 + 0.3·rain)`; **cold** (`SenseInputs::cold`, reduced to 20% beside a burning fire within 6 or a hut within 3.2) raises hunger ×`1+0.15·cold` and energy drain ×`1+0.2·cold`; rain quenches thirst (0.012/s)
+  and burns campfires 3.5× faster; winter/dusk both trigger campfire building (`cold > 0.5` counts like `night > 0.1`). **Predators are hungrier and sharper at night** (`Fauna::tick(…, night)`: hunger growth ×`1+0.8·night`, sense radius ×`1+0.3·night`).
+- **Visible/audible**: sky/fog tint (cold pale blue, autumn warm, rain grey with denser fog and a dimmer sun), `drawWeather` rain streaks or winter snowflakes as an ImGui overlay (hash-based, 40-400 particles), new loop `LoopRain` (volume `0.6·rain`);
+  debug window shows season/cold/rain; `WSIM_TIME=seconds` also drives season and weather in frame dumps (e.g. 700 = autumn rain, 3490 = winter night snow).
+- **Balance**: the first cut (cold ×1.25 hunger, food −0.6) dropped the mean population to 25 with one seed ending at 1; softened to the values above → 10 seeds × 20 sim-min: mean 32 alive, 36 at the end, no extinctions, 764 births.
+- **`ecology_tests`** (new, ~13 s in debug): two seeds × 8 sim-min with terrain, everything on; asserts no extinction (end ≥ 5, mean ≥ 12), no cap blow-up, births ≥ 10, thirst deaths < 5 — the guard against another silent balance slide.
+  `resources_tests` covers seasons, rain, cold/fire hunger, rain on fire, night wolves.
+- **Save fix found by this stage**: `World::m_streamTimer` and `Fauna::m_streamTimer` were reset to 100 on load, so continuation was only *accidentally* bit-exact; both timers are now saved (`STRM`/`FAUN` tails) and `save_tests` stays green with the seasonal hunger change. Still unsaved: `Animal::stun` (a few seconds).
+- Not done: snow on the terrain (the ground colour does not change), seasonal berry visibility/leaf colours, rain filling water or flooding, wind, lightning/fires, nocturnal species, hibernation/migration.
+
 ## Temporal upscaler and frame generation (`VulkanTemporal.cpp`, `taau.comp`, `framegen.comp`)
 
 Own implementation (not AMD's FSR 2/3): the official FidelityFX SDK builds with MSVC/`.bat` scripts, has HLSL shaders that
@@ -1298,7 +1313,8 @@ source of truth for the hex constants at the top of `MainMenu.cpp`.
 - [x] Civilization stage 4: day/night, sleep, huts (see "Stage 4")
 - [x] Civilization stage 5: campfire, roles, hut ownership (see "Stage 5")
 - [x] Stage 6: ecology rebalance, night/fire ambience (see "Stage 6")
-- [ ] Next: seasons/weather, nocturnal animals, building/animal sounds, balance harness
+- [x] Stage 7: seasons, weather, night predators, ecology regression test (see "Stage 7")
+- [ ] Next: terrain snow/season colours, nocturnal species, building/animal sounds, migration/hibernation
 - [ ] More powers (fire, rain, disasters, food, smite individuals), undo
 - [x] Sound: procedural synth + miniaudio (see "Sound")
 - [x] Day/night cycle (see "Stage 4"; night ambience sound still missing)

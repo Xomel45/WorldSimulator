@@ -136,7 +136,7 @@ Decision decide(Creature& c, const SenseInputs& s, const BrainOutputs& raw, floa
     const bool  canCraft = tool != 0 && c.wood >= c.woodNeeded();
     if (canCraft && n.fear < 0.4f && n.hunger < 0.7f) S(Behavior::Craft) = 1.2f + 1.2f * danger01;
     const bool stockSeen = s.stockDist < kNoTarget;
-    const bool forFire   = c.knows(kSkillFire) && s.fireDist >= kNoTarget && s.night > 0.1f && c.wood < kFireWood;   // к ночи -- дрова на костёр
+    const bool forFire   = c.knows(kSkillFire) && s.fireDist >= kNoTarget && (s.night > 0.1f || s.cold > 0.5f) && c.wood < kFireWood;   // к ночи -- дрова на костёр
     const bool forHut    = c.knows(kSkillHut) && s.hutDist >= kNoTarget && c.wood < kHutWood;   // нет хижины рядом -- рубит на неё
     const bool forStock  = c.knows(kSkillStockpile) && stockSeen && s.stockAmount < 24.0f && c.wood < kMaxWood;   // рубит про запас общине
     if (!canCraft && (c.wantsWood() || forStock || forHut || forFire) && treeSeen && n.fear < 0.4f && n.hunger < 0.6f && tired < 0.65f)
@@ -206,7 +206,7 @@ Decision decide(Creature& c, const SenseInputs& s, const BrainOutputs& raw, floa
             buildAt   = here + glm::vec2{std::cos(c.wanderHeading), std::sin(c.wanderHeading)} * 2.5f;
         }
         // Костёр: к вечеру нет другого поблизости, есть дрова.
-        if (!buildKind && c.knows(kSkillFire) && c.wood >= kFireWood && s.fireDist > 15.0f && s.night > 0.1f && n.hunger < 0.7f && n.fear < 0.3f) {
+        if (!buildKind && c.knows(kSkillFire) && c.wood >= kFireWood && s.fireDist > 15.0f && (s.night > 0.1f || s.cold > 0.5f) && n.hunger < 0.7f && n.fear < 0.3f) {
             buildKind = 6;
             buildAt   = here + glm::vec2{std::cos(c.wanderHeading), std::sin(c.wanderHeading)} * 1.8f;
         }

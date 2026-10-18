@@ -112,6 +112,7 @@ private:
     std::array<std::shared_ptr<Mesh>, 4> m_logMeshes;
     std::vector<SceneObject>             m_bridgeObjects, m_structObjects, m_gearObjects;
     std::uint64_t                        m_bridgeSig = ~0ull;
+    float                                m_fogBoost = 1.0f;   // густота тумана: дождь и зима
     std::optional<float>                 m_timeOverride;   // WSIM_TIME=сек: свет по этому времени, а не мировому (проверка кадров)
 
     // Рельеф — независим от World в этом раунде (чисто визуальный/
@@ -137,6 +138,7 @@ private:
     std::vector<TimedHazard>   m_impactHazards;  // места свежих ударов валунов: существа какое-то время их боятся
     void followTerrain(float dt);  // точка обзора по высоте земли, камера не лезет в рельеф
     void drawBrushRing(const CameraData& cam);
+    void drawWeather();   // дождь/снег: частицы поверх кадра (ImGui, без геометрии)
     // Звук: движок (miniaudio) и режиссёр, решающий что играть по состоянию игры.
     std::unique_ptr<audio::AudioEngine> m_audio;
     std::unique_ptr<SoundDirector>      m_sound;

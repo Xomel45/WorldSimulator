@@ -73,6 +73,7 @@ void SoundDirector::ambient(float dt, bool playing, const glm::vec3& focus, floa
         m_audio.setLoop(SoundId::LoopRumble, 0.0f);
         m_audio.setLoop(SoundId::LoopCrickets, 0.0f);
         m_audio.setLoop(SoundId::LoopFire, 0.0f);
+        m_audio.setLoop(SoundId::LoopRain, 0.0f);
         return;
     }
 
@@ -85,6 +86,7 @@ void SoundDirector::ambient(float dt, bool playing, const glm::vec3& focus, floa
         const float land = terrain.isUnderwater(focus.x, focus.z) ? 0.2f : 1.0f;
         m_audio.setLoop(SoundId::LoopCrickets, 0.4f * world.nightness() * land * (1.0f - std::clamp((camDistance - 20.0f) / 150.0f, 0.0f, 0.8f)));
         m_audio.setLoop(SoundId::LoopFire, 0.55f * std::clamp(fire, 0.0f, 1.0f));
+        m_audio.setLoop(SoundId::LoopRain, 0.6f * world.rain());
     }
 
     // Ветер крепчает с высотой камеры и дышит порывами.

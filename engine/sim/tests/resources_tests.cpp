@@ -623,6 +623,65 @@ int main() {
         WSIM_CHECK(owners == 2);
     }
 
+    // ── Этап 7: времена года, погода, ночные хищники ──
+    {
+        WSIM_CHECK(World::season(0.0) == 0 && World::season(300.0) == 1 && World::season(700.0) == 2 && World::season(1000.0) == 3);
+        WSIM_CHECK(std::fabs(World::yearPhase(100.0) - World::yearPhase(100.0 + World::kYearLength)) < 1.0e-5f);
+        WSIM_CHECK(World::coldness(1000.0) > 0.95f && World::coldness(300.0) == 0.0f);
+        WSIM_CHECK(World::foodFactor(300.0) > 1.2f && World::foodFactor(1000.0) < 0.7f);   // лето богаче, зима скуднее
+        WSIM_CHECK(World::rain(0.0) == 0.0f && World::rain(150.0) == 0.0f);                 // начало мира сухое
+        int rainy = 0, n = 0;
+        for (double t = 0; t < 6000; t += 5) { ++n; rainy += World::rain(t) > 0.05f; WSIM_CHECK(World::rain(t) >= 0.0f && World::rain(t) <= 1.0f); }
+        WSIM_CHECK(rainy > n / 8 && rainy < n / 2);
+
+        Terrain t(World::kWorldHalfSize, 29);
+        glm::vec2 at;
+        WSIM_CHECK(findForest(t, at));
+        // Зимой в мире с рельефом голод растёт быстрее, чем летом (у костра холод слабее).
+        auto hungerAfter = [&](double time, bool fire) {
+            World w = lone(51, at, 0);
+            WorldState st = w.exportState();
+            st.time = time;
+            st.population[0].creature.needs.hunger = 0.1f;
+            st.population[0].creature.needs.energy = 1.0f;
+            st.population[0].creature.behavior = Behavior::Rest;
+            if (fire) st.structures.push_back({StructureKind::Campfire, at.x + 1.0f, at.y, 0.0f, 1.0f});
+            WSIM_CHECK(w.importState(st));
+            for (int i = 0; i < 60 * 20; ++i) { w.tick(kDt, &t); }
+            return w.population().empty() ? 1.0f : w.population()[0].creature.needs.hunger;
+        };
+        const float summerH = hungerAfter(300.0, false), winterH = hungerAfter(1000.0, false), winterFire = hungerAfter(1000.0, true);
+        WSIM_CHECK(winterH > summerH && winterFire < winterH);
+
+        // Дождь гасит костёр быстрее, сухо -- нормально.
+        auto fireLeft = [&](double time) {
+            World w = lone(52, at, 0);
+            WorldState st = w.exportState();
+            st.time = time;
+            st.structures.push_back({StructureKind::Campfire, at.x + 30.0f, at.y, 0.0f, 1.0f});
+            WSIM_CHECK(w.importState(st));
+            for (int i = 0; i < 60 * 10; ++i) w.tick(kDt, &t);
+            return w.structures().empty() ? 0.0f : w.structures()[0].hp;
+        };
+        WSIM_CHECK(World::rain(700.0) > 0.9f && fireLeft(700.0) < fireLeft(300.0) - 0.02f);
+
+        // Ночью хищник голоднее растёт (охотится охотнее), чем днём.
+        auto wolfHunger = [&](float night) {
+            Fauna fauna;
+            Rng rng(4);
+            Fauna::State fs;
+            fs.nextId = 9;
+            Animal wolf;
+            wolf.id = 1; wolf.species = Species::Wolf; wolf.position = {0.0f, 0.0f, 0.0f}; wolf.hunger = 0.1f; wolf.age = speciesDef(Species::Wolf).maturity * 1.5f;
+            fs.animals = {wolf};
+            WSIM_CHECK(fauna.importState(fs));
+            std::vector<Bite> bites;
+            for (int i = 0; i < 60 * 60; ++i) fauna.tick(kDt, nullptr, {}, rng, 500.0f, bites, {}, nullptr, night);
+            return fauna.animals().empty() ? 0.0f : fauna.animals()[0].hunger;
+        };
+        WSIM_CHECK(wolfHunger(1.0f) > wolfHunger(0.0f) + 0.02f);
+    }
+
     std::puts("resources_tests: OK");
     return 0;
 }

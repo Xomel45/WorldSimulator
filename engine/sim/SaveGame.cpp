@@ -323,6 +323,7 @@ std::vector<std::uint8_t> serializeSave(const SaveGame& g, std::uint32_t version
         }
         b.u32(static_cast<std::uint32_t>(f.explored.size()));   // заселённые ячейки мира без границ (в конце: старые файлы без них читаются)
         for (std::int64_t k : f.explored) b.i64(k);
+        b.f32(f.streamTimer);
         section(payload, kTagFauna, b);
     }
     {
@@ -352,6 +353,7 @@ std::vector<std::uint8_t> serializeSave(const SaveGame& g, std::uint32_t version
         }
         b.u32(static_cast<std::uint32_t>(w.food.size()));   // происхождение каждого материализованного куста (в порядке WRLD.food)
         for (const FoodSource& f : w.food) { b.u32(static_cast<std::uint32_t>(f.cellX)); b.u32(static_cast<std::uint32_t>(f.cellZ)); b.u32(static_cast<std::uint32_t>(static_cast<std::int32_t>(f.local))); }
+        b.f32(w.streamTimer);
         section(payload, kTagStream, b);
     }
     {
@@ -527,6 +529,7 @@ bool parseSave(std::span<const std::uint8_t> bytes, SaveGame& out, std::string& 
                 const std::uint32_t m = sr.count(500000, 8);
                 for (std::uint32_t i = 0; i < m && sr.ok(); ++i) f.explored.push_back(sr.i64());
             }
+            if (sr.ok() && sr.remaining() >= 4) f.streamTimer = sr.f32();
         } else if (t == kTagStructs || t == kTagStructs2 || t == kTagStructs3) {   // STRC (v8, без склада), STR2 (со складом), STR3 (с хозяином)
             const bool v2 = t != kTagStructs, v3 = t == kTagStructs3;
             const std::uint32_t m = sr.count(World::kMaxStructures, v3 ? 29 : (v2 ? 21 : 17));
@@ -580,6 +583,7 @@ bool parseSave(std::span<const std::uint8_t> bytes, SaveGame& out, std::string& 
             for (std::uint32_t i = 0; i < nf && sr.ok(); ++i) {
                 streamFood.push_back({static_cast<std::int32_t>(sr.u32()), static_cast<std::int32_t>(sr.u32()), static_cast<std::int32_t>(sr.u32())});
             }
+            if (sr.ok() && sr.remaining() >= 4) w.streamTimer = sr.f32();
         } else if (t == kTagBerries) {
             const std::uint32_t n = sr.count(kMaxFood, 1);
             for (std::uint32_t i = 0; i < n && sr.ok(); ++i) berryKinds.push_back(sr.u8());

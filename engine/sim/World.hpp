@@ -76,7 +76,7 @@ struct WorldStats {
     std::uint64_t deathsPredation = 0;  // существа, растерзанные хищниками
     std::uint64_t treesFelled = 0, spearsMade = 0, shieldsMade = 0, spearHits = 0, shieldBlocks = 0, skillsLearned = 0;
     std::uint64_t planksLaid = 0, barricadesBuilt = 0, trapsSet = 0;
-    std::uint64_t meatKills = 0, bucketsMade = 0, bushesWatered = 0, stockpilesBuilt = 0, hutsBuilt = 0, firesBuilt = 0, firesStoked = 0, bitesBlockedByWalls = 0, logsStored = 0, logsTaken = 0, deathsThirst = 0;
+    std::uint64_t meatKills = 0, bucketsMade = 0, bushesWatered = 0, stockpilesBuilt = 0, hutsBuilt = 0, firesBuilt = 0, firesStoked = 0, bitesBlockedByWalls = 0, coldTicks = 0, logsStored = 0, logsTaken = 0, deathsThirst = 0;
 };
 
 // Полное состояние мира для сохранения/загрузки (всё, что нужно, чтобы продолжить симуляцию
@@ -91,6 +91,7 @@ struct WorldState {
     Fauna::State                                         fauna;         // дикие животные
     std::vector<Structure>                               structures;    // баррикады и ловушки
     // Потоковая подгрузка кустов: мировое время, материализованные ячейки и записи о спящих (старые сохранения -- пусто).
+    float                                                streamTimer = 100.0f;   // таймер подгрузки кустов (для продолжения бит в бит)
     bool                                                 streaming = false;
     double                                               time = 0.0;
     std::vector<std::int64_t>                            loadedCells;
@@ -142,6 +143,17 @@ public:
     [[nodiscard]] static float nightness(double time) noexcept;
     [[nodiscard]] float        sunElevation() const noexcept { return sunElevation(m_time); }
     [[nodiscard]] float        nightness() const noexcept { return nightness(m_time); }
+    // Времена года и погода: чистые функции мирового времени (ничего не хранится и не сохраняется). Год = 4 суток; мир начинается весной.
+    // coldness 0..1 (зимний холод), foodFactor -- множитель отрастания ягод (лето богаче, зима скуднее), rain 0..1 (первые ~200 с сухо).
+    static constexpr float kYearLength = 4.0f * kDayLength;
+    [[nodiscard]] static float yearPhase(double time) noexcept;      // 0..1, 0 -- начало весны
+    [[nodiscard]] static int   season(double time) noexcept;         // 0 весна, 1 лето, 2 осень, 3 зима
+    [[nodiscard]] static const char* seasonName(int season) noexcept;
+    [[nodiscard]] static float coldness(double time) noexcept;
+    [[nodiscard]] static float foodFactor(double time) noexcept;
+    [[nodiscard]] static float rain(double time) noexcept;
+    [[nodiscard]] float        coldness() const noexcept { return coldness(m_time); }
+    [[nodiscard]] float        rain() const noexcept { return rain(m_time); }
 
     [[nodiscard]] std::span<const Inhabitant>  population() const noexcept { return m_population; }
     [[nodiscard]] std::span<const FoodSource>  food() const noexcept { return m_food; }

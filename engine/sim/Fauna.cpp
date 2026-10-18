@@ -146,7 +146,7 @@ bool Fauna::importState(const State& s) {
     m_explored         = s.explored;
     std::sort(m_explored.begin(), m_explored.end());
     m_explored.erase(std::unique(m_explored.begin(), m_explored.end()), m_explored.end());
-    m_streamTimer      = 100.0f;
+    m_streamTimer      = std::isfinite(s.streamTimer) ? std::clamp(s.streamTimer, 0.0f, 100.0f) : 100.0f;
     return true;
 }
 
@@ -166,7 +166,7 @@ bool Fauna::hurt(std::uint64_t id, float damage) {
     return false;
 }
 
-Fauna::State Fauna::exportState() const { return {m_nextId, m_animals, m_immigrationTimer, m_explored}; }
+Fauna::State Fauna::exportState() const { return {m_nextId, m_animals, m_immigrationTimer, m_explored, m_streamTimer}; }
 
 bool Fauna::markExplored(std::int32_t cx, std::int32_t cz) {
     const std::int64_t key = packWild(cx, cz);
@@ -303,7 +303,7 @@ void Fauna::streamWildlife(float dt, const Terrain& terrain, std::span<const Cre
 }
 
 void Fauna::tick(float dt, const Terrain* terrain, std::span<const CreatureView> creatures, Rng& rng, float halfSize, std::vector<Bite>& bites,
-                 std::span<const glm::vec2> focus, std::vector<Structure>* structures) {
+                 std::span<const glm::vec2> focus, std::vector<Structure>* structures, float night) {
     const std::size_t n = m_animals.size();
     const std::span<const Structure> built = structures ? std::span<const Structure>(*structures) : std::span<const Structure>();
 
@@ -329,7 +329,7 @@ void Fauna::tick(float dt, const Terrain* terrain, std::span<const CreatureView>
         a.searchCooldown = std::max(0.0f, a.searchCooldown - dt);
         a.sinceBite     += dt;
         a.stateTimer     = std::max(0.0f, a.stateTimer - dt);
-        a.hunger         = std::clamp(a.hunger + (d.diet == Diet::Predator ? 0.0025f : 0.004f) * dt, 0.0f, 1.0f);
+        a.hunger         = std::clamp(a.hunger + (d.diet == Diet::Predator ? 0.0025f * (1.0f + 0.8f * night) : 0.004f) * dt, 0.0f, 1.0f);
         if (a.hunger >= 0.999f) a.health -= 0.012f * dt;
         else if (a.hunger < 0.6f) a.health = std::min(1.0f, a.health + 0.004f * dt);
         if (a.age >= d.lifespan) { a.alive = false; a.deathCause = 1; continue; }
@@ -427,7 +427,7 @@ void Fauna::tick(float dt, const Terrain* terrain, std::span<const CreatureView>
                 } else {
                     const glm::vec2 tp = cv ? glm::vec2{cv->position.x, cv->position.z} : glm::vec2{av->position.x, av->position.z};
                     const float dist = glm::length(tp - pos);
-                    if (dist > d.sense * 1.4f || a.stateTimer <= 0.0f) {
+                    if (dist > d.sense * (1.0f + 0.3f * night) * 1.4f || a.stateTimer <= 0.0f) {
                         a.state = AnimalState::Wander;
                         a.searchCooldown = 15.0f;   // сбежала -- отдыхаем и пробуем позже
                     } else {
@@ -463,7 +463,7 @@ void Fauna::tick(float dt, const Terrain* terrain, std::span<const CreatureView>
             } else if (a.state != AnimalState::Hunt) {
                 if (a.hunger > 0.5f && a.searchCooldown <= 0.0f) {
                     // Выбор добычи: ближайшее животное из списка; голодный (и умеющий) -- существо, если животных рядом нет.
-                    float best = d.sense;
+                    float best = d.sense * (1.0f + 0.3f * night);
                     const Animal* target = nullptr;
                     for (const Animal& o : m_animals)
                         if (o.alive && (d.prey & bit(o.species)) != 0) {
@@ -473,7 +473,7 @@ void Fauna::tick(float dt, const Terrain* terrain, std::span<const CreatureView>
                     if (target) {
                         a.state = AnimalState::Hunt; a.targetId = target->id; a.targetIsCreature = false; a.stateTimer = 25.0f;
                     } else if (d.huntsCreatures && a.hunger > 0.7f) {
-                        float bestC = d.sense * 0.8f;
+                        float bestC = d.sense * (1.0f + 0.3f * night) * 0.8f;
                         const CreatureView* ct = nullptr;
                         for (const CreatureView& c : creatures) {
                             const float dist = std::hypot(c.position.x - pos.x, c.position.z - pos.y);

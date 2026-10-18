@@ -139,6 +139,36 @@ bool World::spawnCreature(float x, float z, std::span<const std::pair<Genome::Tr
 float World::sunElevation(double time) noexcept {
     return std::sin(6.28318531f * static_cast<float>(std::fmod(time / kDayLength + 0.08, 1.0)));
 }
+float World::yearPhase(double time) noexcept { return static_cast<float>(std::fmod(time / kYearLength, 1.0)); }
+int World::season(double time) noexcept {
+    const float p = yearPhase(time);
+    return p < 0.2f ? 0 : (p < 0.5f ? 1 : (p < 0.7f ? 2 : 3));
+}
+const char* World::seasonName(int s) noexcept {
+    static constexpr const char* kNames[] = {"весна", "лето", "осень", "зима"};
+    return kNames[s & 3];
+}
+float World::coldness(double time) noexcept {
+    const float c = 0.5f + 0.5f * std::cos(6.28318531f * (yearPhase(time) - 0.8f));   // пик зимы на 0.8 года
+    const float t = std::clamp((c - 0.55f) / 0.35f, 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+float World::foodFactor(double time) noexcept {
+    const float summer = std::max(0.0f, std::cos(6.28318531f * (yearPhase(time) - 0.35f)));
+    return 1.0f + 0.3f * summer - 0.4f * coldness(time);
+}
+float World::rain(double time) noexcept {
+    if (time < 200.0) return 0.0f;
+    // Гладкий шум по окнам ~90 с: значения в узлах -- хеш номера окна; дождь идёт, пока шум выше порога.
+    auto h = [](std::int64_t i) { std::uint64_t x = static_cast<std::uint64_t>(i) * 0x9E3779B97F4A7C15ull; x ^= x >> 31; x *= 0xBF58476D1CE4E5B9ull; x ^= x >> 29; return static_cast<float>(x & 0xFFFFFF) / 16777216.0f; };
+    const double u = time / 90.0;
+    const auto   i = static_cast<std::int64_t>(std::floor(u));
+    const float  f = static_cast<float>(u - static_cast<double>(i)), sm = f * f * (3.0f - 2.0f * f);
+    const float  n = h(i) * (1.0f - sm) + h(i + 1) * sm;
+    const float  t = std::clamp((n - 0.62f) / 0.2f, 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+
 float World::nightness(double time) noexcept {
     const float e = sunElevation(time);
     const float t = std::clamp((-0.1f - e) / 0.3f, 0.0f, 1.0f);   // от -0.1 до -0.4 сгущается
@@ -248,8 +278,8 @@ std::int32_t cellX(std::int64_t key) noexcept { return static_cast<std::int32_t>
 std::int32_t cellZ(std::int64_t key) noexcept { return static_cast<std::int32_t>(static_cast<std::uint32_t>(key)); }
 
 // Куст, лежавший без присмотра t секунд, отрастает: da/dt = r (0.25 + 0.75 a) -- то же уравнение, что в World::tick, в замкнутом виде.
-float regrownAmount(float a0, float seconds, BerryKind kind) {
-    const float k = 0.75f * kFoodRegrowRate * berryDef(kind).regrow;
+float regrownAmount(float a0, float seconds, BerryKind kind, float rateMul = 1.0f) {
+    const float k = 0.75f * kFoodRegrowRate * berryDef(kind).regrow * rateMul;
     return std::min(kFoodCap, (a0 + 1.0f / 3.0f) * std::exp(k * seconds) - 1.0f / 3.0f);
 }
 
@@ -266,13 +296,13 @@ void World::loadCell(const Terrain& terrain, std::int32_t cx, std::int32_t cz) {
             for (const auto& [local, a] : rec->second.deltas)
                 if (local == spec.local) { amount = a; break; }
         if (amount < 0.0f) continue;   // стёрт игроком
-        if (amount < kFoodCap) amount = regrownAmount(amount, static_cast<float>(asleep), spec.kind);
+        if (amount < kFoodCap) amount = regrownAmount(amount, static_cast<float>(asleep), spec.kind, foodFactor(m_time));
         if (m_food.size() >= kMaxFood) break;
         m_food.push_back(FoodSource{{spec.x, 0.0f, spec.z}, amount, spec.kind, cx, cz, static_cast<std::int16_t>(spec.local)});
     }
     if (rec != m_cellRecords.end()) {
         for (FoodSource f : rec->second.planted) {
-            f.amount = regrownAmount(f.amount, static_cast<float>(asleep), f.kind);
+            f.amount = regrownAmount(f.amount, static_cast<float>(asleep), f.kind, foodFactor(m_time));
             if (m_food.size() < kMaxFood) m_food.push_back(f);
         }
         m_cellRecords.erase(rec);
@@ -394,6 +424,7 @@ WorldState World::exportState() const {
     st.structures = m_structures;
     st.streaming  = m_streaming;
     st.time       = m_time;
+    st.streamTimer = m_streamTimer;
     st.loadedCells.assign(m_loadedCells.begin(), m_loadedCells.end());
     std::sort(st.loadedCells.begin(), st.loadedCells.end());
     for (const auto& [key, rec] : m_cellRecords) st.cellRecords.push_back(rec);
@@ -417,7 +448,7 @@ bool World::importState(const WorldState& st) {
     if (!m_fauna.importState(st.fauna)) return false;
     m_streaming = st.streaming;
     m_time      = std::isfinite(st.time) ? st.time : 0.0;
-    m_streamTimer = 100.0f;
+    m_streamTimer = std::isfinite(st.streamTimer) ? std::clamp(st.streamTimer, 0.0f, 100.0f) : 100.0f;
     m_specCache.clear();
     m_loadedCells.clear();
     m_cellRecords.clear();
@@ -457,8 +488,9 @@ void World::tick(float dt, Terrain* mutableTerrain) {
     m_time += dt;
     if (terrain && m_streaming) streamBushes(*terrain, dt);
     // Костры сгорают (hp -- топливо); догоревшие убираем.
+    const float coldNow = terrain ? coldness(m_time) : 0.0f, rainNow = terrain ? rain(m_time) : 0.0f;
     for (Structure& st : m_structures)
-        if (st.kind == StructureKind::Campfire) st.hp = std::max(0.0f, st.hp - dt / kFireBurnSeconds);
+        if (st.kind == StructureKind::Campfire) st.hp = std::max(0.0f, st.hp - dt * (1.0f + 2.5f * rainNow) / kFireBurnSeconds);   // дождь гасит быстрее
     std::erase_if(m_structures, [](const Structure& st) { return st.kind == StructureKind::Campfire && st.hp <= 0.0f; });
 
     // 1. Прошлотиковые пинги горя -- одноразовые, читаются один раз и всё.
@@ -480,7 +512,7 @@ void World::tick(float dt, Terrain* mutableTerrain) {
         for (const Inhabitant& in : m_population)
             if (in.creature.alive) views.push_back({in.creature.id, in.creature.position});
         std::vector<Bite> bites;
-        m_fauna.tick(dt, terrain, views, m_rng, m_streaming ? 0.0f : kWorldHalfSize, bites, m_focus, &m_structures);
+        m_fauna.tick(dt, terrain, views, m_rng, m_streaming ? 0.0f : kWorldHalfSize, bites, m_focus, &m_structures, terrain ? nightness(m_time) : 0.0f);
         for (const Bite& b : bites) {
             const auto it = idIndex.find(b.creatureId);
             if (it == idIndex.end()) continue;
@@ -635,6 +667,13 @@ void World::tick(float dt, Terrain* mutableTerrain) {
                 senses.hutPos = {h.x, selfPos.y, h.z};
             }
             if (fireIdx != m_structures.size()) { senses.fireDist = bestFire; senses.firePos = {m_structures[fireIdx].x, selfPos.y, m_structures[fireIdx].z}; }
+        }
+        // Зимний холод и дождь; у костра и в хижине холод ослаблен.
+        if (terrain) {
+            senses.rain = rainNow;
+            const bool warm = (hutIdx != m_structures.size() && senses.hutDist < 3.2f) || (fireIdx != m_structures.size() && senses.fireDist < 6.0f);
+            senses.cold = coldNow * (warm ? 0.2f : 1.0f);
+            if (senses.cold > 0.5f) ++m_stats.coldTicks;
         }
         // Вода: берег ищем лучами (редко, кэш в существе), когда хочется пить или пополнить ведро.
         if (terrain && (self.thirst > 0.4f || self.behavior == Behavior::Drink || (self.hasBucket && self.water < 1.5f && self.thirst > 0.25f))) {
@@ -1100,8 +1139,9 @@ void World::tick(float dt, Terrain* mutableTerrain) {
     // 7. Еда медленно восстанавливается на месте.
     // Куст отрастает не равномерно: объеденный до нуля долго "лысый", чем больше ягод -- тем быстрее набирает новые (рост
     // 25% -> 100% от полной скорости). Раньше крошки отрастали сразу и толпа часами ждала возле пустого куста.
+    const float growMul = terrain ? foodFactor(m_time) * (1.0f + 0.3f * rainNow) : 1.0f;   // сезон и дождь (только в мире с рельефом)
     for (auto& src : m_food)
-        src.amount = std::min(kFoodCap, src.amount + kFoodRegrowRate * berryDef(src.kind).regrow * (0.25f + 0.75f * src.amount) * dt);
+        src.amount = std::min(kFoodCap, src.amount + kFoodRegrowRate * berryDef(src.kind).regrow * growMul * (0.25f + 0.75f * src.amount) * dt);
 }
 
 }  // namespace wsim

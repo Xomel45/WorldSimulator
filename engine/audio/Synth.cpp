@@ -456,10 +456,27 @@ Pcm loopFire(int rate) {
     return out;
 }
 
+// Дождь: ровный шум полосой 1.5-7 кГц с мелкой рябью капель.
+Pcm loopRain(int rate) {
+    const float T = 5.0f, F = 1.0f;
+    Pcm x = blank(T + F, rate);
+    Noise n(151), d(157);
+    Svf hi, lo;
+    for (std::size_t i = 0; i < x.size(); ++i) {
+        const auto a = hi.process(n.next(), svfCoef(1800.0f, rate), 0.6f);
+        const auto b = lo.process(a.hp, svfCoef(7000.0f, rate), 0.6f);
+        const float drip = 0.75f + 0.25f * d.next();
+        x[i] = b.lp * drip;
+    }
+    Pcm out = makeSeamless(x, static_cast<std::size_t>(F * static_cast<float>(rate)));
+    normalize(out, 0.6f);
+    return out;
+}
+
 }  // namespace
 
 bool isLoop(SoundId id) noexcept {
-    return id == SoundId::LoopWind || id == SoundId::LoopWater || id == SoundId::LoopMusic || id == SoundId::LoopRumble || id == SoundId::LoopCrickets || id == SoundId::LoopFire;
+    return id == SoundId::LoopWind || id == SoundId::LoopWater || id == SoundId::LoopMusic || id == SoundId::LoopRumble || id == SoundId::LoopCrickets || id == SoundId::LoopFire || id == SoundId::LoopRain;
 }
 
 bool soundFromName(std::string_view name, SoundId& out) noexcept {
@@ -496,6 +513,7 @@ Pcm synthesize(SoundId id, int rate) {
         case SoundId::LoopRumble: return loopRumble(rate);
         case SoundId::LoopCrickets: return loopCrickets(rate);
         case SoundId::LoopFire:   return loopFire(rate);
+        case SoundId::LoopRain:   return loopRain(rate);
         case SoundId::Count: break;
     }
     return {};

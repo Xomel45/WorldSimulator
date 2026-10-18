@@ -120,7 +120,7 @@ public:
     // с краёв); halfSize <= 0 -- мир без границ: вокруг существ и точек интереса focus впервые попавшие в поле ячейки заселяются
     // (раз и навсегда -- ячейка запоминается как исследованная), а вымирающие виды пополняются кольцом вокруг этих точек.
     void tick(float dt, const Terrain* terrain, std::span<const CreatureView> creatures, Rng& rng, float halfSize, std::vector<Bite>& bites,
-              std::span<const glm::vec2> focus = {}, std::vector<Structure>* structures = nullptr);
+              std::span<const glm::vec2> focus = {}, std::vector<Structure>* structures = nullptr, float night = 0.0f);   // night 0..1: хищники ночью голоднее и зорче
 
     // Удар по животному (копьё существа): здоровье падает, раненый убегает; убитое снимается со следующим шагом (deathCause 5).
     bool hurt(std::uint64_t id, float damage);   // true -- животное погибло от удара
@@ -131,6 +131,7 @@ public:
         std::vector<Animal> animals;
         float               immigrationTimer = 0.0f;
         std::vector<std::int64_t> explored;   // заселённые ячейки мира без границ (по возрастанию)
+        float               streamTimer = 100.0f;   // таймер проверки ячеек (сохраняется: иначе продолжение после загрузки не совпало бы бит в бит)
     };
     [[nodiscard]] State exportState() const;
     bool importState(const State& s);

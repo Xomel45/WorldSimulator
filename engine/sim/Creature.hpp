@@ -107,6 +107,8 @@ struct SenseInputs {
     float     waterDist = kNoTarget;  glm::vec3 waterPos{};
     float     preyDist = kNoTarget;   glm::vec3 preyPos{};  std::uint64_t preyId = 0;
     float     stockDist = kNoTarget;  glm::vec3 stockPos{};  float stockAmount = 0.0f;
+    float     cold = 0.0f;                                   // 0..1 зимний холод здесь (у костра/хижины ослаблен); только в мире с рельефом
+    float     rain = 0.0f;                                   // 0..1 сила дождя (пьёт на ходу)
     float     night = 0.0f;                                  // 0 день .. 1 ночь (только в мире с рельефом: тесты без рельефа не спят)
     float     hutDist = kNoTarget;    glm::vec3 hutPos{};   // подходящая хижина (своя/семьи ближе чужих)
     float     fireDist = kNoTarget;   glm::vec3 firePos{};  // ближайший горящий костёр

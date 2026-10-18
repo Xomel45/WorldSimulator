@@ -186,7 +186,7 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
     const BrainOutputs& out = result.outputs;
 
     const float metab = metabolism();
-    needs.hunger = std::clamp(needs.hunger + 0.01f * metab * dt, 0.0f, 1.0f);
+    needs.hunger = std::clamp(needs.hunger + 0.01f * metab * (1.0f + 0.15f * senses.cold) * dt, 0.0f, 1.0f);   // на холоде аппетит выше
 
     // Слой поведения решает, что делать (мозг -- модулятор приоритетов и источник личного уклона, см. Behavior.hpp).
     behavior::Decision dec = behavior::decide(*this, senses, out, dt);
@@ -288,7 +288,7 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
     if (needs.energy < 0.1f) speedMul *= 0.5f;  // вымотан -- еле идёт
     speedMul *= 1.0f - 0.3f * std::min(diarrhea, 1.0f);  // понос: идёт медленнее
     const float moveCost = glm::length(moveDir) * 0.01f * effortMul;
-    needs.energy = std::clamp(needs.energy - (0.008f * metab + moveCost) * dt, 0.0f, 1.0f);
+    needs.energy = std::clamp(needs.energy - (0.008f * metab * (1.0f + 0.2f * senses.cold) + moveCost) * dt, 0.0f, 1.0f);
 
     // Страх реагирует на собственную угрозу, панику соседей (крик тревоги
     // распространяется по стае, даже если сама угроза не видна -- отдельно
@@ -385,7 +385,7 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
     if (needs.hunger >= 0.95f) health -= 0.03f * dt;
     if (needs.energy <= 0.02f) health -= 0.012f * dt;
     if (terrain) {   // жажда (в плоском мире без воды -- тестовые миры -- не считается)
-        thirst = std::min(1.0f, thirst + 0.0022f * dt);
+        thirst = std::clamp(thirst + 0.0022f * dt - 0.012f * senses.rain * dt, 0.0f, 1.0f);   // дождь утоляет жажду
         if (hasBucket && water >= 1.0f && thirst > 0.5f) { thirst = std::max(0.0f, thirst - 0.45f); water -= 1.0f; }   // глоток из ведра где угодно
         if (thirst >= 1.0f) health -= 0.006f * dt;
     }

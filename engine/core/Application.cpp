@@ -860,6 +860,7 @@ void Application::render() {
             m_cursorWorld   = (m_barHover || ImGui::GetIO().WantCaptureMouse) ? std::nullopt : pickTerrain(mp.x, mp.y);
             if (m_cursorWorld) drawBrushRing(camData);
             drawInspector(camData);
+            drawWeather();
         }
 
         // Освещение кадра: время для воды, туман (он же горизонт), каскадные тени от солнца.
@@ -879,12 +880,23 @@ void Application::render() {
             m_lights.sunColorIntensity = {col, std::getenv("WSIM_NIGHT") ? 0.0f : glm::mix(0.16f, 0.9f, dayK)};
             m_lights.ambient = {glm::mix(glm::vec3(0.7f, 0.8f, 1.2f), glm::vec3(1.0f), dayK), std::getenv("WSIM_NIGHT") ? 0.12f : glm::mix(0.16f, 0.6f, dayK)};
             sky = glm::mix(glm::vec3(0.02f, 0.03f, 0.075f), kSkyColor, dayK) + glm::vec3(0.95f, 0.5f, 0.3f) * (0.28f * dusk);
+            // Время года и погода: зимой холодный, бледный свет, осенью тёплый; дождь серит небо и глушит солнце, туман гуще.
+            const float cold = playing ? World::coldness(tm) : 0.0f, rain = playing ? World::rain(tm) : 0.0f;
+            const float autumn = playing ? std::clamp(1.0f - std::fabs(World::yearPhase(tm) - 0.6f) / 0.15f, 0.0f, 1.0f) : 0.0f;
+            const glm::vec3 grey = glm::vec3(0.55f, 0.58f, 0.62f) * glm::mix(0.25f, 1.0f, dayK);
+            sky = glm::mix(sky, glm::vec3(0.72f, 0.78f, 0.9f) * glm::mix(0.15f, 1.0f, dayK), 0.5f * cold);
+            sky = glm::mix(sky, sky * glm::vec3(1.12f, 0.98f, 0.82f), 0.5f * autumn);
+            sky = glm::mix(sky, grey, 0.75f * rain);
+            m_lights.sunColorIntensity.w *= 1.0f - 0.6f * rain;
+            m_lights.ambient.w *= 1.0f - 0.15f * cold - 0.2f * rain;
+            m_lights.sunColorIntensity = {glm::mix(glm::vec3(m_lights.sunColorIntensity), glm::vec3(0.85f, 0.92f, 1.0f), 0.4f * cold), m_lights.sunColorIntensity.w};
+            m_fogBoost = 1.0f + 2.2f * rain + 0.6f * cold;
         }
         {
             const glm::vec3 c = sky / (sky + glm::vec3(1.0f));
             m_context->setClearColor({std::pow(c.r, 1.0f / 2.2f), std::pow(c.g, 1.0f / 2.2f), std::pow(c.b, 1.0f / 2.2f), 1.0f});
         }
-        m_lights.fogColorDensity = {sky, 0.0009f};
+        m_lights.fogColorDensity = {sky, 0.0009f * m_fogBoost};
         // Костры светят: ближайшие к камере (до 6) -- тёплые точечные источники.
         {
             int n = 0;
@@ -1544,6 +1556,27 @@ void Application::applyPower(float dt) {
 
 // ─── drawBrushRing ────────────────────────────────────────────────────────────
 // Кольцо кисти по рельефу: точки круга ложатся на высоту земли и проецируются в экран.
+// Дождь (косые штрихи) и зимой снег (точки): сотни частиц по хешу номера и времени, без состояния и геометрии.
+void Application::drawWeather() {
+    const double tm   = m_timeOverride ? static_cast<double>(*m_timeOverride) : m_world.time();
+    const float  rain = World::rain(tm), cold = World::coldness(tm);
+    if (rain < 0.05f) return;
+    ImDrawList*  dl = ImGui::GetForegroundDrawList();
+    const ImVec2 sz = ImGui::GetIO().DisplaySize;
+    const bool   snow = cold > 0.5f;
+    const int    n = static_cast<int>(40.0f + 360.0f * rain);
+    const float  t = static_cast<float>(ImGui::GetTime());
+    auto frac = [](float v) { return v - std::floor(v); };
+    auto hash = [](int i, int k) { std::uint32_t x = static_cast<std::uint32_t>(i) * 2654435761u + static_cast<std::uint32_t>(k) * 40503u; x ^= x >> 13; x *= 1274126177u; x ^= x >> 16; return static_cast<float>(x & 0xFFFF) / 65536.0f; };
+    for (int i = 0; i < n; ++i) {
+        const float speed = snow ? 0.12f + 0.1f * hash(i, 3) : 1.1f + 0.5f * hash(i, 3);
+        const float x = frac(hash(i, 1) + (snow ? 0.03f * std::sin(t * 0.8f + static_cast<float>(i)) : 0.08f * t * speed)) * sz.x;
+        const float y = frac(hash(i, 2) + t * speed) * sz.y;
+        if (snow) dl->AddCircleFilled({x, y}, 1.3f + 1.6f * hash(i, 4), IM_COL32(240, 245, 255, 190));
+        else      dl->AddLine({x, y}, {x - 5.0f, y + 16.0f + 8.0f * hash(i, 4)}, IM_COL32(190, 210, 235, 120), 1.0f);
+    }
+}
+
 void Application::drawBrushRing(const CameraData& cam) {
     if (!m_cursorWorld) return;
     const ImVec2    screen = ImGui::GetIO().DisplaySize;
@@ -1682,6 +1715,7 @@ void Application::renderDebugUI() {
         std::size_t herb = 0, pred = 0;
         for (const Animal& a : m_world.fauna().animals()) (isPredator(a.species) ? pred : herb)++;
         const FaunaStats& fs = m_world.fauna().stats();
+        ImGui::Text("Season %s (year %.0f%%), cold %.2f, rain %.2f", World::seasonName(World::season(m_world.time())), 100.0 * World::yearPhase(m_world.time()), m_world.coldness(), m_world.rain());
         ImGui::Text("Time %.0f s, sun %.2f, night %.2f, huts built %llu, bites softened by walls %llu", m_world.time(), m_world.sunElevation(), m_world.nightness(),
                     static_cast<unsigned long long>(m_world.stats().hutsBuilt), static_cast<unsigned long long>(m_world.stats().bitesBlockedByWalls));
         ImGui::Text("Meat kills %llu, buckets %llu, bushes watered %llu, stockpiles %llu (stored %llu, taken %llu), thirst deaths %llu", static_cast<unsigned long long>(m_world.stats().meatKills),

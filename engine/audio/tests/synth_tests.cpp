@@ -46,7 +46,7 @@ int main() {
     }
 
     // Петли бесшовны: скачок на стыке не больше, чем обычный шаг внутри сигнала.
-    for (SoundId id : {SoundId::LoopWind, SoundId::LoopWater, SoundId::LoopMusic, SoundId::LoopRumble, SoundId::LoopCrickets, SoundId::LoopFire}) {
+    for (SoundId id : {SoundId::LoopWind, SoundId::LoopWater, SoundId::LoopMusic, SoundId::LoopRumble, SoundId::LoopCrickets, SoundId::LoopFire, SoundId::LoopRain}) {
         const Pcm pcm = synthesize(id, kRate);
         double meanStep = 0;
         float  maxStep = 0;
