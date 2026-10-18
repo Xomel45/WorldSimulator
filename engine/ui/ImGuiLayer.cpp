@@ -45,6 +45,14 @@ ImGuiLayer::ImGuiLayer(GLFWwindow* window, VulkanContext& ctx, std::string asset
     if (!font)
         io.Fonts->AddFontDefault();  // ASCII fallback если файл не найден
 
+    // Шрифты главного меню. Размер 0 -- реальный размер задаётся при отрисовке
+    // (ImGui 1.92 строит глифы под нужный размер сам). Если файла нет, меню
+    // падает на основной шрифт, а не на nullptr.
+    m_titleFont = io.Fonts->AddFontFromFileTTF((assetDir + "fonts/Unbounded-Bold.ttf").c_str(), 0.f);
+    m_uiFont    = io.Fonts->AddFontFromFileTTF((assetDir + "fonts/Geologica-Regular.ttf").c_str(), 0.f);
+    if (!m_titleFont) m_titleFont = io.Fonts->Fonts[0];
+    if (!m_uiFont)    m_uiFont    = io.Fonts->Fonts[0];
+
     // ── Horror style ──────────────────────────────────────────────────────────
     ImGui::StyleColorsDark();
     ImGuiStyle& s = ImGui::GetStyle();

@@ -1,5 +1,9 @@
 add_library(engine_ui STATIC
     ImGuiLayer.cpp
+    MainMenu.cpp
+    Settings.cpp
+    Style.cpp
+    PowerBar.cpp
     ${imgui_SOURCE_DIR}/imgui.cpp
     ${imgui_SOURCE_DIR}/imgui_draw.cpp
     ${imgui_SOURCE_DIR}/imgui_tables.cpp

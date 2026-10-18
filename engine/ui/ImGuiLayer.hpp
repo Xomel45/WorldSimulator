@@ -4,6 +4,7 @@
 #include <vulkan/vulkan.h>
 
 struct GLFWwindow;
+struct ImFont;
 
 namespace wsim {
 
@@ -23,7 +24,13 @@ public:
     // Вызывать после ImGui::Render(), внутри активного dynamic rendering pass.
     void renderDrawData(VkCommandBuffer cmd);
 
+    // Шрифты главного меню (кириллица, Unbounded Bold / Geologica Regular).
+    [[nodiscard]] ImFont* titleFont() const noexcept { return m_titleFont; }
+    [[nodiscard]] ImFont* uiFont() const noexcept { return m_uiFont; }
+
 private:
+    ImFont*          m_titleFont = nullptr;
+    ImFont*          m_uiFont    = nullptr;
     VkDevice         m_device = VK_NULL_HANDLE;
     VkDescriptorPool m_pool   = VK_NULL_HANDLE;
 };
