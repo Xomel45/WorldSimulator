@@ -227,11 +227,44 @@ int main() {
         WSIM_CHECK(compassionate.needs.fear > indifferentToStrangers.needs.fear);
     }
 
-    // Смерть от старости: тикаем крупными шагами, пока не умрёт.
+    // Смерть от старости: сытый и отдохнувший доживает до конца срока (кормим и отдыхаем каждый шаг).
     Creature old;
     old.genome = Genome::random(rng);
-    while (old.alive) old.tick(50.0f, senses);
+    while (old.alive) {
+        old.feed(1.0f);
+        old.rest(1.0f);
+        old.tick(5.0f, senses);
+    }
     WSIM_CHECK(old.age >= old.lifespan());
+    WSIM_CHECK(old.deathCause == 1);
+
+    // Голод убивает: без еды существо умирает раньше срока (здоровье падает после hunger==1), причина -- голод.
+    {
+        Creature starving;
+        starving.genome = Genome::random(rng);
+        starving.genome.setTrait(Genome::kLifespan, 1.0f);  // долгая жизнь: дожить до старости было бы нечем, кроме еды
+        float t = 0.0f;
+        while (starving.alive && t < 5000.0f) { starving.tick(1.0f, senses); t += 1.0f; }
+        WSIM_CHECK(!starving.alive);
+        WSIM_CHECK(starving.deathCause == 2);
+        WSIM_CHECK(starving.age < starving.lifespan());
+    }
+
+    // Зрелость и готовность: ребёнок не размножается, взрослый сытый и отдохнувший с либидо -- готов,
+    // голодный/вымотанный/на перезарядке -- нет.
+    {
+        Creature a;
+        a.genome = Genome::random(rng);
+        WSIM_CHECK(!a.isMature() && !a.canMate());
+        a.age = a.lifespan() * 0.5f;
+        a.needs = Needs{};
+        a.needs.libido = 0.8f; a.needs.hunger = 0.2f; a.needs.energy = 0.9f;
+        WSIM_CHECK(a.isMature() && a.canMate());
+        a.needs.hunger = 0.9f;   WSIM_CHECK(!a.canMate());
+        a.needs.hunger = 0.2f;   a.needs.energy = 0.2f;   WSIM_CHECK(!a.canMate());
+        a.needs.energy = 0.9f;   a.matingCooldown = 30.0f; WSIM_CHECK(!a.canMate());
+        a.matingCooldown = 0.0f; a.health = 0.3f;         WSIM_CHECK(!a.canMate());
+    }
 
     // Размножение: геном ребёнка валиден, стартовое состояние -- дефолтное,
     // parentIds указывают на уже назначенные id родителей.

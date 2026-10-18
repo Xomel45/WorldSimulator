@@ -4,6 +4,7 @@
 #include <cmath>
 #include <limits>
 #include <random>
+#include <sstream>
 #include <utility>
 
 namespace wsim {
@@ -15,17 +16,21 @@ namespace {
 // выверенный баланс, до появления террейна/god-tools их придётся подкрутить). ─
 
 constexpr float kCellSize            = 15.0f;   // сторона ячейки пространственной сетки
-constexpr float kSenseRadius         = 25.0f;   // радиус, в котором существо видит еду/угрозы/партнёров/толпу
-constexpr float kInteractRadius      = 2.0f;    // дистанция, на которой можно реально съесть/спариться
+constexpr float kHazardSense         = 18.0f;   // с какого расстояния от края опасности (валуна) существо её чувствует
+constexpr float kSeparationRadius    = 3.0f;    // ближе -- существа расталкиваются, чтобы не слипаться в кучу
+constexpr float kGroupRadius         = 18.0f;   // кого считаем "своей группой" для тяги к сородичам
 constexpr float kFamilySenseRange    = 200.0f;  // "любовь" не ограничена kSenseRadius -- родных чувствуешь издалека (перекрывает диагональ мира ~283)
 constexpr float kEatDesireThreshold  = 0.5f;
 constexpr float kRestDesireThreshold = 0.5f;
 constexpr float kMateDesireThreshold = 0.5f;
-constexpr float kMinMateLibido       = 0.4f;    // кого вообще считать "готовым" партнёром при сенсинге
-constexpr float kEatRate             = 0.5f;    // единиц голода/сек, пока существо ест
-constexpr float kRestRate            = 0.5f;    // единиц энергии/сек, пока существо отдыхает
-constexpr float kFoodRegrowRate      = 0.05f;   // единиц/сек восстановления источника еды
+constexpr float kEatRate             = 0.35f;   // единиц голода/сек, пока существо ест
+constexpr float kRestRate            = 0.06f;   // единиц энергии/сек, пока существо отдыхает
+constexpr float kMateChancePerSec    = 0.9f;    // шанс успеха спаривания в секунду у пары рядом (x fertility)
+constexpr float kMotherEnergyCost    = 0.22f;   // роды и вынашивание стоят сил
+constexpr float kFatherEnergyCost    = 0.08f;
+constexpr float kFoodRegrowRate      = 0.04f;   // единиц/сек восстановления источника еды
 constexpr float kFoodCap             = 1.0f;
+constexpr float kFoodMinEdible       = 0.12f;   // меньше -- куст "пустой": его не видно как еду, пока не отрастёт (иначе все висят на огрызках)
 
 using Grid = std::unordered_map<std::int64_t, std::vector<std::size_t>>;
 
@@ -97,6 +102,7 @@ World::World(std::uint32_t seed) : m_rng(seed) {
         c.genome   = Genome::random(m_rng);
         c.position = randomPointInBounds(m_rng);
         c.id       = m_nextId++;
+        c.age      = c.lifespan() * std::uniform_real_distribution<float>(0.12f, 0.45f)(m_rng);  // взрослые разного возраста, не новорождённые
         m_population.push_back(Inhabitant{std::move(c), BrainOutputs{}});
     }
 
@@ -105,7 +111,94 @@ World::World(std::uint32_t seed) : m_rng(seed) {
         m_food.push_back(FoodSource{randomPointInBounds(m_rng), kFoodCap});
 }
 
-void World::tick(float dt) {
+bool World::spawnCreature(float x, float z, std::span<const std::pair<Genome::TraitIndex, float>> traits) {
+    if (m_population.size() >= kMaxPopulation) return false;
+    Creature c;
+    c.genome   = Genome::random(m_rng);
+    for (const auto& [index, value] : traits) c.genome.setTrait(index, value);
+    c.position = {x, 0.0f, z};
+    c.id       = m_nextId++;
+    c.age      = c.lifespan() * std::uniform_real_distribution<float>(0.12f, 0.35f)(m_rng);  // созданные богом -- взрослые
+    m_population.push_back(Inhabitant{std::move(c), BrainOutputs{}});
+    return true;
+}
+
+std::size_t World::removeCreatures(float x, float z, float radius) {
+    const auto before = m_population.size();
+    std::erase_if(m_population, [&](const Inhabitant& in) {
+        return std::hypot(in.creature.position.x - x, in.creature.position.z - z) <= radius;
+    });
+    return before - m_population.size();
+}
+
+std::size_t World::countCreatures(float x, float z, float radius) const {
+    std::size_t n = 0;
+    for (const auto& in : m_population)
+        if (std::hypot(in.creature.position.x - x, in.creature.position.z - z) <= radius) ++n;
+    return n;
+}
+
+void World::settleOnLand(const Terrain& terrain) {
+    auto landPoint = [&](glm::vec3 fallback) {
+        for (int attempt = 0; attempt < 64; ++attempt) {
+            const glm::vec3 p = randomPointInBounds(m_rng);
+            if (!terrain.isUnderwater(p.x, p.z)) return p;
+        }
+        return fallback;  // мир почти весь под водой -- оставляем как есть
+    };
+    for (auto& in : m_population) {
+        Creature& c = in.creature;
+        if (terrain.isUnderwater(c.position.x, c.position.z)) c.position = landPoint(c.position);
+        c.position.y = terrain.heightAt(c.position.x, c.position.z);
+    }
+    for (auto& f : m_food)
+        if (terrain.isUnderwater(f.position.x, f.position.z)) f.position = landPoint(f.position);
+}
+
+WorldState World::exportState() const {
+    WorldState st;
+    std::ostringstream rng;
+    rng << m_rng;
+    st.rng        = rng.str();
+    st.nextId     = m_nextId;
+    st.population = m_population;
+    st.food       = m_food;
+    st.buildings  = m_buildings;
+    st.pendingGrief.assign(m_pendingGrief.begin(), m_pendingGrief.end());
+    std::sort(st.pendingGrief.begin(), st.pendingGrief.end());
+    return st;
+}
+
+bool World::importState(const WorldState& st) {
+    Rng rng;
+    std::istringstream in(st.rng);
+    in >> rng;
+    if (in.fail()) return false;
+    m_rng        = rng;
+    m_nextId     = std::max<std::uint64_t>(st.nextId, 1);
+    m_population = st.population;
+    m_food       = st.food;
+    m_buildings  = st.buildings;
+    m_pendingGrief.clear();
+    for (const auto& [id, v] : st.pendingGrief) m_pendingGrief[id] = v;
+    return true;
+}
+
+bool World::addBuilding(float x, float z, float yaw, std::uint32_t seed) {
+    if (m_buildings.size() >= kMaxBuildings) return false;
+    for (const auto& b : m_buildings)
+        if (std::hypot(b.x - x, b.z - z) < kBuildingSpacing) return false;
+    m_buildings.push_back({x, z, yaw, seed});
+    return true;
+}
+
+std::size_t World::removeBuildings(float x, float z, float radius) {
+    const auto before = m_buildings.size();
+    std::erase_if(m_buildings, [&](const Building& b) { return std::hypot(b.x - x, b.z - z) <= radius; });
+    return before - m_buildings.size();
+}
+
+void World::tick(float dt, const Terrain* terrain) {
     // 1. Прошлотиковые пинги горя -- одноразовые, читаются один раз и всё.
     const std::unordered_map<std::uint64_t, float> grief = std::move(m_pendingGrief);
     m_pendingGrief.clear();
@@ -123,11 +216,11 @@ void World::tick(float dt) {
     std::vector<std::size_t> liveFoodIdx;
     liveFoodIdx.reserve(m_food.size());
     for (std::size_t i = 0; i < m_food.size(); ++i)
-        if (m_food[i].amount > 0.0f) liveFoodIdx.push_back(i);
+        if (m_food[i].amount >= kFoodMinEdible) liveFoodIdx.push_back(i);
     const Grid foodGrid = buildGrid(
         liveFoodIdx.size(), [this, &liveFoodIdx](std::size_t k) { return m_food[liveFoodIdx[k]].position; });
 
-    // 3. Pass 1: сенсы -> мозг -> резолв eat/rest. Всё чтение чужого
+    // 3. Pass 1: сенсы -> мозг и поведение -> резолв eat/rest. Всё чтение чужого
     // состояния идёт из сеток/lastOutputs, построенных до этого цикла --
     // порядок обработки i не влияет на корректность (см. World.hpp).
     std::vector<BrainOutputs> freshOutputs(n);
@@ -136,6 +229,8 @@ void World::tick(float dt) {
         const glm::vec3 selfPos = self.position;
 
         SenseInputs senses{};
+        senses.terrain       = terrain;
+        senses.worldHalfSize = kWorldHalfSize;
 
         // Еда.
         float       bestFoodDist = kSenseRadius;
@@ -151,21 +246,37 @@ void World::tick(float dt) {
             });
         const bool foundFood = bestFoodK != liveFoodIdx.size();
         if (foundFood) {
-            senses.foodDir       = dirXZ(selfPos, m_food[liveFoodIdx[bestFoodK]].position);
+            const glm::vec3& fp  = m_food[liveFoodIdx[bestFoodK]].position;
+            senses.foodDir       = dirXZ(selfPos, fp);
             senses.foodProximity = std::clamp(1.0f - bestFoodDist / kSenseRadius, 0.0f, 1.0f);
+            senses.foodDist      = bestFoodDist;
+            senses.foodPos       = fp;
         }
 
-        // Угрозы: предаторов/боя ещё нет -- см. CLAUDE.md "Known gaps".
-        senses.threatDir      = {0.0f, 0.0f};
-        senses.threatProximity = 0.0f;
+        // Угрозы: динамические опасности снаружи (катящиеся валуны, места ударов). Хищников и боя пока нет.
+        {
+            float bestEdge = kHazardSense;
+            for (const Hazard& h : m_hazards) {
+                const float edge = std::hypot(h.pos.x - selfPos.x, h.pos.z - selfPos.z) - h.radius;
+                if (edge < bestEdge) {
+                    bestEdge = edge;
+                    senses.threatDir       = dirXZ(selfPos, h.pos);
+                    senses.threatProximity = std::clamp(1.0f - std::max(edge, 0.0f) / kHazardSense, 0.0f, 1.0f);
+                    senses.threatDist      = std::max(edge, 0.0f);
+                }
+            }
+        }
 
-        // Соседи: толпа своих/чужих, агрегированные сигналы (прошлый тик),
-        // ближайший потенциальный партнёр (по либидо -- сенсинг, не резолв).
+        // Соседи: толпа своих/чужих, агрегированные сигналы (прошлый тик), ближайший ГОТОВЫЙ
+        // партнёр, паникующие соседи, центр группы, расталкивание.
         int         familiarCount = 0, strangerCount = 0;
         float       nearbyFamiliarAlarm = 0.0f, nearbyStrangerAlarm = 0.0f;
         float       nearbyMatingCall = 0.0f, nearbyDominance = 0.0f;
         float       bestMateDist = std::numeric_limits<float>::max();
         std::size_t bestMateJ    = n;
+        float       bestAlarmDist = std::numeric_limits<float>::max();
+        glm::vec2   groupSum{0.0f}, separation{0.0f};
+        int         groupCount = 0;
         forEachNearby(
             creatureGrid, selfPos, kSenseRadius,
             [this](std::size_t j) { return m_population[j].creature.position; },
@@ -181,9 +292,22 @@ void World::tick(float dt) {
                 }
                 nearbyMatingCall = std::max(nearbyMatingCall, other.lastOutputs.matingCall);
                 nearbyDominance  = std::max(nearbyDominance, other.lastOutputs.dominanceDisplay);
-                if (other.creature.needs.libido > kMinMateLibido && dist < bestMateDist) {
+                if (other.creature.canMate() && dist < bestMateDist) {
                     bestMateDist = dist;
                     bestMateJ    = j;
+                }
+                if (other.lastOutputs.alarmCall > 0.5f && dist < bestAlarmDist) {
+                    bestAlarmDist = dist;
+                    senses.alarmDir  = dirXZ(selfPos, other.creature.position);
+                    senses.alarmNear = other.lastOutputs.alarmCall;
+                }
+                if (dist < kGroupRadius) {
+                    groupSum += glm::vec2{other.creature.position.x, other.creature.position.z};
+                    ++groupCount;
+                }
+                if (dist < kSeparationRadius && dist > 1.0e-3f) {
+                    const float w = 1.0f - dist / kSeparationRadius;
+                    separation += (glm::vec2{selfPos.x - other.creature.position.x, selfPos.z - other.creature.position.z} / dist) * w;
                 }
             });
         senses.familiarCrowding = static_cast<float>(familiarCount) / (static_cast<float>(familiarCount) + 2.0f);
@@ -192,9 +316,18 @@ void World::tick(float dt) {
         senses.nearbyStrangerAlarmLevel = nearbyStrangerAlarm;
         senses.nearbyMatingCallLevel    = nearbyMatingCall;
         senses.nearbyDominanceLevel     = nearbyDominance;
+        senses.separation               = separation;
+        if (groupCount > 0) {
+            const glm::vec2 centre = groupSum / static_cast<float>(groupCount);
+            const glm::vec2 toCentre = centre - glm::vec2{selfPos.x, selfPos.z};
+            senses.groupCount = groupCount;
+            senses.groupDist  = glm::length(toCentre);
+            senses.groupDir   = senses.groupDist > 1.0e-4f ? toCentre / senses.groupDist : glm::vec2{0.0f};
+        }
         if (bestMateJ != n) {
             senses.mateDir       = dirXZ(selfPos, m_population[bestMateJ].creature.position);
             senses.mateProximity = std::clamp(1.0f - bestMateDist / kSenseRadius, 0.0f, 1.0f);
+            senses.mateDist      = bestMateDist;
         }
 
         // Родные: не ограничены kSenseRadius -- "любовь" не имеет дальности
@@ -233,18 +366,19 @@ void World::tick(float dt) {
             src.amount -= bite;
         }
         if (out.restDesire > kRestDesireThreshold) self.rest(kRestRate * dt);
-        // fleeDesire/defendDesire: выражены, не резолвятся -- нет ни
-        // предаторов, ни боя (см. CLAUDE.md "Known gaps").
     }
     for (std::size_t i = 0; i < n; ++i)
         m_population[i].lastOutputs = freshOutputs[i];
 
-    // 4. Pass 2: спаривание -- нужен mateDesire ОБЕИХ сторон, доступный
-    // только после того, как все в Pass 1 уже подумали.
+    // 4. Pass 2: спаривание -- обе стороны должны решить "спариваюсь" (рядом с партнёром и в поведении
+    // "ищет пару"), быть физически готовыми (canMate: зрелые, сытые, не вымотанные, перезарядка прошла)
+    // и пройти бросок шанса. Потомство -- рядом с матерью, а не в точке между родителями: иначе дети
+    // оказывались бы прямо в той же кучке и тоже спаривались бы мгновенно (лавина за секунды).
     std::vector<bool>    mated(n, false);
     std::vector<Creature> newborns;
+    std::uniform_real_distribution<float> unit(0.0f, 1.0f);
     for (std::size_t i = 0; i < n; ++i) {
-        if (mated[i] || freshOutputs[i].mateDesire <= kMateDesireThreshold) continue;
+        if (mated[i] || freshOutputs[i].mateDesire <= kMateDesireThreshold || !m_population[i].creature.canMate()) continue;
 
         float       bestDist = std::numeric_limits<float>::max();
         std::size_t bestJ    = n;
@@ -253,7 +387,7 @@ void World::tick(float dt) {
             [this](std::size_t j) { return m_population[j].creature.position; },
             [&](std::size_t j, float dist) {
                 if (j == i || mated[j]) return;
-                if (freshOutputs[j].mateDesire <= kMateDesireThreshold) return;
+                if (freshOutputs[j].mateDesire <= kMateDesireThreshold || !m_population[j].creature.canMate()) return;
                 if (dist < bestDist) {
                     bestDist = dist;
                     bestJ    = j;
@@ -263,25 +397,44 @@ void World::tick(float dt) {
 
         Creature& a = m_population[i].creature;
         Creature& b = m_population[bestJ].creature;
+        const float chance = kMateChancePerSec * 0.5f * (a.fertility() + b.fertility()) * dt;
+        if (unit(m_rng) >= chance) continue;  // пока не сложилось -- подождут рядом
+
         a.mate(b.id);
         b.mate(a.id);
+        a.matingCooldown = 45.0f + 40.0f * (1.0f - a.fertility());
+        b.matingCooldown = 45.0f + 40.0f * (1.0f - b.fertility());
+        a.needs.energy   = std::max(0.0f, a.needs.energy - kMotherEnergyCost);
+        b.needs.energy   = std::max(0.0f, b.needs.energy - kFatherEnergyCost);
         mated[i]     = true;
         mated[bestJ] = true;
+        ++m_stats.matings;
 
         if (m_population.size() + newborns.size() < kMaxPopulation) {
             Creature child = Creature::reproduce(a, b, m_rng);
             child.id       = m_nextId++;
+            const float ang = 6.2831853f * unit(m_rng), r = 0.8f + 1.4f * unit(m_rng);
+            child.position = a.position + glm::vec3(std::cos(ang) * r, 0.0f, std::sin(ang) * r);
+            if (terrain && terrain->isUnderwater(child.position.x, child.position.z)) child.position = a.position;  // не рождаются в воде
+            if (terrain) child.position.y = terrain->heightAt(child.position.x, child.position.z);
             a.recordChild(child.id);
             b.recordChild(child.id);
             newborns.push_back(std::move(child));
+            ++m_stats.births;
         }
     }
 
-    // 5. Смерть (Creature::tick() уже выставил alive=false по старости) --
+    // 5. Смерть (Creature::tick() уже выставил alive=false: старость, голод, истощение) --
     // пингуем родню горем на следующий тик, затем убираем из популяции.
     for (const auto& inh : m_population) {
         if (inh.creature.alive) continue;
         const Creature& c    = inh.creature;
+        switch (c.deathCause) {
+            case 1: ++m_stats.deathsOld; break;
+            case 2: ++m_stats.deathsStarved; break;
+            case 3: ++m_stats.deathsExhausted; break;
+            default: ++m_stats.deathsOther; break;
+        }
         auto             ping = [this](std::uint64_t id) {
             if (id != 0) m_pendingGrief[id] = 1.0f;
         };

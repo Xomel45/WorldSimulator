@@ -1,5 +1,9 @@
 #include "sim/Creature.hpp"
 
+#include "sim/Behavior.hpp"
+#include "sim/Terrain.hpp"
+#include "sim/Trees.hpp"
+
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -33,6 +37,15 @@ float wellbeing(const Needs& n) noexcept { return -n.hunger - (1.0f - n.energy) 
 // подход, что и у lifespan()).
 constexpr float kHomeRangeScale = 20.0f;
 
+// Физика рельефа (slope = подъём/пробег, 1.0 = 45 градусов).
+constexpr float kProbeDistance   = 1.5f;   // на сколько вперёд смотрим, чтобы оценить уклон
+constexpr float kClimbSlowdown   = 2.5f;   // скорость на подъёме: 1 / (1 + k*slope)
+constexpr float kClimbEffort     = 4.0f;   // расход энергии на подъёме: 1 + k*slope
+constexpr float kMaxClimbSlope   = 1.2f;   // круче -- обрыв, не взобраться (~50 градусов)
+constexpr float kDownhillBoost   = 0.2f;   // под гору чуть быстрее (до +20%)
+constexpr float kWaterSpeed      = 0.35f;  // уже оказавшись в воде, существо барахтается
+constexpr float kWaterEffort     = 3.0f;
+
 }  // namespace
 
 float Creature::maxSpeed() const noexcept   { return lerpTrait(genome.trait(Genome::kSpeed), 1.0f, 6.0f); }
@@ -58,6 +71,27 @@ float Creature::awayFromHome() const noexcept {
 float Creature::boredomLevel() const noexcept {
     const float urgency = std::max({needs.hunger, 1.0f - needs.energy, needs.fear, needs.libido});
     return (1.0f - urgency) * curiosity();
+}
+
+bool Creature::isMature() const noexcept { return age >= 0.1f * lifespan(); }
+
+bool Creature::canMate() const noexcept {
+    return isMature() && matingCooldown <= 0.0f && needs.libido >= 0.4f && needs.energy >= 0.45f && needs.hunger <= 0.65f && health >= 0.6f;
+}
+
+const char* behaviorName(Behavior b) noexcept {
+    switch (b) {
+        case Behavior::Wander:    return "Бродит";
+        case Behavior::SeekFood:  return "Ищет еду";
+        case Behavior::Eat:       return "Ест";
+        case Behavior::Rest:      return "Отдыхает";
+        case Behavior::Flee:      return "Убегает";
+        case Behavior::SeekMate:  return "Ищет пару";
+        case Behavior::Socialize: return "Тянется к своим";
+        case Behavior::GoHome:    return "Идёт домой";
+        case Behavior::Count:     break;
+    }
+    return "?";
 }
 
 void Creature::resetLearning() noexcept {
@@ -120,9 +154,31 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
     const float metab = metabolism();
     needs.hunger = std::clamp(needs.hunger + 0.01f * metab * dt, 0.0f, 1.0f);
 
-    glm::vec2 moveDir{out.moveX, out.moveZ};
-    if (const float len = glm::length(moveDir); len > 1.0f) moveDir /= len;
-    const float moveCost = glm::length(moveDir) * 0.01f;
+    // Слой поведения решает, что делать (мозг -- модулятор приоритетов и источник личного уклона, см. Behavior.hpp).
+    const behavior::Decision dec = behavior::decide(*this, senses, out, dt);
+    glm::vec2 moveDir = dec.move;
+
+    // Рельеф: чем круче подъём в выбранную сторону, тем медленнее и тяжелее идти;
+    // в воду с берега зайти нельзя. Мозг про рельеф не знает -- он выражает желание,
+    // а физика его ограничивает (как и у всех остальных "решений" мира).
+    const Terrain* terrain = senses.terrain;
+    float speedMul = 1.0f, effortMul = 1.0f;
+    const bool inWater = terrain && terrain->isUnderwater(position.x, position.z);
+    if (terrain && glm::length(moveDir) > 0.01f) {
+        const glm::vec2 dir = glm::normalize(moveDir);
+        const float h0 = terrain->heightAt(position.x, position.z);
+        const float h1 = terrain->heightAt(position.x + dir.x * kProbeDistance, position.z + dir.y * kProbeDistance);
+        const float slope = (h1 - h0) / kProbeDistance;  // > 0 -- в гору
+        if (slope > 0.0f) {
+            speedMul  = slope > kMaxClimbSlope ? 0.0f : 1.0f / (1.0f + kClimbSlowdown * slope);
+            effortMul = 1.0f + kClimbEffort * slope;
+        } else {
+            speedMul = 1.0f + kDownhillBoost * std::min(-slope, 1.0f);
+        }
+    }
+    if (inWater) { speedMul *= kWaterSpeed; effortMul *= kWaterEffort; }
+    if (needs.energy < 0.1f) speedMul *= 0.5f;  // вымотан -- еле идёт
+    const float moveCost = glm::length(moveDir) * 0.01f * effortMul;
     needs.energy = std::clamp(needs.energy - (0.008f * metab + moveCost) * dt, 0.0f, 1.0f);
 
     // Страх реагирует на собственную угрозу, панику соседей (крик тревоги
@@ -190,12 +246,37 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
     // Брачный зов соседей слегка подстёгивает либидо — социальная реплика
     // готовности к размножению, помимо собственного внутреннего дрейфа.
     needs.libido = std::clamp(
-        needs.libido + (0.02f * fertility() + 0.01f * senses.nearbyMatingCallLevel) * dt, 0.0f, 1.0f);
+        needs.libido + (isMature() ? (0.02f * fertility() + 0.01f * senses.nearbyMatingCallLevel) * dt : 0.0f), 0.0f, 1.0f);
 
-    velocity = glm::vec3(moveDir.x, 0.0f, moveDir.y) * maxSpeed();
-    position += velocity * dt;
+    glm::vec3 step = glm::vec3(moveDir.x, 0.0f, moveDir.y) * maxSpeed() * speedMul * dt;
+    if (terrain) {
+        // В воду с суши не заходим; упёрлись в берег под углом -- скользим вдоль него.
+        // Стволы деревьев непроходимы (кроме случая, когда существо уже внутри ствола -- не запираем его).
+        const bool inTrunk = Trees::blocksPoint(*terrain, position.x, position.z, 0.3f);
+        auto blocked = [&](const glm::vec3& d) {
+            if (!inWater && terrain->isUnderwater(position.x + d.x, position.z + d.z)) return true;
+            return !inTrunk && Trees::blocksPoint(*terrain, position.x + d.x, position.z + d.z, 0.3f);
+        };
+        if (blocked(step)) {
+            const glm::vec3 alongX{step.x, 0.0f, 0.0f}, alongZ{0.0f, 0.0f, step.z};
+            if (!blocked(alongX))      step = alongX;
+            else if (!blocked(alongZ)) step = alongZ;
+            else                       step = glm::vec3(0.0f);
+        }
+    }
+    position += step;
+    velocity = dt > 0.0f ? step / dt : glm::vec3(0.0f);
+    if (terrain) position.y = terrain->heightAt(position.x, position.z);
     age += dt;
-    if (age >= lifespan()) alive = false;
+    if (age >= lifespan()) { alive = false; deathCause = 1; }
+
+    // Здоровье: голод и истощение бьют, сытость и силы лечат. Без этого еда ни на что не влияла бы:
+    // никто не умирал от голода, и отбор было нечем вести.
+    matingCooldown = std::max(0.0f, matingCooldown - dt);
+    if (needs.hunger >= 0.95f) health -= 0.03f * dt;
+    if (needs.energy <= 0.02f) health -= 0.012f * dt;
+    if (needs.hunger < 0.6f && needs.energy > 0.2f) health = std::min(1.0f, health + 0.01f * dt);
+    if (health <= 0.0f && alive) { alive = false; deathCause = needs.hunger >= 0.95f ? 2 : 3; }
 
     // Reward-modulated Hebbian: подкрепляем/ослабляем связи, которые только
     // что сработали, в зависимости от того, стало ли лучше или хуже за этот
@@ -204,7 +285,18 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
     const float reward = std::clamp(wellbeing(needs) - wellbeingBefore, -1.0f, 1.0f);
     brain::reinforce(learnedWeights, result, reward, plasticity());
 
-    return out;
+    // Наружу -- то, что существо РЕШИЛО (мир резолвит это, соседи слышат сигналы); сырой выход мозга остаётся
+    // внутри (им считается обучение выше).
+    BrainOutputs act = out;
+    act.moveX = dec.move.x;
+    act.moveZ = dec.move.y;
+    act.eatDesire    = dec.eat ? 1.0f : 0.0f;
+    act.restDesire   = dec.rest ? 1.0f : 0.0f;
+    act.mateDesire   = dec.mate ? 1.0f : 0.0f;
+    act.fleeDesire   = behavior == Behavior::Flee ? 1.0f : 0.0f;
+    act.alarmCall    = dec.alarm;
+    act.matingCall   = dec.matingCall;
+    return act;
 }
 
 void Creature::feed(float amount) noexcept { needs.hunger = std::clamp(needs.hunger - amount, 0.0f, 1.0f); }
@@ -225,6 +317,8 @@ Creature Creature::reproduce(const Creature& a, const Creature& b, Rng& rng) {
     child.genome.mutate(rng, /*rate=*/0.05f, /*strength=*/0.15f);
     child.position = (a.position + b.position) * 0.5f;
     child.parentIds = {a.id, b.id};
+    child.needs.hunger = 0.25f;  // родился не голодным и не вымотанным
+    child.needs.energy = 0.8f;
     return child;
 }
 

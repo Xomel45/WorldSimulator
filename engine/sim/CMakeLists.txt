@@ -4,6 +4,11 @@ add_library(engine_sim STATIC
     Creature.cpp
     World.cpp
     Terrain.cpp
+    Powers.cpp
+    Physics.cpp
+    Behavior.cpp
+    Trees.cpp
+    SaveGame.cpp
 )
 
 target_include_directories(engine_sim PUBLIC

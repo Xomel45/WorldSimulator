@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <optional>
 #include <random>
 #include <span>
+#include <string_view>
 #include <vector>
 
 namespace wsim {
@@ -51,6 +53,9 @@ public:
         kEmpathy,       // сочувствие: насколько паника чужака ощущается как своя, а не только своих
     };
 
+    // Имя черты ("speed", "size", ...) -> индекс; нужно данным модов (виды существ).
+    [[nodiscard]] static std::optional<TraitIndex> traitFromName(std::string_view name) noexcept;
+
     Genome() : m_genes(kGeneCount, 0.0f) {}
 
     [[nodiscard]] float trait(TraitIndex i) const noexcept { return m_genes[static_cast<std::size_t>(i)]; }
@@ -59,6 +64,14 @@ public:
     // и, в перспективе, god-tools (задать характер существу напрямую).
     void setTrait(TraitIndex i, float value) noexcept {
         m_genes[static_cast<std::size_t>(i)] = std::clamp(value, -1.0f, 1.0f);
+    }
+    // Все гены как есть (для сохранений) и обратная сборка; неверная длина -- нулевой геном и false.
+    [[nodiscard]] std::span<const float> genes() const noexcept { return m_genes; }
+    static bool fromGenes(std::span<const float> genes, Genome& out) {
+        if (genes.size() != kGeneCount) return false;
+        out.m_genes.assign(genes.begin(), genes.end());
+        for (float& g : out.m_genes) g = std::clamp(g, -1.0f, 1.0f);
+        return true;
     }
     [[nodiscard]] std::span<const float> brainWeights() const noexcept {
         return {m_genes.data() + kTraitGeneCount, kBrainWeightCount};

@@ -11,6 +11,16 @@
 
 namespace wsim {
 
+// Дистанции мира, нужные и существу (поведение), и миру (резолв действий).
+inline constexpr float kSenseRadius    = 25.0f;  // дальность "зрения": еда, угрозы, партнёры, толпа
+inline constexpr float kInteractRadius = 2.0f;   // на таком расстоянии можно есть и спариваться
+inline constexpr float kNoTarget       = 1.0e9f; // "цели нет" в полях расстояния
+
+// Чем занято существо. Выбирается слоем поведения (Behavior.cpp) из потребностей, ощущений, черт
+// и выходов мозга; видно в инспекторе и нужно для озвучки/отладки.
+enum class Behavior : std::uint8_t { Wander, SeekFood, Eat, Rest, Flee, SeekMate, Socialize, GoHome, Count };
+[[nodiscard]] const char* behaviorName(Behavior b) noexcept;  // по-русски
+
 struct Needs {
     float hunger   = 0.2f;
     float energy   = 1.0f;
@@ -42,7 +52,13 @@ struct Needs {
 // бы модулировать отдельно от паники своих. lovedOneDied — одноразовый
 // сигнал: мир выставляет ненулевым в тик(и), когда хочет сообщить о смерти
 // близкого (см. Needs::grief в Creature::tick()).
+class Terrain;
+
+// Рельеф даёт существу "физику": на подъёме медленнее и тяжелее, слишком
+// крутое не взять, в воду с берега не зайти (плавать не умеет). nullptr --
+// плоский мир без ограничений (юнит-тесты, декоративный мир в меню).
 struct SenseInputs {
+    const Terrain* terrain = nullptr;
     glm::vec2 foodDir{};   float foodProximity   = 0.0f;
     glm::vec2 threatDir{}; float threatProximity = 0.0f;
     glm::vec2 mateDir{};   float mateProximity   = 0.0f;
@@ -56,6 +72,15 @@ struct SenseInputs {
     float     lovedOneProximity   = 0.0f;
     float     lovedOneThreatLevel = 0.0f;
     float     lovedOneDied        = 0.0f;
+
+    // Подробности для слоя поведения (мозг получает только сжатые foodProximity и т.п.):
+    float     foodDist  = kNoTarget;  glm::vec3 foodPos{};   // ближайшая еда: расстояние и точка
+    float     mateDist  = kNoTarget;                         // ближайший ГОТОВЫЙ партнёр (canMate)
+    float     threatDist = kNoTarget;                        // ближайшая опасность (валун и т.п.)
+    glm::vec2 alarmDir{};   float alarmNear = 0.0f;          // к ближайшему паникующему соседу; насколько он паникует
+    glm::vec2 groupDir{};   int   groupCount = 0;  float groupDist = kNoTarget;  // к центру ближайшей группы, сколько в ней, как далеко центр
+    glm::vec2 separation{};                                  // от тех, кто слишком близко (чтобы не сбиваться в кучу)
+    float     worldHalfSize = 0.0f;                          // > 0 -- границы игровой области (мягко разворачиваемся)
 };
 
 class Creature {
@@ -77,6 +102,20 @@ public:
     // ниже (без std::optional). id не назначает сам Creature — это забота
     // будущего мира (реестра популяции), тот же принцип, что и у
     // feed()/rest()/mate(): мир решает, Creature только хранит факт.
+    // Здоровье и размножение: голод и истощение убивают, спаривание не чаще раза в matingCooldown секунд,
+    // потомство требует зрелости (isMature) и сил (canMate) -- иначе популяция взрывается за секунды.
+    float     health = 1.0f;
+    float     matingCooldown = 0.0f;
+    std::uint8_t deathCause = 0;       // 0 жив, 1 старость, 2 голод, 3 истощение (для статистики мира)
+
+    // Поведение: текущая линия, сколько она держится (гистерезис против дёрганья), направление блуждания
+    // и память о последнем месте с едой (место, где еду видели, -- туда идём, когда еды в поле зрения нет).
+    Behavior  behavior = Behavior::Wander;
+    float     behaviorTimer = 0.0f;
+    float     wanderHeading = 0.0f;
+    glm::vec3 foodMemory{};
+    float     foodMemoryAge = -1.0f;   // < 0 -- памяти нет
+
     std::uint64_t               id = 0;
     std::uint64_t               bondedPartnerId = 0;  // последний mate() перезаписывает — не история, моногамия "по последней связи"
     std::array<std::uint64_t,2> parentIds{0, 0};       // {0,0} = не рождён через reproduce()
@@ -115,6 +154,10 @@ public:
     // отдельно (инспектируемы/тестируемы независимо от tick()).
     [[nodiscard]] float awayFromHome() const noexcept;  // [0,1): насыщающееся расстояние от homePosition
     [[nodiscard]] float boredomLevel() const noexcept;  // [0,1]: фоновое желание исследовать
+
+    // Зрелость (дети не размножаются) и готовность к спариванию: сыт, не вымотан, здоров, либидо и перезарядка.
+    [[nodiscard]] bool isMature() const noexcept;
+    [[nodiscard]] bool canMate() const noexcept;
 
     // Копирует genome.initialPlasticWeights() поверх learnedWeights — "с
     // чистого листа". tick() вызывает это лениво сам, если learnedWeights пуст.

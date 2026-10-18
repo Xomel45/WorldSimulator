@@ -18,6 +18,20 @@ static_assert(Genome::kPlasticBrainWeightCount ==
 static_assert(Genome::kFixedBrainWeightCount + Genome::kPlasticBrainWeightCount ==
               Genome::kBrainWeightCount);
 
+std::optional<Genome::TraitIndex> Genome::traitFromName(std::string_view name) noexcept {
+    struct Entry { std::string_view name; TraitIndex index; };
+    static constexpr Entry kNames[] = {
+        {"speed", kSpeed},         {"size", kSize},           {"metabolism", kMetabolism},
+        {"lifespan", kLifespan},   {"fertility", kFertility}, {"plasticity", kPlasticity},
+        {"boldness", kBoldness},   {"sociability", kSociability}, {"bondStrength", kBondStrength},
+        {"envy", kEnvy},           {"territorial", kTerritorial}, {"curiosity", kCuriosity},
+        {"empathy", kEmpathy},
+    };
+    for (const auto& e : kNames)
+        if (e.name == name) return e.index;
+    return std::nullopt;
+}
+
 Genome Genome::random(Rng& rng) {
     std::vector<float> genes(kGeneCount);
 

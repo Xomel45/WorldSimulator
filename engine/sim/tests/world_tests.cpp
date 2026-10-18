@@ -1,3 +1,4 @@
+#include "sim/Terrain.hpp"
 #include "sim/World.hpp"
 
 #include "test_util.hpp"
@@ -57,6 +58,25 @@ int main() {
     World worldB(12345);
     runTicks(worldB);
     WSIM_CHECK(worldB.populationCount() == world.populationCount());
+
+    // Физика рельефа: существа не заходят в воду и стоят на поверхности земли.
+    for (std::uint32_t seed : {3u, 11u, 29u}) {
+        Terrain terrain(World::kWorldHalfSize, seed);
+        World   w(seed);
+        w.settleOnLand(terrain);
+        for (const auto& in : w.population()) WSIM_CHECK(!terrain.isUnderwater(in.creature.position.x, in.creature.position.z));
+        for (const auto& f : w.food()) WSIM_CHECK(!terrain.isUnderwater(f.position.x, f.position.z));
+
+        for (int i = 0; i < 1800; ++i) {
+            w.tick(1.0f / 60.0f, &terrain);
+            for (const auto& in : w.population()) {
+                const auto& p = in.creature.position;
+                WSIM_CHECK(!terrain.isUnderwater(p.x, p.z));
+                WSIM_CHECK(std::fabs(p.y - terrain.heightAt(p.x, p.z)) < 1.0e-3f);
+            }
+        }
+        WSIM_CHECK(w.populationCount() > 0);
+    }
 
     std::puts("world_tests: OK");
     return 0;
