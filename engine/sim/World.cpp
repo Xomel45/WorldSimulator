@@ -190,6 +190,11 @@ void World::electLeaders() {
     for (int tr = 1; tr < kMaxTribes; ++tr) {
         std::uint64_t best = 0;
         float bestScore = -1.0f;
+        // Наследование: если прежний вождь пропал, его дети и вдова/вдовец получают бонус при выборах (по id прежнего вождя -- без своего хранилища).
+        const std::uint64_t oldLeader = m_leaders[tr];
+        bool incumbentAlive = false;
+        for (const Inhabitant& in : m_population) incumbentAlive |= in.creature.alive && in.creature.id == oldLeader && in.creature.tribe == tr;
+        const bool succession = oldLeader != 0 && !incumbentAlive;
         for (const Inhabitant& in : m_population) {
             const Creature& c = in.creature;
             if (!c.alive || c.tribe != tr || !c.isMature()) continue;
@@ -198,9 +203,17 @@ void World::electLeaders() {
             const float kids = std::min(static_cast<float>(c.childIds.size()), 4.0f) / 4.0f;
             float score = 0.6f * maturity + 0.3f * c.boldness() + 0.3f * c.sociability() + 0.15f * kids + 0.2f * c.needs.respect + 0.2f * c.health;
             if (c.id == m_leaders[tr]) score += 0.15f;   // действующему вождю -- бонус
+            if (succession && (c.parentIds[0] == oldLeader || c.parentIds[1] == oldLeader || c.bondedPartnerId == oldLeader)) score += 0.3f;   // наследник
             if (score > bestScore) { bestScore = score; best = c.id; }
         }
-        if (best != m_leaders[tr]) { m_leaders[tr] = best; ++m_stats.leaderChanges; }
+        if (best != m_leaders[tr]) {
+            if (succession) {
+                for (const Inhabitant& in : m_population)
+                    if (in.creature.id == best && (in.creature.parentIds[0] == oldLeader || in.creature.parentIds[1] == oldLeader || in.creature.bondedPartnerId == oldLeader)) { ++m_stats.successions; break; }
+            }
+            m_leaders[tr] = best;
+            ++m_stats.leaderChanges;
+        }
     }
 }
 
@@ -214,10 +227,15 @@ void World::disbandSquad(int tribe, float cooldown) {
     ++m_stats.squadsDisbanded;
 }
 
-// Отряды: у каждого племени не больше одного. Вождь, видя враждебное племя с запасами у склада недалеко, собирает до 8 вооружённых и
-// здоровых соплеменников рядом (от 3); сбор у вождя (до 25 с или пока 70% подойдут) -> поход на склад врага (до 150 с, пока не наберут
-// брёвен или склад не опустеет) -> возвращение к своему складу -> роспуск (пауза 90 с). Бой и добыча -- обычные грабёж и защита.
-void World::updateSquads(float dt, const std::unordered_map<std::uint64_t, std::size_t>& idIndex) {
+// Отряды (экспедиции): у каждого племени не больше одного. Вождь здорового племени (от 8 членов) выбирает занятие по обстановке:
+//  0 набег -- враждебное племя с запасами (склад >= 2 брёвен, отношения < -0.2, не дальше 160): идут, грабят, возвращаются;
+//  2 поселение -- племя от 16 душ: 4-6 бойцов уходят на удобное место (кустовой биом, не ближе 45 от любого склада), основывают там лагерь
+//     (склад племени с их брёвнами) и остаются жить;
+//  1 охота -- племя голодает (средний голод > 0.4), поблизости стадо (>= 3 травоядных в 25 единицах): партия идёт к стаду, бьёт добычу
+//     (убитое кормит и соседей по партии), до 3 туш или 120 с, потом домой.
+// Сбор у вождя (до 25 с или пока 70% подойдут) -> фаза 1 -> (для набега и охоты) возвращение -> роспуск с паузой.
+void World::updateSquads(float dt, const Terrain& terrain, const std::unordered_map<std::uint64_t, std::size_t>& idIndex) {
+    std::uniform_real_distribution<float> unit(0.0f, 1.0f);
     for (int tr = 1; tr < kMaxTribes; ++tr) {
         SquadData& q = m_squads[tr];
         q.cooldown = std::max(0.0f, q.cooldown - dt);
@@ -226,34 +244,73 @@ void World::updateSquads(float dt, const std::unordered_map<std::uint64_t, std::
             if (q.cooldown > 0.0f || leadIt == idIndex.end()) continue;
             q.cooldown = 12.0f;   // оценка обстановки раз в 12 с
             const Creature& lead = m_population[leadIt->second].creature;
-            if (!lead.alive || lead.health < 0.6f) continue;
-            // Цель: враждебное племя с ближайшим складом (>= 4 брёвен) не дальше 160 единиц от вождя.
-            int target = 0;
+            const std::size_t tribeSize = tribeCount(tr);
+            if (!lead.alive || lead.health < 0.6f || tribeSize < 8) continue;   // малые племена не рискуют людьми
+            const glm::vec2 leadXZ{lead.position.x, lead.position.z};
+
+            int kind = -1, target = 0;
             glm::vec2 goal{};
+            // 1) набег
             float bestD = 160.0f;
             for (const Structure& st : m_structures) {
                 if (st.kind != StructureKind::Stockpile || st.owner == 0 || st.owner == static_cast<std::uint64_t>(tr) || st.owner >= static_cast<std::uint64_t>(kMaxTribes) || st.stock < 2.0f) continue;
                 if (m_relations[tr][st.owner] > -0.2f) continue;
                 const float d = std::hypot(st.x - lead.position.x, st.z - lead.position.z);
-                if (d < bestD) { bestD = d; target = static_cast<int>(st.owner); goal = {st.x, st.z}; }
+                if (d < bestD) { bestD = d; target = static_cast<int>(st.owner); goal = {st.x, st.z}; kind = 0; }
             }
-            if (target == 0) continue;
-            // Бойцы: вооружены, здоровы, не голодны и не спят, рядом с вождём (не дальше 70); ближайшие вперёд.
+            // 2) поселение
+            if (kind < 0 && tribeSize >= 16) {
+                float bestScore = 0.0f;
+                for (int k = 0; k < 40; ++k) {
+                    const float ang = 6.2831853f * unit(m_rng), r = 50.0f + 60.0f * unit(m_rng);
+                    const glm::vec2 p = leadXZ + glm::vec2{std::cos(ang), std::sin(ang)} * r;
+                    if (terrain.isUnderwater(p.x, p.y) || terrain.heightAt(p.x, p.y) < 1.0f || terrain.heightAt(p.x, p.y) > 8.0f) continue;
+                    const float dens = bushDensity(terrain.biomeAt(p.x, p.y));
+                    if (dens < 0.5f) continue;
+                    bool crowded = false;
+                    for (const Structure& st : m_structures) crowded |= st.kind == StructureKind::Stockpile && std::hypot(st.x - p.x, st.z - p.y) < 45.0f;
+                    if (!crowded && dens > bestScore) { bestScore = dens; goal = p; kind = 2; }
+                }
+            }
+            // 3) охота
+            if (kind < 0) {
+                float hungerSum = 0.0f;
+                int   n = 0;
+                for (const Inhabitant& in : m_population) if (in.creature.alive && in.creature.tribe == tr) { hungerSum += in.creature.needs.hunger; ++n; }
+                if (n > 0 && hungerSum / static_cast<float>(n) > 0.5f) {
+                    int bestCount = 2;
+                    for (const Animal& an : m_fauna.animals()) {
+                        if (!an.alive || speciesDef(an.species).diet != Diet::Herbivore) continue;
+                        const float dl = std::hypot(an.position.x - lead.position.x, an.position.z - lead.position.z);
+                        if (dl > 140.0f) continue;
+                        int herd = 0;
+                        for (const Animal& o : m_fauna.animals()) herd += o.alive && std::hypot(o.position.x - an.position.x, o.position.z - an.position.z) < 25.0f;
+                        if (herd > bestCount) { bestCount = herd; goal = {an.position.x, an.position.z}; kind = 1; }
+                    }
+                }
+            }
+            if (kind < 0) continue;
+
+            // Бойцы: здоровы, не голодны и не спят, рядом с вождём; для набега и охоты -- вооружённые (или смелые охотники), для поселения -- любые.
             std::vector<std::pair<float, std::uint64_t>> pool;
             for (const Inhabitant& in : m_population) {
                 const Creature& c = in.creature;
-                if (!c.alive || c.tribe != tr || c.squad != 0 || !(c.hasSpear() || (c.role() == Role::Hunter && c.boldness() > 0.35f)) || c.health < 0.7f || c.needs.hunger > 0.6f || c.behavior == Behavior::Sleep) continue;
+                if (!c.alive || c.tribe != tr || c.squad != 0 || c.health < 0.7f || c.needs.hunger > (kind == 1 ? 0.75f : 0.6f) || c.behavior == Behavior::Sleep || c.id == lead.id) continue;
+                if (kind != 2 && !(c.hasSpear() || (c.role() == Role::Hunter && c.boldness() > 0.35f))) continue;
                 const float d = std::hypot(c.position.x - lead.position.x, c.position.z - lead.position.z);
-                if (d < 70.0f && c.id != lead.id) pool.emplace_back(d, c.id);
+                if (d < 70.0f) pool.emplace_back(d, c.id);
             }
-            if (pool.size() < 2 || tribeCount(tr) < 8) continue;   // вождь + минимум двое; малые племена не рискуют людьми
-            const std::size_t maxMembers = std::max<std::size_t>(3, std::min<std::size_t>(8, tribeCount(tr) * 4 / 10));   // не больше 40% племени
+            const std::size_t need = kind == 2 ? 3 : 2;
+            if (pool.size() < need) continue;
+            const std::size_t maxMembers = kind == 2 ? 6 : (kind == 1 ? 5 : std::max<std::size_t>(3, std::min<std::size_t>(8, tribeSize * 4 / 10)));   // не больше 40% племени
             std::sort(pool.begin(), pool.end());
-            q.active = true; q.target = static_cast<std::uint8_t>(target); q.phase = 0; q.timer = 0.0f; q.goal = goal;
+            q.active = true; q.kind = static_cast<std::uint8_t>(kind); q.target = static_cast<std::uint8_t>(target); q.phase = 0; q.timer = 0.0f; q.goal = goal;
+            q.baseline = static_cast<std::uint32_t>(m_stats.meatKills);
             q.members.assign(1, lead.id);
             for (std::size_t k = 0; k < pool.size() && q.members.size() < maxMembers; ++k) q.members.push_back(pool[k].second);
             for (std::uint64_t id : q.members) m_population[idIndex.at(id)].creature.squad = static_cast<std::uint8_t>(tr);
             ++m_stats.squadsFormed;
+            if (kind == 1) ++m_stats.huntParties;
             continue;
         }
         // Идущий отряд: выбывших (умер, вышел из строя от голода) убираем.
@@ -267,30 +324,53 @@ void World::updateSquads(float dt, const std::unordered_map<std::uint64_t, std::
         if (q.members.size() < 2 || leadIt == idIndex.end()) { disbandSquad(tr, 240.0f); continue; }
         q.timer += dt;
         const glm::vec3 leadPos = m_population[leadIt->second].creature.position;
-        if (q.phase == 0) {   // сбор у вождя
-            int near = 0;
-            for (std::uint64_t id : q.members) near += std::hypot(m_population[idIndex.at(id)].creature.position.x - leadPos.x, m_population[idIndex.at(id)].creature.position.z - leadPos.z) < 8.0f;
-            if (near * 10 >= static_cast<int>(q.members.size()) * 7 || q.timer > 25.0f) { q.phase = 1; q.timer = 0.0f; }
-        } else if (q.phase == 1) {   // поход
-            int loaded = 0;
-            for (std::uint64_t id : q.members) loaded += m_population[idIndex.at(id)].creature.wood >= 3.0f;
-            bool pileEmpty = true;
+        auto nearCount = [&](glm::vec2 p, float radius) {
+            int c = 0;
+            for (std::uint64_t id : q.members) { const glm::vec3& pos = m_population[idIndex.at(id)].creature.position; c += std::hypot(pos.x - p.x, pos.z - p.y) < radius; }
+            return c;
+        };
+        auto goHome = [&]() {
+            q.phase = 2; q.timer = 0.0f;
+            q.goal = {leadPos.x, leadPos.z};   // запасной вариант: домой -- к своему складу, если он есть
+            float bestD = 1.0e9f;
             for (const Structure& st : m_structures)
-                if (st.kind == StructureKind::Stockpile && st.owner == q.target && std::hypot(st.x - q.goal.x, st.z - q.goal.y) < 3.0f) pileEmpty = st.stock < 1.0f;
-            if (q.timer > 150.0f || pileEmpty || loaded * 10 >= static_cast<int>(q.members.size()) * 7) {
-                q.phase = 2; q.timer = 0.0f;
-                q.goal = {leadPos.x, leadPos.z};   // запасной вариант: домой -- к своему складу, если он есть
-                float bestD = 1.0e9f;
+                if (st.kind == StructureKind::Stockpile && st.owner == static_cast<std::uint64_t>(tr)) {
+                    const float d = std::hypot(st.x - leadPos.x, st.z - leadPos.z);
+                    if (d < bestD) { bestD = d; q.goal = {st.x, st.z}; }
+                }
+        };
+        const int total = static_cast<int>(q.members.size());
+        if (q.phase == 0) {   // сбор у вождя
+            if (nearCount({leadPos.x, leadPos.z}, 8.0f) * 10 >= total * 7 || q.timer > 25.0f) { q.phase = 1; q.timer = 0.0f; }
+        } else if (q.phase == 1) {
+            if (q.kind == 0) {   // набег: до 150 с, пока 70% не наберут брёвен или склад не опустеет
+                int loaded = 0;
+                for (std::uint64_t id : q.members) loaded += m_population[idIndex.at(id)].creature.wood >= 3.0f;
+                bool pileEmpty = true;
                 for (const Structure& st : m_structures)
-                    if (st.kind == StructureKind::Stockpile && st.owner == static_cast<std::uint64_t>(tr)) {
-                        const float d = std::hypot(st.x - leadPos.x, st.z - leadPos.z);
-                        if (d < bestD) { bestD = d; q.goal = {st.x, st.z}; }
+                    if (st.kind == StructureKind::Stockpile && st.owner == q.target && std::hypot(st.x - q.goal.x, st.z - q.goal.y) < 3.0f) pileEmpty = st.stock < 1.0f;
+                if (q.timer > 150.0f || pileEmpty || loaded * 10 >= total * 7) goHome();
+            } else if (q.kind == 1) {   // охота: 3 туши или 120 с
+                if (q.timer > 120.0f || m_stats.meatKills >= q.baseline + 3) goHome();
+            } else {   // поселение: пришли (60% рядом) или вышло время -- закладываем лагерь, отряд остаётся жить на месте
+                if (nearCount(q.goal, 10.0f) * 10 >= total * 6 || q.timer > 120.0f) {
+                    float logs = 4.0f;
+                    for (std::uint64_t id : q.members) { Creature& c = m_population[idIndex.at(id)].creature; logs += std::floor(c.wood); c.wood = 0.0f; }
+                    if (placeStructure(&terrain, StructureKind::Stockpile, q.goal.x, q.goal.y, 0.0f)) {
+                        m_structures.back().owner = static_cast<std::uint64_t>(tr);
+                        m_structures.back().stock = std::min(logs, kStockpileCapacity);
+                        for (std::uint64_t id : q.members) {
+                            Creature& c = m_population[idIndex.at(id)].creature;
+                            c.homePosition = {q.goal.x, c.position.y, q.goal.y};
+                        }
+                        ++m_stats.settlements;
+                        pushEvent(EventType::Built, {q.goal.x, leadPos.y, q.goal.y});
                     }
+                    disbandSquad(tr, 500.0f);
+                }
             }
         } else {   // возвращение
-            int home = 0;
-            for (std::uint64_t id : q.members) home += std::hypot(m_population[idIndex.at(id)].creature.position.x - q.goal.x, m_population[idIndex.at(id)].creature.position.z - q.goal.y) < 12.0f;
-            if (home * 2 >= static_cast<int>(q.members.size()) || q.timer > 90.0f) disbandSquad(tr, 240.0f);
+            if (nearCount(q.goal, 12.0f) * 2 >= total || q.timer > 90.0f) disbandSquad(tr, q.kind == 1 ? 420.0f : 240.0f);
         }
     }
 }
@@ -687,7 +767,7 @@ void World::tick(float dt, Terrain* mutableTerrain) {
     idIndex.reserve(n);
     for (std::size_t i = 0; i < n; ++i)
         idIndex[m_population[i].creature.id] = i;
-    if (terrain) updateSquads(dt, idIndex);   // отряды: вождь собирает бойцов и ведёт на склад врага
+    if (terrain) updateSquads(dt, *terrain, idIndex);   // отряды: вождь собирает бойцов и ведёт на склад врага
 
     // Дикие животные: шаг раньше существ. Хищник мог укусить существо -- здоровье падает сразу, убитое помечаем (причина 5).
     {
@@ -862,12 +942,13 @@ void World::tick(float dt, Terrain* mutableTerrain) {
         if (self.squad != 0 && m_squads[self.squad].active) {
             const SquadData& q = m_squads[self.squad];
             senses.squadPhase = q.phase;
+            senses.squadKind  = q.kind;
             const auto lit = m_leaders[self.squad] != 0 ? idIndex.find(m_leaders[self.squad]) : idIndex.end();
             glm::vec2 goal = q.goal;
             if (q.phase == 0) goal = lit != idIndex.end() ? glm::vec2{m_population[lit->second].creature.position.x, m_population[lit->second].creature.position.z} : glm::vec2{selfPos.x, selfPos.z};
             senses.squadPos = {goal.x, selfPos.y, goal.y};
             senses.squadDist = std::hypot(goal.x - selfPos.x, goal.y - selfPos.z);
-            if (q.phase == 1) {
+            if (q.phase == 1 && q.kind == 0) {
                 float bestD = 6.0f;
                 for (std::size_t k = 0; k < m_structures.size(); ++k) {
                     const Structure& st = m_structures[k];
@@ -1121,7 +1202,18 @@ void World::tick(float dt, Terrain* mutableTerrain) {
             self.huntTimer = 1.2f;
             self.spearDur  = std::max(0.0f, self.spearDur - 0.06f);
             pushEvent(EventType::Stab, senses.preyPos);
-            if (m_fauna.hurt(senses.preyId, 0.55f)) { self.feed(0.7f); ++m_stats.meatKills; }
+            if (m_fauna.hurt(senses.preyId, 0.55f)) {
+                self.feed(0.7f);
+                ++m_stats.meatKills;
+                if (self.squad != 0 && m_squads[self.squad].kind == 1) {   // охотничья партия делит добычу
+                    for (std::uint64_t mid : m_squads[self.squad].members) {
+                        const auto mit = idIndex.find(mid);
+                        if (mit == idIndex.end() || mid == self.id) continue;
+                        Creature& mate = m_population[mit->second].creature;
+                        if (mate.alive && std::hypot(mate.position.x - selfPos.x, mate.position.z - selfPos.z) < 14.0f) { mate.feed(0.3f); ++m_stats.sharedMeals; }
+                    }
+                }
+            }
         }
         // Костёр: тёплый сон рядом (энергия восстанавливается быстрее); знающий с брёвнами подкладывает, когда огонь слабеет.
         if (fireIdx != m_structures.size()) {

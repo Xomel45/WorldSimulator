@@ -971,6 +971,18 @@ Creatures now cut trees down, carry logs, craft tools and fight predators with t
 - Debug window: squads (active/phase/formed/disbanded/raids); inspector "в отряде".
 - Not done: hibernation, birds/flight migration, squad orders other than raiding (hunting parties, escorts, settling new camps), squad morale/retreat, leader dying mid-march (the squad just disbands), nocturnal herbivores.
 
+### Stage 13: hunting and settling expeditions, leader succession
+
+- **`SquadData::kind`** (saved, **v14**): 0 raid (stage 12), **1 hunting party**, **2 settlement expedition**; `World::updateSquads(dt, terrain, idIndex)` picks by priority raid → settle → hunt, always led by the tribe leader, tribe ≥ 8, same gather phase (25 s / 70% within 8 units).
+  - **Settlement** (tribe ≥ 16; 40 random sites 50-110 units from the leader: dry land at height 1-8 in a biome with `bushDensity ≥ 0.5`, ≥ 45 from every stockpile; 3-6 members of any kind, not hungry): march; when 60% are within 10 units (or 120 s) the camp is **founded**: a stockpile of the tribe
+    (owner = tribe, stock = 4 + the logs the settlers carried), settlers' `homePosition` moves there, the squad disbands without returning (cooldown 500 s; `settlements`). Measured: 0-3 per run.
+  - **Hunting party** (tribe mean hunger > 0.5, a herd of ≥ 3 herbivores within 25 units of an animal within 140 of the leader; ≤ 5 members, armed or bold Hunters, hunger ≤ 0.75): on arrival `Behavior::Hunt` gets ×2.4 and a lower hunger threshold for members (`huntParty`), the party ends after **3 kills** (`meatKills` baseline in the squad)
+    or 120 s and walks home (cooldown 420 s). **Kills are shared**: party members within 14 units get 0.3 food (`sharedMeals`). Measured: 0-8 parties per run, few shared meals (animals flee) — it is a modest supplement, throttled because the first version cut the mean population by ~20%.
+  - SenseInputs: `squadKind`; `March` waits at the goal for kinds 1/2 and raids only for kind 0.
+- **Succession**: when the previous leader is no longer alive, his/her children (`parentIds`) and widow/widower (`bondedPartnerId`) get **+0.3** in the election (identified through the stored dead leader id — no extra saved state); `successions` counts heirs who won. Test: with otherwise equal candidates the child is elected.
+- Debug window: expeditions (hunting parties, shared meals, settlements, successions). Measured (10 seeds × 20 sim-min): mean 35.5 alive, no extinctions, settlements on 7 seeds, 3-8 hunting parties on most.
+- Not done: expeditions chosen by a council or the leader's traits, hunting parties that track a herd (they walk to a point), caravans/trade expeditions, retreat or reinforcement, settlements reacting to resources/danger, new camps getting their own leader (the tribe still has one leader).
+
 ## Temporal upscaler and frame generation (`VulkanTemporal.cpp`, `taau.comp`, `framegen.comp`)
 
 Own implementation (not AMD's FSR 2/3): the official FidelityFX SDK builds with MSVC/`.bat` scripts, has HLSL shaders that
@@ -1392,7 +1404,8 @@ source of truth for the hex constants at the top of `MainMenu.cpp`.
 - [x] Stage 10: trade, gifts, alliances (see "Stage 10")
 - [x] Stage 11: seasonal leaves, leaders, mixed marriages (see "Stage 11")
 - [x] Stage 12: squads, nocturnal animals, migration, shadow cache (see "Stage 12")
-- [ ] Next: hibernation/birds, hunting parties and settling expeditions, spring blossoms, leader succession
+- [x] Stage 13: hunting/settling expeditions, succession (see "Stage 13")
+- [ ] Next: hibernation/birds, spring blossoms, trade caravans, per-camp leaders
 - [ ] More powers (fire, rain, disasters, food, smite individuals), undo
 - [x] Sound: procedural synth + miniaudio (see "Sound")
 - [x] Day/night cycle (see "Stage 4"; night ambience sound still missing)

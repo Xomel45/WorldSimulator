@@ -164,8 +164,9 @@ Decision decide(Creature& c, const SenseInputs& s, const BrainOutputs& raw, floa
         S(Behavior::Drink) = 0.5f + 2.6f * c.thirst + (c.thirst > 0.85f ? 1.5f : 0.0f);
     // Охота: голодный с копьём, добыча рядом, ягод поблизости нет.
     const bool hunterRole = c.role() == Role::Hunter;   // охотник берётся за копьё раньше и охотнее
-    if (c.hasSpear() && s.preyDist < kNoTarget && n.hunger > (hunterRole ? 0.32f : 0.5f) && n.fear < 0.4f && !(foodVisible && s.foodDist < 10.0f))
-        S(Behavior::Hunt) = (1.2f + 1.6f * n.hunger) * (hunterRole ? 1.35f : 1.0f);
+    const bool huntParty  = c.squad != 0 && s.squadKind == 1 && s.squadPhase == 1;   // охотничий отряд на месте охоты бьёт добычу при любом голоде
+    if (c.hasSpear() && s.preyDist < kNoTarget && n.hunger > (huntParty ? 0.15f : (hunterRole ? 0.32f : 0.5f)) && n.fear < 0.4f && !(foodVisible && s.foodDist < 10.0f && !huntParty))
+        S(Behavior::Hunt) = (1.2f + 1.6f * n.hunger) * (hunterRole ? 1.35f : 1.0f) * (huntParty ? 2.4f : 1.0f);
 
     // Стройка. Мост: цель (еда/исследование) за водой, а за ней есть суша -- кладёт настил на первую клетку воды перед собой.
     // Баррикада: видит хищника на расстоянии -- ставит заслон между собой и ним. Ловушка: помнит хищника -- ставит на подходе.
@@ -323,7 +324,7 @@ Decision decide(Creature& c, const SenseInputs& s, const BrainOutputs& raw, floa
             break;
         case Behavior::March:
             dir = dirTo(c.position, s.squadPos);
-            if (s.squadPhase == 1) {
+            if (s.squadPhase == 1 && s.squadKind == 0) {
                 if (s.squadDist <= 2.2f) { speed = 0.0f; d.raid = true; }
                 else speed = 0.9f * std::clamp(s.squadDist / 6.0f, 0.5f, 1.0f);
             } else if (s.squadDist <= 3.0f) speed = 0.0f;                                  // сбор/дом: на месте ждёт остальных

@@ -112,7 +112,7 @@ struct SenseInputs {
     float     night = 0.0f;                                  // 0 день .. 1 ночь (только в мире с рельефом: тесты без рельефа не спят)
     // Племена: чужой склад во враждебном племени (куда идти грабить) и чужак рядом со своим лагерем (кого гнать).
     float     rivalStockDist = kNoTarget;  glm::vec3 rivalStockPos{};
-    float     squadDist = kNoTarget;      glm::vec3 squadPos{};  int squadPhase = 0;   // цель отряда (сбор у вождя / поход на склад / возвращение)
+    float     squadDist = kNoTarget;      glm::vec3 squadPos{};  int squadPhase = 0, squadKind = 0;   // цель отряда (сбор у вождя / поход на склад / возвращение)
     float     leaderDist = kNoTarget;     glm::vec3 leaderPos{};   // вождь своего племени (если это не сам существо)
     float     intruderDist = kNoTarget;    glm::vec3 intruderPos{};  std::uint64_t intruderId = 0;
     float     hutDist = kNoTarget;    glm::vec3 hutPos{};   // подходящая хижина (своя/семьи ближе чужих)

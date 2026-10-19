@@ -1768,6 +1768,8 @@ void Application::renderDebugUI() {
         ImGui::Text("Squads: %d/%d/%d active (phase %d/%d/%d), formed %llu, disbanded %llu, squad raids %llu", m_world.squad(1).active ? 1 : 0, m_world.squad(2).active ? 1 : 0, m_world.squad(3).active ? 1 : 0,
                     m_world.squad(1).phase, m_world.squad(2).phase, m_world.squad(3).phase, static_cast<unsigned long long>(m_world.stats().squadsFormed),
                     static_cast<unsigned long long>(m_world.stats().squadsDisbanded), static_cast<unsigned long long>(m_world.stats().squadRaids));
+        ImGui::Text("Expeditions: hunting parties %llu (shared meals %llu), settlements %llu, successions %llu", static_cast<unsigned long long>(m_world.stats().huntParties), static_cast<unsigned long long>(m_world.stats().sharedMeals),
+                    static_cast<unsigned long long>(m_world.stats().settlements), static_cast<unsigned long long>(m_world.stats().successions));
         ImGui::Text("Leaders #%llu / #%llu / #%llu (changes %llu), mixed-tribe births %llu", static_cast<unsigned long long>(m_world.leaderId(1)), static_cast<unsigned long long>(m_world.leaderId(2)),
                     static_cast<unsigned long long>(m_world.leaderId(3)), static_cast<unsigned long long>(m_world.stats().leaderChanges), static_cast<unsigned long long>(m_world.stats().mixedBirths));
         ImGui::Text("Diplomacy: allies 1-2 %d, 1-3 %d, 2-3 %d | gifts %llu logs, traded %llu logs, alliances formed %llu / broken %llu", m_world.allied(1, 2) ? 1 : 0, m_world.allied(1, 3) ? 1 : 0, m_world.allied(2, 3) ? 1 : 0,

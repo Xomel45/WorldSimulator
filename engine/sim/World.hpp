@@ -77,7 +77,7 @@ struct WorldStats {
     std::uint64_t deathsPredation = 0;  // существа, растерзанные хищниками
     std::uint64_t treesFelled = 0, spearsMade = 0, shieldsMade = 0, spearHits = 0, shieldBlocks = 0, skillsLearned = 0;
     std::uint64_t planksLaid = 0, barricadesBuilt = 0, trapsSet = 0;
-    std::uint64_t meatKills = 0, bucketsMade = 0, bushesWatered = 0, stockpilesBuilt = 0, hutsBuilt = 0, raids = 0, logsStolen = 0, strikes = 0, deathsConflict = 0, mixedBirths = 0, squadsFormed = 0, squadsDisbanded = 0, squadRaids = 0, leaderChanges = 0, giftLogs = 0, tradeLogs = 0, alliancesFormed = 0, alliancesBroken = 0, firesBuilt = 0, firesStoked = 0, bitesBlockedByWalls = 0, coldTicks = 0, logsStored = 0, logsTaken = 0, deathsThirst = 0;
+    std::uint64_t meatKills = 0, bucketsMade = 0, bushesWatered = 0, stockpilesBuilt = 0, hutsBuilt = 0, raids = 0, logsStolen = 0, strikes = 0, deathsConflict = 0, mixedBirths = 0, squadsFormed = 0, squadsDisbanded = 0, squadRaids = 0, huntParties = 0, settlements = 0, successions = 0, sharedMeals = 0, leaderChanges = 0, giftLogs = 0, tradeLogs = 0, alliancesFormed = 0, alliancesBroken = 0, firesBuilt = 0, firesStoked = 0, bitesBlockedByWalls = 0, coldTicks = 0, logsStored = 0, logsTaken = 0, deathsThirst = 0;
 };
 
 // События мира для звука и эффектов (не состояние: очищаются takeEvents(), в сохранения не входят).
@@ -90,7 +90,9 @@ struct WorldEvent {
 // Отряд племени: вождь собирает вооружённых бойцов и ведёт их на склад враждебного племени (сбор -> поход -> возвращение).
 struct SquadData {
     bool                       active = false;
-    std::uint8_t               target = 0, phase = 0;   // племя-цель; 0 сбор, 1 поход, 2 возвращение
+    std::uint8_t               kind = 0;                  // 0 набег на склад врага, 1 охотничья партия, 2 поселенческая экспедиция
+    std::uint8_t               target = 0, phase = 0;   // племя-цель (набег); 0 сбор, 1 поход, 2 возвращение
+    std::uint32_t              baseline = 0;             // охота: счёт meatKills к началу похода
     float                      timer = 0.0f, cooldown = 0.0f;
     glm::vec2                  goal{};                    // куда идти в текущей фазе (поход/возвращение)
     std::vector<std::uint64_t> members;
@@ -260,7 +262,7 @@ private:
     std::int64_t               m_electionSlot = -1;
     void electLeaders();
     SquadData m_squads[kMaxTribes];
-    void updateSquads(float dt, const std::unordered_map<std::uint64_t, std::size_t>& idIndex);
+    void updateSquads(float dt, const Terrain& terrain, const std::unordered_map<std::uint64_t, std::size_t>& idIndex);
     void disbandSquad(int tribe, float cooldown);
 
     // Потоковая подгрузка кустов (см. growBerryBushes/streamBushes в World.cpp).

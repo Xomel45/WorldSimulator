@@ -335,7 +335,7 @@ std::vector<std::uint8_t> serializeSave(const SaveGame& g, std::uint32_t version
     {
         ByteWriter b;
         for (const SquadData& q : g.world.squads) {
-            b.boolean(q.active); b.u8(q.target); b.u8(q.phase); b.f32(q.timer); b.f32(q.cooldown); b.f32(q.goal.x); b.f32(q.goal.y);
+            b.boolean(q.active); b.u8(q.target); b.u8(q.phase); b.u8(q.kind); b.u32(q.baseline); b.f32(q.timer); b.f32(q.cooldown); b.f32(q.goal.x); b.f32(q.goal.y);
             b.u32(static_cast<std::uint32_t>(q.members.size()));
             for (std::uint64_t id : q.members) b.u64(id);
         }
@@ -556,6 +556,7 @@ bool parseSave(std::span<const std::uint8_t> bytes, SaveGame& out, std::string& 
                 q.active = sr.boolean();
                 q.target = static_cast<std::uint8_t>(sr.u8() % World::kMaxTribes);
                 q.phase  = static_cast<std::uint8_t>(std::min<int>(sr.u8(), 2));
+                if (version >= 14) { q.kind = static_cast<std::uint8_t>(std::min<int>(sr.u8(), 2)); q.baseline = sr.u32(); }
                 const float tm = sr.f32(), cd = sr.f32(), gx = sr.f32(), gz = sr.f32();
                 q.timer = std::isfinite(tm) ? std::clamp(tm, 0.0f, 1000.0f) : 0.0f;
                 q.cooldown = std::isfinite(cd) ? std::clamp(cd, 0.0f, 1000.0f) : 0.0f;

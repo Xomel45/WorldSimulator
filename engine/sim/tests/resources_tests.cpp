@@ -1026,6 +1026,105 @@ int main() {
         WSIM_CHECK(meanTemp(1.0f) > meanTemp(0.0f) + 0.01f);
     }
 
+    // ── Этап 13: охотничьи и поселенческие экспедиции, наследование власти ──
+    {
+        Terrain t(World::kWorldHalfSize, 11);
+        glm::vec2 at{0, 0};
+        bool ok = false;
+        for (float z = -80; z <= 80 && !ok; z += 4)
+            for (float x = -90; x <= 0 && !ok; x += 4) {
+                bool land = true;
+                for (float q = 0; q <= 90 && land; q += 6) land = t.heightAt(x + q, z) > 1.0f && t.heightAt(x + q, z) < 6.0f;
+                if (land) { at = {x, z}; ok = true; }
+            }
+        WSIM_CHECK(ok);
+        // Племя 1: n существ в кучке у склада; вождь -- id 500.
+        auto tribeWorld = [&](int n, float hunger, bool armed) {
+            World w = lone(95, {at.x, at.y}, kSkillSpear);
+            WorldState st = w.exportState();
+            Inhabitant base = st.population[0];
+            st.population.clear();
+            for (int i = 0; i < n; ++i) {
+                Inhabitant m = base;
+                m.creature.id = 500 + static_cast<std::uint64_t>(i);
+                m.creature.tribe = 1;
+                m.creature.spearDur = armed ? 1.0f : 0.0f;
+                m.creature.position = {at.x + 1.0f + 0.5f * static_cast<float>(i % 6), 0.0f, at.y + 1.0f + 0.5f * static_cast<float>(i / 6)};
+                m.creature.homePosition = m.creature.position;
+                m.creature.needs.hunger = hunger;
+                m.creature.genome.setTrait(Genome::kBoldness, 1.0f);
+                st.population.push_back(m);
+            }
+            st.nextId = 700;
+            st.leaders[1] = 500;
+            st.structures = {Structure{StructureKind::Stockpile, at.x, at.y, 0.0f, 1.0f, 3.0f, 1}};
+            st.time = 20.0;
+            WSIM_CHECK(w.importState(st));
+            return w;
+        };
+
+        // Охотничья партия: голодное племя, стадо в 60 единицах -- вождь ведёт бойцов; пойманное делится.
+        {
+            World w = tribeWorld(10, 0.55f, true);
+            WorldState st = w.exportState();
+            for (int i = 0; i < 6; ++i) {
+                Animal d;
+                d.id = 1 + static_cast<std::uint64_t>(i); d.species = Species::Deer; d.position = {at.x + 60.0f + static_cast<float>(i), 0.0f, at.y + 2.0f * static_cast<float>(i % 3)};
+                d.hunger = 0.1f; d.age = speciesDef(Species::Deer).maturity * 1.5f; d.stun = 400.0f;   // оцепенели: добыча дастся
+                st.fauna.animals.push_back(d);
+            }
+            st.fauna.nextId = 50;
+            WSIM_CHECK(w.importState(st));
+            float minD = 1e9f;
+            for (int i = 0; i < 60 * 200; ++i) {
+                w.tick(kDt, &t);
+                for (const Inhabitant& in : w.population()) if (in.creature.squad) minD = std::min(minD, std::fabs(in.creature.position.x - (at.x + 62.0f)));
+                if (i % 600 == 599) { WorldState ws = w.exportState(); for (Inhabitant& in : ws.population) in.creature.needs.hunger = std::min(in.creature.needs.hunger, 0.6f); (void)w.importState(ws); }
+            }
+            WSIM_CHECK(w.stats().huntParties == 1 && minD < 20.0f);
+            WSIM_CHECK(w.stats().meatKills >= 1);
+        }
+
+        // Поселенческая экспедиция: большое сытое племя посылает группу основать лагерь вдали (склад с их брёвнами, дом -- там).
+        {
+            World w = tribeWorld(18, 0.1f, false);
+            std::size_t pilesBefore = w.structures().size();
+            for (int i = 0; i < 60 * 600 && w.stats().settlements == 0; ++i) { w.tick(kDt, &t); if (i % 300 == 299) feedAll(w); }
+            WSIM_CHECK(w.stats().settlements == 1 && w.structures().size() == pilesBefore + 1);
+            const Structure& camp = w.structures().back();
+            WSIM_CHECK(camp.kind == StructureKind::Stockpile && camp.owner == 1 && camp.stock >= 4.0f);
+            WSIM_CHECK(std::hypot(camp.x - at.x, camp.z - at.y) >= 45.0f);
+            int settled = 0;
+            for (const Inhabitant& in : w.population()) settled += std::hypot(in.creature.homePosition.x - camp.x, in.creature.homePosition.z - camp.z) < 1.0f;
+            WSIM_CHECK(settled >= 3 && !w.squad(1).active);
+        }
+
+        // Наследование: вождя нет -- его ребёнок (при прочих равных) становится новым.
+        {
+            World w = tribeWorld(4, 0.15f, false);
+            WorldState st = w.exportState();
+            st.leaders[1] = 999;   // прежнего вождя уже нет в живых
+            st.population[2].creature.parentIds = {999, 0};
+            st.time = 4.5;
+            WSIM_CHECK(w.importState(st));
+            for (int i = 0; i < 60 * 3; ++i) w.tick(kDt, &t);
+            WSIM_CHECK(w.leaderId(1) == st.population[2].creature.id && w.stats().successions == 1);
+        }
+        // Сохранение: вид и счёт отряда.
+        {
+            World w = tribeWorld(9, 0.2f, true);
+            WorldState st = w.exportState();
+            st.squads[1].active = true; st.squads[1].kind = 1; st.squads[1].phase = 1; st.squads[1].baseline = 7; st.squads[1].goal = {at.x + 50.0f, at.y};
+            st.squads[1].members = {500, 501, 502};
+            WSIM_CHECK(w.importState(st));
+            PhysicsWorld physics;
+            SaveGame back;
+            std::string err;
+            WSIM_CHECK(parseSave(serializeSave(captureSave("e", 0, 0.0f, t, w, physics, CameraState{})), back, err));
+            WSIM_CHECK(back.world.squads[1].kind == 1 && back.world.squads[1].baseline == 7 && back.world.squads[1].members.size() == 3);
+        }
+    }
+
     std::puts("resources_tests: OK");
     return 0;
 }
