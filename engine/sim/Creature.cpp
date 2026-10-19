@@ -293,8 +293,10 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
         if (craftProgress >= 1.0f) {
             craftProgress = 0.0f;
             if (dec.craft == 1 && wood >= kSpearWood)       { wood -= kSpearWood;  spearDur = 1.0f; }
-            else if (dec.craft == 2 && wood >= kShieldWood) { wood -= kShieldWood; shieldDur = 1.0f; }
-            else if (dec.craft == 3 && wood >= kBucketWood) { wood -= kBucketWood; hasBucket = true; }
+            else if (dec.craft == 2 && wood >= kAxeWood)    { wood -= kAxeWood;     axeDur = 1.0f; axeTier = 1; }
+            else if (dec.craft == 3 && wood >= kShieldWood) { wood -= kShieldWood; shieldDur = 1.0f; }
+            else if (dec.craft == 4 && wood >= kBucketWood) { wood -= kBucketWood; hasBucket = true; }
+            else if (dec.craft == 5 && wood >= kBetterAxeWood) { wood -= kBetterAxeWood; axeDur = 1.0f; axeTier = 2; }   // улучшенный заменяет обычный
         }
     } else {
         craftProgress = 0.0f;

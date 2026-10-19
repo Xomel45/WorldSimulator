@@ -23,8 +23,10 @@ enum class Behavior : std::uint8_t { Wander, SeekFood, Eat, Rest, Flee, SeekMate
 
 // Умения (маска Creature::skills). Рубить деревья умеют все (врождённо); изготовление орудий -- знание: открывается в опасности или
 // от случая и передаётся соседям и потомству по наблюдению (World::tick), как вкус ягод -- но у знания нет "забывания".
-enum Skill : std::uint16_t { kSkillSpear = 1, kSkillShield = 2, kSkillBridge = 4, kSkillBarricade = 8, kSkillTrap = 16, kSkillBucket = 32, kSkillStockpile = 64, kSkillHut = 128, kSkillFire = 256 };
-inline constexpr std::uint16_t kAllSkills = 511;
+enum Skill : std::uint16_t { kSkillSpear = 1, kSkillShield = 2, kSkillBridge = 4, kSkillBarricade = 8, kSkillTrap = 16, kSkillBucket = 32, kSkillStockpile = 64, kSkillHut = 128, kSkillFire = 256, kSkillAxe = 512, kSkillBetterAxe = 1024 };
+inline constexpr std::uint16_t kAllSkills = 2047;
+// Топоры: обычный (2 бревна) рубит в 1.8 раза быстрее голых рук, улучшенный (4 бревна) -- в 2.6; износ считается ЗА ДЕРЕВО (не за секунду): улучшенный и быстрее, и служит дольше.
+inline constexpr float kAxeWood = 2.0f, kBetterAxeWood = 4.0f;
 inline constexpr float kFireWood = 2.0f;   // брёвен на костёр
 
 // Роль в общине -- склонность из генов (наследуется): охотники смелее и крупнее, строители любопытны и общительны, остальные рубят.
@@ -176,6 +178,8 @@ public:
     // skills -- маска умений; dangerMemory -- сколько ещё секунд помнит хищника рядом (подталкивает мастерить и рубить).
     // chopRequest -- просит мир рубить дерево treeCx/treeCz (кэш поиска ближайшего: treeKnown/treeX/treeZ/treeSearch, ведёт мир).
     std::uint16_t skills = 0;
+    float        axeDur = 0.0f;       // прочность топора (0 -- нет), axeTier 1 обычный / 2 улучшенный
+    std::uint8_t axeTier = 0;
     float        wood = 0.0f, spearDur = 0.0f, shieldDur = 0.0f, dangerMemory = 0.0f, chopProgress = 0.0f, craftProgress = 0.0f;
     std::uint8_t chopRequest = 0;
     // Жажда (только в мире с рельефом), ведро с водой, охота и склад. thirst 0..1 (1 -- здоровье тает); water -- глотков в ведре;
@@ -202,12 +206,22 @@ public:
     [[nodiscard]] bool  hasSpear() const noexcept { return spearDur > 0.0f; }
     [[nodiscard]] bool  hasShield() const noexcept { return shieldDur > 0.0f; }
     // Сколько брёвен нужно на следующее орудие, которое существо умеет, но не имеет (0 -- нечего мастерить); какое именно (1 копьё, 2 щит).
-    [[nodiscard]] float woodNeeded() const noexcept { const int t = nextTool(); return t == 1 ? kSpearWood : (t == 2 ? kShieldWood : (t == 3 ? kBucketWood : 0.0f)); }
+    [[nodiscard]] float woodNeeded() const noexcept {
+        switch (nextTool()) { case 1: return kSpearWood; case 2: return kAxeWood; case 3: return kShieldWood; case 4: return kBucketWood; case 5: return kBetterAxeWood; default: return 0.0f; }
+    }
+    // Следующее орудие: 1 копьё, 2 топор, 3 щит, 4 ведро, 5 улучшенный топор (замена обычного); 0 -- нечего мастерить. Номера -- как Decision::craft.
     [[nodiscard]] int   nextTool() const noexcept {
         if (knows(kSkillSpear) && !hasSpear()) return 1;
-        if (knows(kSkillShield) && !hasShield()) return 2;
-        return (knows(kSkillBucket) && !hasBucket) ? 3 : 0;
+        if (knows(kSkillAxe) && !hasAxe()) return 2;
+        if (knows(kSkillShield) && !hasShield()) return 3;
+        if (knows(kSkillBucket) && !hasBucket) return 4;
+        if (knows(kSkillBetterAxe) && axeTier < 2) return 5;
+        return 0;
     }
+    [[nodiscard]] bool  hasAxe() const noexcept { return axeDur > 0.0f; }
+    // Скорость рубки: голые руки 1, топор 1.8, улучшенный 2.6. Тот же урожай с дерева, но быстрее; износ -- за дерево (axeWearPerTree).
+    [[nodiscard]] float chopSpeed() const noexcept { return !hasAxe() ? 1.0f : (axeTier >= 2 ? 2.6f : 1.8f); }
+    [[nodiscard]] float axeWearPerTree() const noexcept { return axeTier >= 2 ? 0.07f : 0.12f; }   // обычного хватает на ~8 деревьев, улучшенного на ~14
     // Сколько брёвен хочется иметь: на следующее орудие, на пару настилов моста, на баррикаду/ловушку, пока помнит хищника.
     [[nodiscard]] float woodGoal() const noexcept {
         float goal = woodNeeded();

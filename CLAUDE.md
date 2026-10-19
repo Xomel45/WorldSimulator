@@ -1001,6 +1001,18 @@ Creatures now cut trees down, carry logs, craft tools and fight predators with t
   Also changed while debugging: chopping is reachable from 2.5 units (the target trunk is itself an obstacle for steering; the old 1.8 relied on luck), base Chop priority 0.7.
 - Not done: brain inputs for bushes' kinds/taste, direct terrain maps, learning the choice outputs by reinforcement beyond the existing Hebbian rule, brain-controlled movement (moves are still rule steering + 25% brain bias), speciation/fitness plots.
 
+### Axes (stage 15): faster logging, same yield
+
+- **Two new tools** (skills `kSkillAxe` = 512, `kSkillBetterAxe` = 1024; `kAllSkills = 2047`): the **axe** (2 logs) fells a tree **1.8×** faster than bare hands and the **improved axe** (4 logs, replaces the axe) **2.6×** faster; `Creature::chopSpeed()`
+  scales the 3-second chop (`World::tick`), the **yield per tree is unchanged** (1-3 logs by tree size) — "the same volume, faster" (tested: 180 / 101 / 70 ticks for the same tree, identical logs gained).
+- **Does it shorten tool life? No — by design, and honestly a design choice**: wear is charged **per tree felled, not per second of use** (`axeWearPerTree`: 0.12 for the axe ≈ 8 trees, 0.07 for the improved one ≈ 14 trees), so a faster axe does not wear out faster for the same work; the improved axe is
+  better on both counts and its price is only the 4 logs (and the knowledge). If a "speed costs durability" trade-off is wanted, make the wear per second of chopping (or ×speed per tree) — one line in the same place. In practice axes rarely wear out: in 20 seeds × 20 sim-min 365-450 axes
+  and 70-90 improved ones were made but only 22-26 broke (creatures die first).
+- **Crafting order** (`nextTool`, also `Decision::craft`): 1 spear, 2 axe, 3 shield, 4 bucket, 5 improved axe. **Discovery**: axe `0.0001 + 0.004·(while chopping)`, improved `0.0001 + 0.002·(while chopping)` (needs the axe), × curiosity, ×2 for Woodcutters; taught by neighbours like every skill.
+- **Saves v16** (`axeDur`, `axeTier`); `StructGen::buildAxe(tier)` model on the belt of axe owners; inspector shows "топор / улучш. топор" and the new recipes; debug window "Axes made/improved/worn out".
+- Measured (same 20-seed probe, axes off vs on): mean population 31.8 vs 31.6 (one seed went extinct with axes on — noise-level but noted), trees felled +14%. A first, more eager discovery rate cost ~8 population points, hence the lower rates.
+- Not done: stone/iron materials (no mining yet), tools for other work (pickaxe, fishing), repairing tools, tool trade between tribes, axe use against animals/enemies.
+
 ## Temporal upscaler and frame generation (`VulkanTemporal.cpp`, `taau.comp`, `framegen.comp`)
 
 Own implementation (not AMD's FSR 2/3): the official FidelityFX SDK builds with MSVC/`.bat` scripts, has HLSL shaders that

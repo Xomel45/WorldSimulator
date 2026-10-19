@@ -1191,11 +1191,13 @@ void World::tick(float dt, Terrain* mutableTerrain) {
         }
 
         const bool hadSpear = self.hasSpear(), hadShield = self.hasShield(), hadBucket = self.hasBucket;
+        const std::uint8_t hadAxeTier = self.axeTier;
         const BrainOutputs out = self.tick(dt, senses);
         freshOutputs[i]        = out;
         if (!hadSpear && self.hasSpear()) ++m_stats.spearsMade;
         if (!hadShield && self.hasShield()) ++m_stats.shieldsMade;
         if (!hadBucket && self.hasBucket) ++m_stats.bucketsMade;
+        if (self.axeTier != hadAxeTier && self.hasAxe()) { if (self.axeTier == 2) ++m_stats.betterAxesMade; else ++m_stats.axesMade; }
 
         // Охота: удар копьём по добыче рядом; убитое кормит.
         if (self.huntRequest && senses.preyId != 0 && senses.preyDist <= 2.4f && self.huntTimer <= 0.0f) {
@@ -1282,7 +1284,7 @@ void World::tick(float dt, Terrain* mutableTerrain) {
 
         // Рубка: пока стоит у дерева, набегает прогресс; срубленное исчезает (Terrain::fellTree), брёвна -- в руки.
         if (self.chopRequest && self.treeKnown && mutableTerrain && senses.treeDist <= 3.2f) {
-            self.chopProgress += dt / 3.0f;
+            self.chopProgress += dt * self.chopSpeed() / 3.0f;   // топор рубит быстрее, урожай тот же
             if (self.chopProgress >= 1.0f) {
                 TreeInstance tree;
                 float yield = 1.0f;
@@ -1290,6 +1292,10 @@ void World::tick(float dt, Terrain* mutableTerrain) {
                 self.wood = std::min(kMaxWood, self.wood + yield);
                 self.chopProgress = 0.0f;
                 self.treeKnown = false;
+                if (self.hasAxe()) {   // износ за дерево: чем лучше топор, тем реже его менять
+                    self.axeDur = std::max(0.0f, self.axeDur - self.axeWearPerTree());
+                    if (!self.hasAxe()) { self.axeTier = 0; ++m_stats.axesWornOut; }
+                }
                 m_dirty.push_back(mutableTerrain->fellTree(self.treeCx, self.treeCz));
                 ++m_stats.treesFelled;
                 pushEvent(EventType::TreeFelled, {self.treeX, selfPos.y, self.treeZ});
@@ -1349,7 +1355,10 @@ void World::tick(float dt, Terrain* mutableTerrain) {
                                     {kSkillBucket, static_cast<Skill>(0), (0.0002f + (self.thirst > 0.5f ? 0.006f : 0.0f)) * curious},
                                     {kSkillStockpile, kSkillSpear, (0.0004f + (self.wood >= 3.0f ? 0.004f : 0.0f)) * curious},
                                     {kSkillHut, kSkillSpear, (0.0008f + (senses.night > 0.5f ? 0.008f : 0.0f)) * curious},
-                                    {kSkillFire, static_cast<Skill>(0), (0.0004f + (senses.night > 0.3f ? 0.006f : 0.0f)) * curious}};
+                                    {kSkillFire, static_cast<Skill>(0), (0.0004f + (senses.night > 0.3f ? 0.006f : 0.0f)) * curious},
+                                    // Топоры придумывают те, кто много рубит; улучшенный -- кто уже владеет обычным (дровосеки вдвое быстрее).
+                                    {kSkillAxe, static_cast<Skill>(0), (0.0001f + (self.behavior == Behavior::Chop ? 0.004f : 0.0f)) * curious * (self.role() == Role::Woodcutter ? 2.0f : 1.0f)},
+                                    {kSkillBetterAxe, kSkillAxe, (0.0001f + (self.behavior == Behavior::Chop ? 0.002f : 0.0f)) * curious * (self.role() == Role::Woodcutter ? 2.0f : 1.0f)}};
             const float builderBoost = self.role() == Role::Builder ? 2.0f : 1.0f;   // строитель открывает постройки вдвое быстрее
             const Skill kBuildSkills = static_cast<Skill>(kSkillBridge | kSkillBarricade | kSkillTrap | kSkillStockpile | kSkillHut | kSkillFire);
             for (const Learn& l : learns)

@@ -264,6 +264,8 @@ Application::Application(AppConfig config)
         m_hutMesh       = make(procgen::buildHut());
         m_fireMesh      = make(procgen::buildCampfire());
         m_crownMesh     = make(procgen::buildCrown());
+        m_axeMeshes[0]  = make(procgen::buildAxe(1));
+        m_axeMeshes[1]  = make(procgen::buildAxe(2));
         for (int t = 1; t <= 3; ++t) m_bannerMeshes[static_cast<std::size_t>(t - 1)] = make(procgen::buildBanner(t));
         for (int n = 1; n <= 4; ++n) m_logMeshes[static_cast<std::size_t>(n - 1)] = make(procgen::buildLogs(n));
     }
@@ -452,6 +454,8 @@ Application::~Application() {
         for (auto& mesh : m_logMeshes)
             if (mesh) mesh->destroy(m_context->device());
         for (auto& mesh : m_bannerMeshes)
+            if (mesh) mesh->destroy(m_context->device());
+        for (auto& mesh : m_axeMeshes)
             if (mesh) mesh->destroy(m_context->device());
     }
 }
@@ -664,6 +668,7 @@ void Application::update(float dt) {
             if (c.hasSpear()) gear(m_spearMesh, {0.55f, 0.5f, 0.0f}, 0.0f);
             if (c.hasShield()) gear(m_shieldMesh, {-0.55f, 0.1f, 0.15f}, 0.0f);
             if (c.hasBucket) gear(m_bucketMesh, {0.4f, 0.0f, 0.55f}, 0.0f);
+            if (c.hasAxe()) gear(m_axeMeshes[c.axeTier >= 2 ? 1 : 0], {0.45f, 0.35f, -0.15f}, 0.0f);   // топор у пояса
             if (c.tribe >= 1 && c.tribe <= 3 && m_world.leaderId(c.tribe) == c.id) gear(m_crownMesh, {0.0f, 1.0f, 0.1f}, 0.0f);   // венец вождя
             if (c.tribe >= 1 && c.tribe <= 3) gear(m_bannerMeshes[static_cast<std::size_t>(c.tribe - 1)], {0.0f, 0.5f, -0.45f}, 0.0f);   // знамя племени
             if (c.wood >= 1.0f) gear(m_logMeshes[static_cast<std::size_t>(std::clamp(static_cast<int>(c.wood), 1, 4) - 1)], {0.0f, 0.95f, -0.35f}, 0.0f);
@@ -1489,9 +1494,10 @@ void Application::drawInspector(const CameraData& cam) {
         if (cr->hasBucket) kit += " · ведро " + std::to_string(static_cast<int>(cr->water));
         if (cr->hasSpear()) kit += " · копьё";
         if (cr->hasShield()) kit += " · щит";
+        if (cr->hasAxe()) kit += cr->axeTier >= 2 ? " · улучш. топор" : " · топор";
         {
             std::string know;
-            for (auto [sk, nm] : {std::pair{kSkillSpear, "копьё"}, {kSkillShield, "щит"}, {kSkillBridge, "мост"}, {kSkillBarricade, "баррикада"}, {kSkillTrap, "ловушка"}, {kSkillBucket, "ведро"}, {kSkillStockpile, "склад"}, {kSkillHut, "хижина"}, {kSkillFire, "костёр"}})
+            for (auto [sk, nm] : {std::pair{kSkillSpear, "копьё"}, {kSkillShield, "щит"}, {kSkillBridge, "мост"}, {kSkillBarricade, "баррикада"}, {kSkillTrap, "ловушка"}, {kSkillBucket, "ведро"}, {kSkillStockpile, "склад"}, {kSkillHut, "хижина"}, {kSkillFire, "костёр"}, {kSkillAxe, "топор"}, {kSkillBetterAxe, "улучш. топор"}})
                 if (cr->knows(sk)) { know += know.empty() ? "" : ", "; know += nm; }
             if (!know.empty()) kit += " · умеет: " + know;
         }
@@ -1762,6 +1768,10 @@ void Application::renderDebugUI() {
         std::size_t herb = 0, pred = 0;
         for (const Animal& a : m_world.fauna().animals()) (isPredator(a.species) ? pred : herb)++;
         const FaunaStats& fs = m_world.fauna().stats();
+        ImGui::Text("Brain: %d neurons (%d inputs incl. %d memory, %d hidden, %d outputs), %zu genes | generation %d", brain::kInputCount - brain::kMemoryCount + brain::kHiddenCount + brain::kOutputCount,
+                    brain::kInputCount, brain::kMemoryCount, brain::kHiddenCount, brain::kOutputCount, Genome::kGeneCount, m_world.maxGeneration());
+        ImGui::Text("Axes made %llu, improved %llu, worn out %llu", static_cast<unsigned long long>(m_world.stats().axesMade), static_cast<unsigned long long>(m_world.stats().betterAxesMade),
+                    static_cast<unsigned long long>(m_world.stats().axesWornOut));
         ImGui::Text("Tribes %zu/%zu/%zu, relations 1-2 %.2f, 1-3 %.2f, 2-3 %.2f | raids %llu (logs %llu), strikes %llu, killed in conflicts %llu", m_world.tribeCount(1), m_world.tribeCount(2), m_world.tribeCount(3),
                     m_world.relation(1, 2), m_world.relation(1, 3), m_world.relation(2, 3), static_cast<unsigned long long>(m_world.stats().raids), static_cast<unsigned long long>(m_world.stats().logsStolen),
                     static_cast<unsigned long long>(m_world.stats().strikes), static_cast<unsigned long long>(m_world.stats().deathsConflict));

@@ -16,6 +16,7 @@ namespace wsim::procgen {
 [[nodiscard]] MeshData buildCampfire();        // костёр: кольцо камней, поленья и пламя (высота пламени ~1 при полном топливе; масштаб по Y)
 [[nodiscard]] MeshData buildBanner(int tribe);     // знамя племени 1..3 (красное, синее, жёлтое): шест и полотнище, высота ~1.2
 [[nodiscard]] MeshData buildCrown();           // золотой венец вождя (над головой существа)
+[[nodiscard]] MeshData buildAxe(int tier);         // топор (1 обычный, 2 улучшенный: больше, с железной окантовкой), рукоять вдоль +Z
 [[nodiscard]] MeshData buildBucket();          // ведро с дужкой (носится сбоку)
 [[nodiscard]] MeshData buildLogs(int count);   // связка брёвен count = 1..4 (на спине, вдоль X)
 

@@ -109,6 +109,7 @@ private:
     std::vector<SceneObject>           m_foodObjects;
     // Постройки существ и снаряжение: настил мостов (кэш по сиду и числу настилов), баррикады/ловушки, копья/щиты/брёвна на существах.
     std::shared_ptr<Mesh>                m_plankMesh, m_barricadeMesh, m_trapMesh, m_spearMesh, m_shieldMesh, m_stockMesh, m_bucketMesh, m_hutMesh, m_fireMesh, m_crownMesh;
+    std::array<std::shared_ptr<Mesh>, 2> m_axeMeshes;   // топор: обычный и улучшенный
     std::array<std::shared_ptr<Mesh>, 3> m_bannerMeshes;   // знамёна племён 1..3
     std::array<std::shared_ptr<Mesh>, 4> m_logMeshes;
     std::vector<SceneObject>             m_bridgeObjects, m_structObjects, m_gearObjects;

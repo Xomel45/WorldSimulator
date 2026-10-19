@@ -183,7 +183,7 @@ int main() {
 
     // Постройки и снаряжение: корректные меши, разумные габариты.
     {
-        for (const MeshData& m : {buildPlank(), buildBarricade(), buildTrap(), buildSpear(), buildShield(), buildLogs(1), buildLogs(4), buildStockpile(), buildBucket(), buildHut(), buildCampfire(), buildBanner(1), buildBanner(2), buildBanner(3), buildCrown()}) {
+        for (const MeshData& m : {buildPlank(), buildBarricade(), buildTrap(), buildSpear(), buildShield(), buildLogs(1), buildLogs(4), buildStockpile(), buildBucket(), buildHut(), buildCampfire(), buildBanner(1), buildBanner(2), buildBanner(3), buildCrown(), buildAxe(1), buildAxe(2)}) {
             checkMesh(m);
             WSIM_CHECK(m.vertices.size() < 700);
         }

@@ -135,6 +135,9 @@ void writeCreature(ByteWriter& w, const Inhabitant& in, std::uint32_t version) {
     if (version < 15) return;
     w.floats(c.brainMemory);                           // v15: рабочая память мозга и поколение
     w.u32(c.generation);
+    if (version < 16) return;
+    w.f32(c.axeDur);                                   // v16: топор
+    w.u8(c.axeTier);
 }
 
 bool readCreature(ByteReader& r, Inhabitant& in, std::uint32_t version) {
@@ -261,6 +264,13 @@ bool readCreature(ByteReader& r, Inhabitant& in, std::uint32_t version) {
         const std::vector<float> mem = r.floats(brain::kMemoryCount);
         if (mem.size() == c.brainMemory.size()) for (std::size_t i = 0; i < mem.size(); ++i) c.brainMemory[i] = std::isfinite(mem[i]) ? std::clamp(mem[i], -1.0f, 1.0f) : 0.0f;
         c.generation = static_cast<std::uint16_t>(std::min<std::uint32_t>(r.u32(), 60000));
+    }
+    if (version >= 16) {
+        const float d = r.f32();
+        const std::uint8_t tier = r.u8();
+        c.axeTier = tier > 2 ? 0 : tier;
+        c.axeDur = std::isfinite(d) && c.axeTier != 0 ? std::clamp(d, 0.0f, 1.0f) : 0.0f;
+        if (c.axeDur <= 0.0f) c.axeTier = 0;
     }
     return r.ok();
 }

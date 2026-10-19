@@ -1140,6 +1140,59 @@ int main() {
         }
     }
 
+    // ── Топоры: быстрее рубят тот же урожай; износ -- за дерево, поэтому улучшенный и быстрее, и долговечнее ──
+    {
+        Terrain t(World::kWorldHalfSize, 29);
+        glm::vec2 at;
+        WSIM_CHECK(findForest(t, at));
+        // Время самой рубки (тики с запросом рубить) до первого дерева и прибыток брёвен: голые руки / топор / улучшенный.
+        struct Chop { int ticks; float gained; float dur; std::uint8_t tier; };
+        auto chopWith = [&](std::uint8_t tier) {
+            Terrain t(World::kWorldHalfSize, 29);   // свежий рельеф: срубленное в прошлом прогоне не должно менять выбор дерева
+            World w = lone(111, at, kSkillSpear);
+            WorldState st = w.exportState();
+            st.population[0].creature.axeTier = tier;
+            st.population[0].creature.axeDur = tier ? 1.0f : 0.0f;
+            WSIM_CHECK(w.importState(st));
+            Chop r{0, 0.0f, 0.0f, 0};
+            for (int i = 0; i < 60 * 120 && w.stats().treesFelled == 0; ++i) {
+                w.tick(kDt, &t);
+                r.ticks += w.population()[0].creature.chopRequest;
+                if (i % 300 == 299) feedAll(w);
+            }
+            WSIM_CHECK(w.stats().treesFelled == 1);
+            r.gained = w.population()[0].creature.wood;
+            r.dur = w.population()[0].creature.axeDur;
+            r.tier = w.population()[0].creature.axeTier;
+            return r;
+        };
+        const Chop bare = chopWith(0), basic = chopWith(1), better = chopWith(2);
+        WSIM_CHECK(bare.ticks > 150 && basic.ticks < bare.ticks * 0.7f && better.ticks < basic.ticks * 0.8f);   // ~180 / ~100 / ~70 тиков
+        WSIM_CHECK(bare.gained == basic.gained && basic.gained == better.gained && bare.gained >= 1.0f);          // урожай с дерева тот же
+        WSIM_CHECK(std::fabs(basic.dur - 0.88f) < 1.0e-4f && std::fabs(better.dur - 0.93f) < 1.0e-4f);            // износ за дерево: 0.12 против 0.07
+        // Изготовление: обычный топор из 2 брёвен; улучшенный из 4 (заменяет обычный).
+        {
+            World w = lone(112, at, kSkillAxe);
+            WorldState st = w.exportState();
+            st.population[0].creature.wood = 2.0f;
+            WSIM_CHECK(w.importState(st));
+            for (int i = 0; i < 60 * 30 && w.stats().axesMade == 0; ++i) { w.tick(kDt, &t); if (i % 300 == 299) feedAll(w); }
+            WSIM_CHECK(w.stats().axesMade == 1 && w.population()[0].creature.axeTier == 1 && w.population()[0].creature.wood == 0.0f);
+            WorldState s2 = w.exportState();
+            s2.population[0].creature.skills = kSkillAxe | kSkillBetterAxe;
+            s2.population[0].creature.wood = 4.0f;
+            WSIM_CHECK(w.importState(s2));
+            for (int i = 0; i < 60 * 30 && w.stats().betterAxesMade == 0; ++i) { w.tick(kDt, &t); if (i % 300 == 299) feedAll(w); }
+            WSIM_CHECK(w.stats().betterAxesMade == 1 && w.population()[0].creature.axeTier == 2 && w.population()[0].creature.axeDur == 1.0f);
+            // Сохранение несёт топор.
+            PhysicsWorld physics;
+            SaveGame back;
+            std::string err;
+            WSIM_CHECK(parseSave(serializeSave(captureSave("a", 0, 0.0f, t, w, physics, CameraState{})), back, err));
+            WSIM_CHECK(back.world.population[0].creature.axeTier == 2 && back.world.population[0].creature.axeDur == 1.0f && back.world.population[0].creature.knows(kSkillBetterAxe));
+        }
+    }
+
     std::puts("resources_tests: OK");
     return 0;
 }

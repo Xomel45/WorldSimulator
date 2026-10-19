@@ -134,6 +134,16 @@ MeshData buildCrown() {
     return m;
 }
 
+MeshData buildAxe(int tier) {
+    MeshData m;
+    const float len = tier >= 2 ? 0.95f : 0.8f;
+    addBox(m, {-0.03f, -0.03f, -0.1f}, {0.03f, 0.03f, len}, kLightWood);                                   // рукоять
+    addBox(m, {-0.05f, -0.02f, len - 0.2f}, {0.05f, 0.1f, len - 0.02f}, tier >= 2 ? kIron : tint(kIron, 0.8f));   // обух
+    addBox(m, {0.05f, -0.015f, len - 0.2f}, {tier >= 2 ? 0.26f : 0.2f, 0.09f, len - 0.04f}, tier >= 2 ? tint(kIron, 1.1f) : tint(kIron, 0.85f));   // лезвие
+    if (tier >= 2) addBox(m, {-0.04f, -0.04f, 0.2f}, {0.04f, 0.04f, 0.26f}, kDarkWood);                   // обмотка
+    return m;
+}
+
 MeshData buildBucket() {
     MeshData m;
     addBox(m, {-0.13f, 0.0f, -0.13f}, {0.13f, 0.28f, 0.13f}, kWood);
