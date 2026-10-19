@@ -21,6 +21,9 @@ std::array<float, kInputCount> toArray(const BrainInputs& in) noexcept {
         in.selfSize,
         in.lovedOneDirX, in.lovedOneDirZ, in.lovedOneProximity, in.lovedOneThreatLevel,
         in.awayFromHome, in.boredom,
+        in.waterAhead, in.slopeAhead, in.tribeFlag, in.leaderDirX, in.leaderDirZ, in.leaderProximity, in.night, in.cold, in.rain,
+        in.woodFrac, in.armed, in.thirst, in.stockProximity, in.preyProximity, in.intruderProximity, in.squadFlag,
+        in.memory[0], in.memory[1], in.memory[2], in.memory[3], in.memory[4], in.memory[5], in.memory[6], in.memory[7],
     };
 }
 
@@ -30,10 +33,10 @@ BrainEvalResult evaluate(std::span<const float> fixedWeights, std::span<const fl
                           const BrainInputs& in) noexcept {
     const auto inputs = toArray(in);
 
-    // fixedWeights: [inputHidden(480)][hiddenBias(20)] -- см. Genome::fixedBrainWeights().
+    // fixedWeights: [inputHidden(1760)][hiddenBias(32)] -- см. Genome::fixedBrainWeights().
     const std::span<const float> inputHidden = fixedWeights.subspan(0, kInputHiddenWeights);
     const std::span<const float> hiddenBias  = fixedWeights.subspan(kInputHiddenWeights, kHiddenCount);
-    // plasticWeights: [hiddenOutput(180)][outputBias(9)] -- см. Creature::learnedWeights.
+    // plasticWeights: [hiddenOutput(512)][outputBias(16)] -- см. Creature::learnedWeights.
     const std::span<const float> hiddenOutput = plasticWeights.subspan(0, kHiddenOutputWeights);
     const std::span<const float> outputBias   = plasticWeights.subspan(kHiddenOutputWeights, kOutputCount);
 
@@ -65,6 +68,12 @@ BrainEvalResult evaluate(std::span<const float> fixedWeights, std::span<const fl
             .alarmCall    = sigmoid(out[7]),
             .matingCall   = sigmoid(out[8]),
             .dominanceDisplay = sigmoid(out[9]),
+            .huntDesire    = sigmoid(out[10]),
+            .workDesire    = sigmoid(out[11]),
+            .buildDesire   = sigmoid(out[12]),
+            .raidDesire    = sigmoid(out[13]),
+            .followDesire  = sigmoid(out[14]),
+            .exploreDesire = sigmoid(out[15]),
         },
         .hiddenActivations = hidden,
         .outputActivations = out,

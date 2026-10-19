@@ -140,7 +140,7 @@ Decision decide(Creature& c, const SenseInputs& s, const BrainOutputs& raw, floa
     const bool forHut    = c.knows(kSkillHut) && s.hutDist >= kNoTarget && c.wood < kHutWood;   // нет хижины рядом -- рубит на неё
     const bool forStock  = c.knows(kSkillStockpile) && stockSeen && s.stockAmount < 24.0f && c.wood < kMaxWood;   // рубит про запас общине
     if (!canCraft && (c.wantsWood() || forStock || forHut || forFire) && treeSeen && n.fear < 0.4f && n.hunger < 0.6f && tired < 0.65f)
-        S(Behavior::Chop) = (c.wantsWood() ? 0.55f + 1.3f * danger01 : (forHut || forFire ? 1.3f : 0.45f)) * (c.role() == Role::Woodcutter ? 1.6f : 1.0f);
+        S(Behavior::Chop) = (c.wantsWood() ? 0.7f + 1.3f * danger01 : (forHut || forFire ? 1.3f : 0.45f)) * (c.role() == Role::Woodcutter ? 1.6f : 1.0f);
     // Склад: берёт нужные брёвна оттуда (вместо рубки) и сдаёт излишки.
     const bool withdrawNow = stockSeen && s.stockAmount >= 1.0f && c.wantsWood() && s.stockDist < 45.0f;
     const bool depositNow  = c.knows(kSkillStockpile) && stockSeen && c.wood > c.woodGoal() + 0.99f;
@@ -226,6 +226,20 @@ Decision decide(Creature& c, const SenseInputs& s, const BrainOutputs& raw, floa
     // Базовая линия: бродит, любопытные -- охотнее; идущий искать новые места не бросает это на полпути.
     S(Behavior::Wander) = 0.3f + c.curiosity() * c.boredomLevel() * 0.8f + (c.exploreTimer > 0.0f ? 0.6f : 0.0f) + (s.terrain && !waterSeen && c.thirst > 0.6f ? 0.9f : 0.0f);
 
+    // Желания-выборы мозга ("умный мозг"): целые группы занятий масштабируются в 0.35..1.65 раза -- мозг реально решает, охотиться ли,
+    // трудиться, строить, воевать, держаться вождя или исследовать (прежние выходы-желания меняли приоритеты лишь на ±35%).
+    auto wide = [](float d) { return 0.35f + 1.3f * std::clamp(d, 0.0f, 1.0f); };
+    S(Behavior::Hunt)  *= wide(raw.huntDesire);
+    S(Behavior::Chop)  *= wide(raw.workDesire);
+    S(Behavior::Craft) *= wide(raw.workDesire);
+    S(Behavior::Haul)  *= wide(raw.workDesire);
+    S(Behavior::Build) *= wide(raw.buildDesire);
+    S(Behavior::Raid)  *= wide(raw.raidDesire);
+    S(Behavior::March) *= wide(raw.raidDesire);
+    S(Behavior::Follow)    *= wide(raw.followDesire);
+    S(Behavior::Socialize) *= wide(raw.followDesire);
+    S(Behavior::Wander)    *= wide(raw.exploreDesire);
+
     // ── Выбор с гистерезисом: текущее занятие получает бонус и держится минимум 0.8 с (бегство прерывает сразу).
     c.behaviorTimer += dt;
     score[static_cast<std::size_t>(c.behavior)] += 0.35f;
@@ -300,7 +314,7 @@ Decision decide(Creature& c, const SenseInputs& s, const BrainOutputs& raw, floa
             break;
         case Behavior::Chop:
             dir = dirTo(c.position, s.treePos);
-            if (s.treeDist <= 1.8f) { speed = 0.0f; d.chop = true; }
+            if (s.treeDist <= 2.5f) { speed = 0.0f; d.chop = true; }   // у ствола не подойти ближе: он сам -- препятствие для обхода
             else speed = 0.7f * std::clamp(s.treeDist / 4.0f, 0.35f, 1.0f);
             break;
         case Behavior::Craft:     speed = 0.0f; d.craft = tool; break;

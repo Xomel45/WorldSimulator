@@ -144,6 +144,15 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
     }
     const float wellbeingBefore = wellbeing(needs);
 
+    // Местность на курсе (3 единицы вперёд по движению или блужданию): вода и уклон -- чтобы мозг мог обходить воду/кручу сам.
+    struct Ahead { bool water = false; float slope = 0.0f; } ahead;
+    if (senses.terrain) {
+        glm::vec2 dir{velocity.x, velocity.z};
+        dir = glm::length(dir) > 0.05f ? glm::normalize(dir) : glm::vec2{std::cos(wanderHeading), std::sin(wanderHeading)};
+        const glm::vec2 p = glm::vec2{position.x, position.z} + dir * 3.0f;
+        ahead.water = senses.terrain->isUnderwater(p.x, p.y);
+        ahead.slope = std::clamp((senses.terrain->heightAt(p.x, p.y) - senses.terrain->heightAt(position.x, position.z)) / 3.0f, -1.0f, 1.0f);
+    }
     const BrainInputs in{
         .hunger  = needs.hunger,
         .energy  = needs.energy,
@@ -184,10 +193,30 @@ BrainOutputs Creature::tick(float dt, const SenseInputs& senses) noexcept {
 
         .awayFromHome = awayFromHome(),
         .boredom      = boredomLevel(),
+
+        // Расширенные входы: местность на курсе, племя/вождь, время/погода, ресурсы, цели и память.
+        .waterAhead = ahead.water ? 1.0f : 0.0f,
+        .slopeAhead = ahead.slope,
+        .tribeFlag = tribe != 0 ? 1.0f : 0.0f,
+        .leaderDirX = glm::length(senses.leaderPos - position) > 0.01f && senses.leaderDist < kNoTarget ? glm::normalize(glm::vec2(senses.leaderPos.x - position.x, senses.leaderPos.z - position.z) + glm::vec2(1.0e-6f)).x : 0.0f,
+        .leaderDirZ = glm::length(senses.leaderPos - position) > 0.01f && senses.leaderDist < kNoTarget ? glm::normalize(glm::vec2(senses.leaderPos.x - position.x, senses.leaderPos.z - position.z) + glm::vec2(1.0e-6f)).y : 0.0f,
+        .leaderProximity = senses.leaderDist < kNoTarget ? std::clamp(1.0f - senses.leaderDist / 150.0f, 0.0f, 1.0f) : 0.0f,
+        .night = senses.night,
+        .cold = senses.cold,
+        .rain = senses.rain,
+        .woodFrac = std::clamp(wood / kMaxWood, 0.0f, 1.0f),
+        .armed = hasSpear() ? 1.0f : 0.0f,
+        .thirst = thirst,
+        .stockProximity = senses.stockDist < kNoTarget ? std::clamp(1.0f - senses.stockDist / 60.0f, 0.0f, 1.0f) : 0.0f,
+        .preyProximity = senses.preyDist < kNoTarget ? std::clamp(1.0f - senses.preyDist / 22.0f, 0.0f, 1.0f) : 0.0f,
+        .intruderProximity = senses.intruderDist < kNoTarget ? std::clamp(1.0f - senses.intruderDist / 12.0f, 0.0f, 1.0f) : 0.0f,
+        .squadFlag = squad != 0 ? 1.0f : 0.0f,
+        .memory = brainMemory,
     };
 
     const brain::BrainEvalResult result = brain::evaluate(genome.fixedBrainWeights(), learnedWeights, in);
     const BrainOutputs& out = result.outputs;
+    for (int m = 0; m < brain::kMemoryCount; ++m) brainMemory[static_cast<std::size_t>(m)] = result.hiddenActivations[static_cast<std::size_t>(m)];   // память на следующий тик
 
     const float metab = metabolism();
     needs.hunger = std::clamp(needs.hunger + 0.01f * metab * (1.0f + 0.15f * senses.cold) * dt, 0.0f, 1.0f);   // на холоде аппетит выше
@@ -510,6 +539,7 @@ Creature Creature::reproduce(const Creature& a, const Creature& b, Rng& rng) {
     Creature child;
     child.genome = Genome::crossover(a.genome, b.genome, rng);
     child.genome.mutate(rng, /*rate=*/0.05f, /*strength=*/0.15f);
+    child.generation = static_cast<std::uint16_t>(std::max(a.generation, b.generation) + 1);
     child.position = (a.position + b.position) * 0.5f;
     child.parentIds = {a.id, b.id};
     child.needs.hunger = 0.25f;  // родился не голодным и не вымотанным

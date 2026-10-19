@@ -33,6 +33,13 @@ struct BrainInputs {
     float selfSize;
     float lovedOneDirX, lovedOneDirZ, lovedOneProximity, lovedOneThreatLevel;
     float awayFromHome, boredom;
+    // Расширение ("умный мозг"): местность впереди, племя и вождь, время/погода, ресурсы и цели -- всё, что раньше знали только правила.
+    float waterAhead = 0.0f, slopeAhead = 0.0f;                    // вода (0/1) и подъём (-1..1) на курсе
+    float tribeFlag = 0.0f, leaderDirX = 0.0f, leaderDirZ = 0.0f, leaderProximity = 0.0f;
+    float night = 0.0f, cold = 0.0f, rain = 0.0f;
+    float woodFrac = 0.0f, armed = 0.0f, thirst = 0.0f;
+    float stockProximity = 0.0f, preyProximity = 0.0f, intruderProximity = 0.0f, squadFlag = 0.0f;
+    std::array<float, 8> memory{};                                  // "рабочая память": прошлые активации первых 8 скрытых нейронов (рекуррентность)
 };
 
 // Выходы: направление движения + "желания" + сигналы наружу (крик тревоги,
@@ -50,13 +57,17 @@ struct BrainOutputs {
     float moveX, moveZ;
     float eatDesire, fleeDesire, mateDesire, restDesire, defendDesire;
     float alarmCall, matingCall, dominanceDisplay;
+    // Желания-выборы ("умный мозг"): множат приоритеты целых групп занятий в 0.35..1.65 раза (см. Behavior.cpp: gainWide) --
+    // мозг теперь действительно решает, охотиться/трудиться/строить/воевать/ходить за вождём/исследовать, а не только подкручивает.
+    float huntDesire = 0.5f, workDesire = 0.5f, buildDesire = 0.5f, raidDesire = 0.5f, followDesire = 0.5f, exploreDesire = 0.5f;
 };
 
 namespace brain {
 
-inline constexpr int kInputCount  = 31;
-inline constexpr int kHiddenCount = 20;
-inline constexpr int kOutputCount = 10;
+inline constexpr int kMemoryCount = 8;                        // рекуррентные входы: прошлые активации первых kMemoryCount скрытых
+inline constexpr int kInputCount  = 47 + kMemoryCount;        // 31 прежних + 16 новых + 8 памяти = 55
+inline constexpr int kHiddenCount = 32;
+inline constexpr int kOutputCount = 16;                       // 10 прежних + 6 желаний-выборов
 
 // Layout веса делятся на фиксированную (input->hidden + hiddenBias — из
 // Genome::fixedBrainWeights(), наследуется, не меняется в течение жизни) и
@@ -67,7 +78,7 @@ inline constexpr int kOutputCount = 10;
 inline constexpr int kInputHiddenWeights  = kInputCount * kHiddenCount;
 inline constexpr int kHiddenOutputWeights = kHiddenCount * kOutputCount;
 inline constexpr int kWeightCount =
-    kInputHiddenWeights + kHiddenCount + kHiddenOutputWeights + kOutputCount;  // 850
+    kInputHiddenWeights + kHiddenCount + kHiddenOutputWeights + kOutputCount;  // 2320
 
 // Промежуточные активации нужны наружу для reinforce() (Hebbian-обновление
 // требует "кто с кем вместе сработал"). outputActivations дублирует значения

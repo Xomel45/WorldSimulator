@@ -181,6 +181,8 @@ public:
     [[nodiscard]] std::span<const Inhabitant>  population() const noexcept { return m_population; }
     [[nodiscard]] std::span<const FoodSource>  food() const noexcept { return m_food; }
     [[nodiscard]] std::size_t populationCount() const noexcept { return m_population.size(); }
+    // Самое позднее поколение среди живых (0 -- все созданы миром/богом, ребёнок = max(родителей)+1).
+    [[nodiscard]] int maxGeneration() const noexcept { int g = 0; for (const Inhabitant& in : m_population) g = std::max<int>(g, in.creature.generation); return g; }
     [[nodiscard]] std::size_t foodCount() const noexcept { return m_food.size(); }
 
     // ── Руки бога: вмешательство игрока в мир (см. sim/Powers) ──────────────

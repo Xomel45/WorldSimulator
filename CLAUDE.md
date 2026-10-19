@@ -165,7 +165,7 @@ pointer instead (the whole engine assumes exactly one window/one
 
 Pure simulation logic — `World` (below) is what turns it into a running
 population, `Creature` itself still never reaches into anything external:
-- **`Genome`** — flat `std::vector<float>` of 863 genes in `[-1,1]`: 13 body/
+- **`Genome`** — flat `std::vector<float>` of 2333 genes in `[-1,1]` (863 before the smart brain): 13 body/
   behavior/temperament traits (speed/size/metabolism/lifespan/fertility/
   **plasticity**/**boldness**/**sociability**/**bondStrength**/**envy**/
   **territorial**/**curiosity**/**empathy**, named via `Genome::TraitIndex`)
@@ -982,6 +982,24 @@ Creatures now cut trees down, carry logs, craft tools and fight predators with t
 - **Succession**: when the previous leader is no longer alive, his/her children (`parentIds`) and widow/widower (`bondedPartnerId`) get **+0.3** in the election (identified through the stored dead leader id — no extra saved state); `successions` counts heirs who won. Test: with otherwise equal candidates the child is elected.
 - Debug window: expeditions (hunting parties, shared meals, settlements, successions). Measured (10 seeds × 20 sim-min): mean 35.5 alive, no extinctions, settlements on 7 seeds, 3-8 hunting parties on most.
 - Not done: expeditions chosen by a council or the leader's traits, hunting parties that track a herd (they walk to a point), caravans/trade expeditions, retreat or reinforcement, settlements reacting to resources/danger, new camps getting their own leader (the tribe still has one leader).
+
+### Smart brain (stage 14): 95 neurons, memory, real choices, instincts, generations
+
+- **Topology** (`Brain.hpp`): **47 inputs + 8 memory inputs → 32 hidden (tanh) → 16 outputs** = **95 neurons** (before: 31 → 20 → 10 = 61); weights 55×32+32 (fixed, "perception") + 32×16+16 (plastic, "decision") = **2320**, genome **2333 genes**
+  (13 traits + 2320). The brain costs < 2% of a sim tick (0.19 ms/tick overall at 30-40 creatures). Debug window: "Brain: 95 neurons (55 inputs incl. 8 memory, 32 hidden, 16 outputs), 2333 genes | generation N" (neurons = 47 real inputs + 32 + 16; the 8 memory inputs re-use hidden activations).
+- **16 new inputs**: water (0/1) and slope on the 3-unit course, tribe flag, leader direction/proximity, night, cold, rain, wood carried, armed, thirst, stockpile / prey / intruder proximity, squad flag.
+  **Memory**: the first 8 hidden activations are stored in `Creature::brainMemory` and fed back next tick (recurrent, so the net can keep a state; saved).
+- **6 new "choice" outputs** (`BrainOutputs::huntDesire/workDesire/buildDesire/raidDesire/followDesire/exploreDesire`): `behavior::decide` multiplies whole groups of scores by `wide(d) = 0.35 + 1.3·d` (hunt; chop+craft+haul; build; raid+march;
+  follow+socialize; wander) — the brain now **decides** (up to ×1.65 / ×0.35) instead of nudging ±35%. Tested: `huntDesire` 1 picks Hunt, 0 picks berries in an identical situation.
+- **Innate instincts** (`Genome::random`): hidden neurons 24-29 are pre-wired to 2-4 relevant inputs and to their choice output (hunt ← prey nearby + hunger + armed; work ← day, calm, stockpile; build ← logs + tribe, calm; raid ← armed, tribe, calm, fed;
+  follow ← tribe and leader far; explore ← boredom). Ordinary genes (0.5 output weight, drifting with mutation/selection): a newborn behaves sensibly, evolution has a slope to climb. All other new-output weights start 4× weaker (near-neutral).
+  Initial weights are scaled ~1/sqrt(fan-in) (the old 0.35 was tuned for 31 inputs / 20 hidden).
+- **Evolution**: `Creature::generation` (child = max(parents)+1, saved) and `World::maxGeneration()`. `smartbrain_tests` runs a toy GA (crossover + mutation, 48 genomes, 40 generations) that evolves `huntDesire` to follow `preyProximity`: **error 0.07-0.09 → 0.001**
+  — the network is evolvable at the new size. In the game only ~4-9 generations fit into 20 sim-minutes, so expect gradual rather than dramatic selection.
+- **Saves v15**: 2333 genes, memory, generation. **Old saves (≤ v14, 863 genes)** still load: the 13 traits are kept, the brain is regenerated deterministically from the traits (the same on every load) and the plastic weights restart; `serializeSave(…, 14)` writes the legacy layout for tests.
+- **Cost / measurement** (20 fresh seeds × 20 sim-min, same probe): population **mean 42.5 (old brain) → 36.9** (−13%, no extinctions) — a random new brain costs some foraging efficiency; selection should win it back over longer play.
+  Also changed while debugging: chopping is reachable from 2.5 units (the target trunk is itself an obstacle for steering; the old 1.8 relied on luck), base Chop priority 0.7.
+- Not done: brain inputs for bushes' kinds/taste, direct terrain maps, learning the choice outputs by reinforcement beyond the existing Hebbian rule, brain-controlled movement (moves are still rule steering + 25% brain bias), speciation/fitness plots.
 
 ## Temporal upscaler and frame generation (`VulkanTemporal.cpp`, `taau.comp`, `framegen.comp`)
 

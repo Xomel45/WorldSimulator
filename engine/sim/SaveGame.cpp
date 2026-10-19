@@ -54,7 +54,8 @@ SaveMeta readMeta(ByteReader& r) {
 
 void writeCreature(ByteWriter& w, const Inhabitant& in, std::uint32_t version) {
     const Creature& c = in.creature;
-    w.floats(c.genome.genes());
+    if (version >= 15) w.floats(c.genome.genes());
+    else w.floats(c.genome.genes().subspan(0, Genome::kLegacyGeneCount));   // старый формат: 13 черт + 850 первых весов (тестам совместимости)
     const Needs& n = c.needs;
     for (float v : {n.hunger, n.energy, n.fear, n.libido, n.social, n.respect, n.resentment, n.grief}) w.f32(v);
     w.vec3(c.position);
@@ -68,7 +69,8 @@ void writeCreature(ByteWriter& w, const Inhabitant& in, std::uint32_t version) {
     w.u64(c.parentIds[1]);
     w.u32(static_cast<std::uint32_t>(c.childIds.size()));
     for (auto id : c.childIds) w.u64(id);
-    w.floats(c.learnedWeights);
+    if (version >= 15) w.floats(c.learnedWeights);
+    else w.floats({});   // пластика старого размера не восстановима -- пустая (лениво инициализируется)
     const BrainOutputs& o = in.lastOutputs;
     for (float v : {o.moveX, o.moveZ, o.eatDesire, o.fleeDesire, o.mateDesire, o.restDesire, o.defendDesire, o.alarmCall, o.matingCall, o.dominanceDisplay})
         w.f32(v);
@@ -130,12 +132,27 @@ void writeCreature(ByteWriter& w, const Inhabitant& in, std::uint32_t version) {
     w.u8(c.tribe);                                     // v12
     if (version < 13) return;
     w.u8(c.squad);                                     // v13
+    if (version < 15) return;
+    w.floats(c.brainMemory);                           // v15: рабочая память мозга и поколение
+    w.u32(c.generation);
 }
 
 bool readCreature(ByteReader& r, Inhabitant& in, std::uint32_t version) {
     Creature& c = in.creature;
-    const std::vector<float> genes = r.floats(Genome::kGeneCount);
-    if (!r.ok() || !Genome::fromGenes(genes, c.genome)) return false;
+    std::vector<float> genes = r.floats(version >= 15 ? Genome::kGeneCount : Genome::kLegacyGeneCount);
+    if (!r.ok()) return false;
+    if (version < 15) {
+        // Старый геном (до "умного мозга"): черты те же, а мозг другой формы -- новый, детерминированно из черт (одинаково при каждой загрузке).
+        if (genes.size() != Genome::kLegacyGeneCount) return false;
+        std::uint32_t h = 2166136261u;
+        for (std::size_t i = 0; i < Genome::kTraitGeneCount; ++i) { std::uint32_t b; std::memcpy(&b, &genes[i], 4); h = (h ^ b) * 16777619u; }
+        Rng rng(h);
+        const Genome fresh = Genome::random(rng);
+        std::vector<float> full(fresh.genes().begin(), fresh.genes().end());
+        std::copy(genes.begin(), genes.begin() + static_cast<std::ptrdiff_t>(Genome::kTraitGeneCount), full.begin());
+        genes = std::move(full);
+    }
+    if (!Genome::fromGenes(genes, c.genome)) return false;
     Needs& n = c.needs;
     for (float* v : {&n.hunger, &n.energy, &n.fear, &n.libido, &n.social, &n.respect, &n.resentment, &n.grief}) *v = r.f32();
     c.position        = r.vec3();
@@ -150,8 +167,9 @@ bool readCreature(ByteReader& r, Inhabitant& in, std::uint32_t version) {
     const std::uint32_t children = r.count(kMaxChildren, 8);
     c.childIds.reserve(children);
     for (std::uint32_t i = 0; i < children; ++i) c.childIds.push_back(r.u64());
-    c.learnedWeights = r.floats(Genome::kPlasticBrainWeightCount);  // пусто (ещё не тикало) или ровно столько, сколько пластичных весов
-    if (!c.learnedWeights.empty() && c.learnedWeights.size() != Genome::kPlasticBrainWeightCount) return false;
+    c.learnedWeights = r.floats(version >= 15 ? Genome::kPlasticBrainWeightCount : 210);  // пусто (ещё не тикало) или ровно столько, сколько пластичных весов
+    if (version < 15) c.learnedWeights.clear();   // старая форма пластики не подходит новой сети
+    else if (!c.learnedWeights.empty() && c.learnedWeights.size() != Genome::kPlasticBrainWeightCount) return false;
     BrainOutputs& o = in.lastOutputs;
     for (float* v : {&o.moveX, &o.moveZ, &o.eatDesire, &o.fleeDesire, &o.mateDesire, &o.restDesire, &o.defendDesire, &o.alarmCall, &o.matingCall, &o.dominanceDisplay})
         *v = r.f32();
@@ -239,6 +257,11 @@ bool readCreature(ByteReader& r, Inhabitant& in, std::uint32_t version) {
     if (version >= 11) c.skills = static_cast<std::uint16_t>(c.skills | (static_cast<std::uint16_t>(r.u8()) << 8)) & kAllSkills;
     if (version >= 12) { const std::uint8_t tb = r.u8(); c.tribe = tb < World::kMaxTribes ? tb : 0; }
     if (version >= 13) { const std::uint8_t sq = r.u8(); c.squad = sq < World::kMaxTribes ? sq : 0; }
+    if (version >= 15) {
+        const std::vector<float> mem = r.floats(brain::kMemoryCount);
+        if (mem.size() == c.brainMemory.size()) for (std::size_t i = 0; i < mem.size(); ++i) c.brainMemory[i] = std::isfinite(mem[i]) ? std::clamp(mem[i], -1.0f, 1.0f) : 0.0f;
+        c.generation = static_cast<std::uint16_t>(std::min<std::uint32_t>(r.u32(), 60000));
+    }
     return r.ok();
 }
 

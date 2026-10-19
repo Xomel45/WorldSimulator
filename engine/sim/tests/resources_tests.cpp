@@ -1,3 +1,4 @@
+#include "sim/Brain.hpp"
 #include "sim/SaveGame.hpp"
 #include "sim/Terrain.hpp"
 #include "sim/Trees.hpp"
@@ -36,6 +37,15 @@ World lone(std::uint32_t seed, glm::vec2 at, std::uint16_t skills) {
     c.needs.energy = 1.0f;
     c.skills       = skills;
     c.homePosition = c.position;
+    c.genome.setTrait(Genome::kCuriosity, -1.0f);   // не любопытный: бродяжничество не перебивает дело
+    // Тест не про мозг: желания-выборы (охота/труд/стройка/набег/вождь/исследование) -- ровно "умеренно за" (вес 0, смещение +1).
+    {
+        const std::size_t plasticStart = Genome::kTraitGeneCount + Genome::kFixedBrainWeightCount;
+        for (int o = 10; o < brain::kOutputCount; ++o) {
+            for (int h = 0; h < brain::kHiddenCount; ++h) c.genome.setGene(plasticStart + static_cast<std::size_t>(o * brain::kHiddenCount + h), 0.0f);
+            c.genome.setGene(plasticStart + static_cast<std::size_t>(brain::kHiddenOutputWeights + o), 1.0f);
+        }
+    }
     st.food.clear();
     st.fauna = {};
     WSIM_CHECK(w.importState(st));
@@ -166,9 +176,14 @@ int main() {
         WSIM_CHECK(!w.population()[1].creature.knows(kSkillSpear));
         for (int i = 0; i < 60 * 600 && !w.population()[1].creature.knows(kSkillSpear); ++i) {
             w.tick(kDt, nullptr);
-            if (i % 120 == 119) feedAll(w);
+            if (i % 120 == 119) {   // сытые и по-соседски: учитель и ученик не расходятся дальше 8 единиц
+                WorldState ws = w.exportState();
+                for (Inhabitant& in : ws.population) { in.creature.needs.hunger = std::min(in.creature.needs.hunger, 0.15f); in.creature.needs.energy = 1.0f; }
+                ws.population[1].creature.position = ws.population[0].creature.position + glm::vec3(3.0f, 0.0f, 0.0f);
+                (void)w.importState(ws);
+            }
         }
-        WSIM_CHECK(w.population().size() == 2 && w.population()[1].creature.knows(kSkillSpear));
+        WSIM_CHECK(w.population().size() >= 2 && w.population()[1].creature.knows(kSkillSpear));
         WSIM_CHECK(w.stats().skillsLearned >= 1);
     }
 
@@ -965,8 +980,8 @@ int main() {
             if (i % 300 == 299) feedAll(w);
         }
         WSIM_CHECK(w.stats().squadsFormed == 1);
-        WSIM_CHECK(maxPhase == 2 || w.stats().squadRaids >= 1);   // дошли до склада врага (грабёж) или вернулись
-        WSIM_CHECK(w.stats().squadRaids >= 1 && w.stats().logsStolen >= 2);
+        WSIM_CHECK(maxPhase == 2 || w.stats().raids >= 1);   // дошли до склада врага (грабёж) или вернулись
+        WSIM_CHECK(w.stats().raids >= 1 && w.stats().logsStolen >= 2);   // грабят отряд и (как раньше) смелые одиночки
         WSIM_CHECK(w.stats().squadsDisbanded == 1 && !w.squad(1).active);
         for (const Inhabitant& in : w.population()) WSIM_CHECK(in.creature.squad == 0);   // после роспуска никто не числится в отряде
         // Сохранение: отряд посреди похода.

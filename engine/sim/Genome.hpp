@@ -21,7 +21,8 @@ using Rng = std::mt19937;
 class Genome {
 public:
     static constexpr std::size_t kTraitGeneCount = 13;
-    static constexpr std::size_t kBrainWeightCount = 850;  // = brain::kWeightCount
+    static constexpr std::size_t kBrainWeightCount = 2320;  // = brain::kWeightCount
+    static constexpr std::size_t kLegacyGeneCount = 863;    // старые сохранения (до "умного мозга", save v15): 13 черт + 850 весов
     static constexpr std::size_t kGeneCount = kTraitGeneCount + kBrainWeightCount;
 
     // Разбивка весов мозга на фиксированную (input->hidden — "восприятие",
@@ -29,8 +30,8 @@ public:
     // — "принятие решений", у Creature есть свой изменяемый рантайм-экземпляр
     // этого куска, см. Creature::learnedWeights) части. Зеркалит
     // brain::kInputHiddenWeights+kHiddenCount / kHiddenOutputWeights+kOutputCount.
-    static constexpr std::size_t kFixedBrainWeightCount   = 640;
-    static constexpr std::size_t kPlasticBrainWeightCount = 210;
+    static constexpr std::size_t kFixedBrainWeightCount   = 1792;
+    static constexpr std::size_t kPlasticBrainWeightCount = 528;
 
     enum TraitIndex : std::size_t {
         kSpeed = 0,
@@ -73,6 +74,8 @@ public:
         for (float& g : out.m_genes) g = std::clamp(g, -1.0f, 1.0f);
         return true;
     }
+    // Прямая установка гена по индексу (клэмп) -- для тестов и тонкой настройки мозга (например, обнулить веса желаний-выборов).
+    void setGene(std::size_t i, float value) noexcept { if (i < m_genes.size()) m_genes[i] = std::clamp(value, -1.0f, 1.0f); }
     [[nodiscard]] std::span<const float> brainWeights() const noexcept {
         return {m_genes.data() + kTraitGeneCount, kBrainWeightCount};
     }

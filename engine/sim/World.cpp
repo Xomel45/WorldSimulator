@@ -1281,7 +1281,7 @@ void World::tick(float dt, Terrain* mutableTerrain) {
         }
 
         // Рубка: пока стоит у дерева, набегает прогресс; срубленное исчезает (Terrain::fellTree), брёвна -- в руки.
-        if (self.chopRequest && self.treeKnown && mutableTerrain && senses.treeDist <= 2.2f) {
+        if (self.chopRequest && self.treeKnown && mutableTerrain && senses.treeDist <= 3.2f) {
             self.chopProgress += dt / 3.0f;
             if (self.chopProgress >= 1.0f) {
                 TreeInstance tree;

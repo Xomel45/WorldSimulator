@@ -183,6 +183,8 @@ public:
     float        thirst = 0.2f, water = 0.0f, huntTimer = 0.0f, waterX = 0.0f, waterZ = 0.0f, waterSearch = 0.0f;
     bool         hasBucket = false, waterKnown = false;
     bool         hutNear = false;
+    std::array<float, brain::kMemoryCount> brainMemory{};   // рабочая память мозга: активации первых скрытых нейронов с прошлого тика
+    std::uint16_t generation = 0;                           // поколение: 0 у созданных миром/богом, у потомка max(родителей)+1
     std::uint8_t squad = 0;         // отряд (индекс племени, 0 -- вне отряда)
     std::uint8_t tribe = 0;         // племя 1..3 (0 -- ничьё): наследуется от матери; свои-по-племени считаются знакомыми
     std::uint8_t raidRequest = 0, strikeRequest = 0;   // 1 -- у чужого склада: взять брёвна / рядом с чужаком: ударить (исполняет мир)   // видит хижину (решает слой поведения каждый тик; нужно woodGoal)
